@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - "0.9/stable"
-      - "0.9/dev"
   workflow_dispatch:
 
 permissions:
@@ -31,17 +30,8 @@ jobs:
       - name: Bundle Extensions
         run: npm run bundle
       - name: Deploy to GitHub Pages (stable)
-        if: github.ref_name == '0.9/stable'
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: bundles
-          cname: read.pirate.vodka
-      - name: Deploy to GitHub Pages (dev)
-        if: github.ref_name == '0.9/dev'
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: bundles
-          destination_dir: dev
           cname: read.pirate.vodka
