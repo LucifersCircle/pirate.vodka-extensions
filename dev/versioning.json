@@ -1,0 +1,77 @@
+{
+  "buildTime": "2026-02-19T14:00:06.561Z",
+  "builtWith": {
+    "toolchain": "1.0.0-alpha.57",
+    "types": "1.0.0-alpha.57"
+  },
+  "repository": {
+    "name": "pirate.vodka extensions (0.9)",
+    "description": "Paperback extensions from pirate.vodka. Maintained by Lucifers Circle."
+  },
+  "sources": [
+    {
+      "name": "Atsumaru",
+      "description": "Extension that pulls content from atsu.moe.",
+      "version": "1.0.0-nightly.26.02.19",
+      "icon": "icon.png",
+      "language": "en",
+      "contentRating": "SAFE",
+      "capabilities": [
+        16,
+        4,
+        1,
+        64
+      ],
+      "badges": [],
+      "developers": [
+        {
+          "name": "Lucifers Circle"
+        }
+      ],
+      "id": "Atsumaru"
+    },
+    {
+      "name": "QiScans",
+      "description": "Extension that pulls content from qiscans.org.",
+      "version": "1.0.0-nightly.26.02.19",
+      "icon": "icon.png",
+      "language": "en",
+      "contentRating": "SAFE",
+      "capabilities": [
+        16,
+        4,
+        1,
+        64
+      ],
+      "badges": [],
+      "developers": [
+        {
+          "name": "Lucifers Circle"
+        }
+      ],
+      "id": "QiScans"
+    },
+    {
+      "name": "WeebDex",
+      "description": "Extension that pulls content from weebdex.org.",
+      "version": "1.0.0-nightly.26.02.19",
+      "icon": "icon.png",
+      "language": "en",
+      "contentRating": "MATURE",
+      "capabilities": [
+        16,
+        4,
+        1,
+        64,
+        32
+      ],
+      "badges": [],
+      "developers": [
+        {
+          "name": "Lucifers Circle"
+        }
+      ],
+      "id": "WeebDex"
+    }
+  ]
+}
