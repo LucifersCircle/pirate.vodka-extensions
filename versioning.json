@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-02-17T20:45:42.675Z",
+  "buildTime": "2026-02-19T13:35:51.324Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.57",
     "types": "1.0.0-alpha.57"
@@ -10,22 +10,25 @@
   },
   "sources": [
     {
-      "name": "Content Template",
-      "description": "Template that shows the functionality of content providing extensions.",
-      "version": "1.0.0-alpha.3",
+      "name": "MangaTaro",
+      "description": "Extension that pulls content from mangataro.org.",
+      "version": "1.0.0-alpha.1",
       "icon": "icon.png",
       "language": "en",
       "contentRating": "SAFE",
-      "capabilities": 101,
+      "capabilities": [
+        16,
+        4,
+        1,
+        64
+      ],
       "badges": [],
       "developers": [
         {
-          "name": "Celarye",
-          "website": "https://celarye.dev",
-          "github": "https://github.com/Celarye"
+          "name": "Lucifers Circle"
         }
       ],
-      "id": "ContentTemplate"
+      "id": "MangaTaro"
     }
   ]
 }
