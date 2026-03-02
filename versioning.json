@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-02-19T14:57:20.108Z",
+  "buildTime": "2026-03-02T23:57:20.438Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.57",
     "types": "1.0.0-alpha.57"
@@ -29,6 +29,28 @@
         }
       ],
       "id": "MangaTaro"
+    },
+    {
+      "name": "QToon",
+      "description": "Extension that pulls content from qtoon.com.",
+      "version": "1.0.0-alpha.1",
+      "icon": "icon.png",
+      "language": "multi",
+      "contentRating": "MATURE",
+      "capabilities": [
+        16,
+        4,
+        1,
+        64,
+        32
+      ],
+      "badges": [],
+      "developers": [
+        {
+          "name": "Lucifers Circle"
+        }
+      ],
+      "id": "QToon"
     }
   ]
 }
