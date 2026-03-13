@@ -1,11 +1,11 @@
 {
-  "buildTime": "2026-03-02T23:57:20.438Z",
+  "buildTime": "2026-03-13T04:29:04.275Z",
   "builtWith": {
-    "toolchain": "1.0.0-alpha.57",
-    "types": "1.0.0-alpha.57"
+    "toolchain": "1.0.0-alpha.64",
+    "types": "1.0.0-alpha.64"
   },
   "repository": {
-    "name": "pirate.vodka extensions (0.9)",
+    "name": "pirate.vodka-extensions",
     "description": "Paperback extensions from pirate.vodka. Maintained by Lucifers Circle."
   },
   "sources": [
