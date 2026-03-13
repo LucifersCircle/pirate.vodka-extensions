@@ -1,18 +1,18 @@
 {
-  "buildTime": "2026-03-12T04:46:31.964Z",
+  "buildTime": "2026-03-13T04:33:24.108Z",
   "builtWith": {
-    "toolchain": "1.0.0-alpha.57",
-    "types": "1.0.0-alpha.57"
+    "toolchain": "1.0.0-alpha.64",
+    "types": "1.0.0-alpha.64"
   },
   "repository": {
-    "name": "pirate.vodka extensions (0.9)",
+    "name": "pirate.vodka-extensions",
     "description": "Paperback extensions from pirate.vodka. Maintained by Lucifers Circle."
   },
   "sources": [
     {
       "name": "Atsumaru",
       "description": "Extension that pulls content from atsu.moe.",
-      "version": "1.0.0-nightly.26.03.12",
+      "version": "1.0.0-nightly.26.03.13",
       "icon": "icon.png",
       "language": "en",
       "contentRating": "SAFE",
@@ -33,7 +33,7 @@
     {
       "name": "QiScans",
       "description": "Extension that pulls content from qiscans.org.",
-      "version": "1.0.0-nightly.26.03.12",
+      "version": "1.0.0-nightly.26.03.13",
       "icon": "icon.png",
       "language": "en",
       "contentRating": "SAFE",
@@ -54,7 +54,7 @@
     {
       "name": "WeebDex",
       "description": "Extension that pulls content from weebdex.org.",
-      "version": "1.0.0-nightly.26.03.12",
+      "version": "1.0.0-nightly.26.03.13",
       "icon": "icon.png",
       "language": "en",
       "contentRating": "MATURE",
