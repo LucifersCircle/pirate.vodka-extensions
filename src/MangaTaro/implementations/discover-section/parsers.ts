@@ -6,19 +6,16 @@ import type {
   MangaTaroPopularMangaItem,
   MangaTaroStatusMangaItem,
 } from "../shared/models";
-
-function slugFromPermalink(permalink: string): string {
-  return permalink.split("/").filter(Boolean).pop() ?? permalink;
-}
+import { formatMangaId, isNovel, slugFromUrl } from "../shared/utils";
 
 export function parsePopularChapters(
   chapters: MangaTaroPopularChapter[],
 ): ChapterUpdatesCarouselItem[] {
   return chapters
-    .filter((ch) => ch.manga_type.toLowerCase() !== "novel")
+    .filter((ch) => !isNovel(ch.manga_type))
     .map((ch) => ({
       type: "chapterUpdatesCarouselItem" as const,
-      mangaId: `${ch.manga_slug}:${ch.manga_id}`,
+      mangaId: formatMangaId(ch.manga_slug, ch.manga_id),
       chapterId: ch.chapter_id.toString(),
       imageUrl: ch.cover,
       title: ch.manga_title,
@@ -29,10 +26,10 @@ export function parsePopularChapters(
 
 export function parseStatusManga(items: MangaTaroStatusMangaItem[]): SimpleCarouselItem[] {
   return items
-    .filter((item) => item.manga_type.toLowerCase() !== "novel")
+    .filter((item) => !isNovel(item.manga_type))
     .map((item) => ({
       type: "simpleCarouselItem" as const,
-      mangaId: `${item.slug}:${item.manga_id}`,
+      mangaId: formatMangaId(item.slug, item.manga_id),
       imageUrl: item.cover,
       title: item.title,
       subtitle: item.manga_type,
@@ -42,10 +39,10 @@ export function parseStatusManga(items: MangaTaroStatusMangaItem[]): SimpleCarou
 
 export function parseFollowedManga(items: MangaTaroFollowedMangaItem[]): SimpleCarouselItem[] {
   return items
-    .filter((item) => item.manga_type.toLowerCase() !== "novel")
+    .filter((item) => !isNovel(item.manga_type))
     .map((item) => ({
       type: "simpleCarouselItem" as const,
-      mangaId: `${item.slug}:${item.manga_id}`,
+      mangaId: formatMangaId(item.slug, item.manga_id),
       imageUrl: item.cover,
       title: item.title,
       subtitle: item.manga_type,
@@ -55,17 +52,14 @@ export function parseFollowedManga(items: MangaTaroFollowedMangaItem[]): SimpleC
 
 export function parsePopularManga(items: MangaTaroPopularMangaItem[]): SimpleCarouselItem[] {
   return items
-    .filter((item) => item.manga_type.toLowerCase() !== "novel")
-    .map((item) => {
-      const slug = slugFromPermalink(item.permalink);
-      return {
-        type: "simpleCarouselItem" as const,
-        // no numeric id from this endpoint, slug only
-        mangaId: slug,
-        imageUrl: item.cover,
-        title: item.title,
-        subtitle: item.manga_type,
-        contentRating: ContentRating.EVERYONE,
-      };
-    });
+    .filter((item) => !isNovel(item.manga_type))
+    .map((item) => ({
+      type: "simpleCarouselItem" as const,
+      // no numeric id from this endpoint, slug only
+      mangaId: slugFromUrl(item.permalink),
+      imageUrl: item.cover,
+      title: item.title,
+      subtitle: item.manga_type,
+      contentRating: ContentRating.EVERYONE,
+    }));
 }

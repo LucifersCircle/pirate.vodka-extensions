@@ -1,23 +1,25 @@
 import type { Request, Response } from "@paperback/types";
 import { CloudflareError, PaperbackInterceptor } from "@paperback/types";
-import { QTOON_DOMAIN, QTOON_API, requestToken } from "../main";
+import { DOMAIN, DOMAIN_API, requestToken } from "../main";
 import type { QToonEncryptedResponse } from "../implementations/shared/models";
 import { getLanguage } from "../implementations/settings-form/main";
 import { decryptResponse } from "../implementations/shared/utils";
 
 export class QToonInterceptor extends PaperbackInterceptor {
   async interceptRequest(request: Request): Promise<Request> {
-    request.headers = {
-      ...request.headers,
-      referer: `${QTOON_DOMAIN}/`,
-      ...(request.url.includes(QTOON_API) && {
-        platform: "h5",
-        lth: getLanguage(),
-        did: requestToken,
-      }),
+    return {
+      ...request,
+      headers: {
+        ...request.headers,
+        referer: `${DOMAIN}/`,
+        "user-agent": await Application.getDefaultUserAgent(),
+        ...(request.url.includes(DOMAIN_API) && {
+          platform: "h5",
+          lth: getLanguage(),
+          did: requestToken,
+        }),
+      },
     };
-
-    return request;
   }
 
   override async interceptResponse(
@@ -62,7 +64,7 @@ export async function fetchEncryptedJSON<T>(request: Request): Promise<T> {
     throw new Error(`QToon API error code ${envelope.code}: ${request.url}`);
   }
 
-  const decrypted = decryptResponse(envelope.data, envelope.ts, requestToken);
+  const decrypted = await decryptResponse(envelope.data, envelope.ts, requestToken);
 
   try {
     return JSON.parse(decrypted) as T;

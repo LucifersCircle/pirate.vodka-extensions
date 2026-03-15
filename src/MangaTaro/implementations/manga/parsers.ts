@@ -1,7 +1,7 @@
 import type { SourceManga } from "@paperback/types";
 import { ContentRating } from "@paperback/types";
-import { extractNumericId } from "../shared/utils";
 import type { MangaTaroSchemaOrg } from "../shared/models";
+import { extractNumericId, formatMangaId, parseMangaId } from "../shared/utils";
 
 export function parseMangaDetails(html: string, mangaId: string): SourceManga {
   // mangataro embeds schema.org json-ld (ComicSeries) in the first inline <script> tag
@@ -15,9 +15,9 @@ export function parseMangaDetails(html: string, mangaId: string): SourceManga {
   const schema = JSON.parse(scriptMatch[1]) as MangaTaroSchemaOrg;
 
   // extract numeric id from data-manga-id to upgrade slug-only mangaIds so getChapters works
-  const slug = mangaId.split(":")[0] ?? mangaId;
+  const slug = parseMangaId(mangaId).slug;
   const numericId = extractNumericId(html);
-  const resolvedMangaId = numericId ? `${slug}:${numericId}` : mangaId;
+  const resolvedMangaId = numericId ? formatMangaId(slug, numericId) : mangaId;
 
   // strip site suffix
   const primaryTitle = schema.name

@@ -1,5 +1,3 @@
-import CryptoJS from "crypto-js";
-
 export function applyMixins(derivedCtor: any, constructors: any[]) {
   constructors.forEach((baseCtor) => {
     Object.getOwnPropertyNames(baseCtor.prototype).forEach((name) => {
@@ -16,14 +14,35 @@ export function extractNumericId(html: string): string | undefined {
   return html.match(/data-manga-id="(\d+)"/)?.[1];
 }
 
+// reverse-engineered API auth token. source is in the autoptimize bundle on manga detail pages (search for the secret or generateToken, its not obfuscated)
 export function generateToken(): { token: string; timestamp: number } {
   const timestamp = Math.floor(Date.now() / 1000);
   const hour = new Date().toISOString().slice(0, 13).replace(/[-T:]/g, "");
   const secret = "mng_ch_" + hour;
-  const hash = CryptoJS.MD5(timestamp.toString() + secret)
-    .toString()
-    .substring(0, 16);
+  const encoder = new TextEncoder();
+  const array = encoder.encode(timestamp.toString() + secret);
+  // @ts-expect-error (remove this once method is in types)
+  const hash = Application.crypto_md5Hash(array.buffer).substring(0, 16);
   return { token: hash, timestamp };
+}
+
+export function isNovel(type: string): boolean {
+  return type.toLowerCase() === "novel";
+}
+
+export function slugFromUrl(url: string): string {
+  return url.split("/").filter(Boolean).pop() ?? url;
+}
+
+// format is "slug:numericId". slug from URLs, numericId from the sites DB. discover sections only provide slug
+export function parseMangaId(mangaId: string): { slug: string; numericId?: string } {
+  const idx = mangaId.indexOf(":");
+  if (idx === -1) return { slug: mangaId };
+  return { slug: mangaId.substring(0, idx), numericId: mangaId.substring(idx + 1) };
+}
+
+export function formatMangaId(slug: string, numericId?: string | number): string {
+  return numericId != null ? `${slug}:${numericId}` : slug;
 }
 
 export function parseRelativeDate(str: string): Date {

@@ -1,6 +1,6 @@
 import type { Request, SearchFilter, SortingOption } from "@paperback/types";
 import { URL } from "@paperback/types";
-import { MANGATARO_DOMAIN } from "../../main";
+import { DOMAIN } from "../../main";
 import { fetchJSON } from "../../services/network";
 import type { WPTag } from "../shared/models";
 
@@ -11,6 +11,7 @@ const STATUSES = ["Ongoing", "Completed", "Hiatus", "Cancelled"];
 const CURRENT_YEAR = new Date().getFullYear();
 const YEARS: string[] = [];
 for (let y = CURRENT_YEAR; y >= 1946; y--) {
+  // earliest year the site's filter supports
   YEARS.push(String(y));
 }
 
@@ -25,7 +26,7 @@ export const SORT_OPTIONS: SortingOption[] = [
 ];
 
 async function fetchAllTags(): Promise<WPTag[]> {
-  const url = new URL(MANGATARO_DOMAIN)
+  const url = new URL(DOMAIN)
     .addPathComponent("wp-json")
     .addPathComponent("wp")
     .addPathComponent("v2")

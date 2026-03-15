@@ -1,6 +1,6 @@
 import type { DiscoverSection, DiscoverSectionItem, PagedResults, Request } from "@paperback/types";
 import { DiscoverSectionType, URL } from "@paperback/types";
-import { MANGATARO_DOMAIN } from "../../main";
+import { DOMAIN } from "../../main";
 import { fetchJSON } from "../../services/network";
 import type {
   MangaTaroFollowedMangaResponse,
@@ -37,7 +37,7 @@ export class DiscoverProvider {
 
     switch (section.id) {
       case "popular-chapters": {
-        const url = new URL(MANGATARO_DOMAIN)
+        const url = new URL(DOMAIN)
           .addPathComponent("auth")
           .addPathComponent("popular-chapters")
           .setQueryItem("period", "today")
@@ -52,7 +52,7 @@ export class DiscoverProvider {
       }
 
       case "manga-status": {
-        const url = new URL(MANGATARO_DOMAIN)
+        const url = new URL(DOMAIN)
           .addPathComponent("auth")
           .addPathComponent("manga-status-slider")
           .setQueryItem("status", "completed")
@@ -67,7 +67,7 @@ export class DiscoverProvider {
       }
 
       case "most-followed-new": {
-        const url = new URL(MANGATARO_DOMAIN)
+        const url = new URL(DOMAIN)
           .addPathComponent("auth")
           .addPathComponent("most-followed-new-manga")
           .setQueryItem("period", "7d")
@@ -82,7 +82,7 @@ export class DiscoverProvider {
       }
 
       case "most-followed": {
-        const url = new URL(MANGATARO_DOMAIN)
+        const url = new URL(DOMAIN)
           .addPathComponent("auth")
           .addPathComponent("most-followed-manga")
           .setQueryItem("period", "month")
@@ -97,7 +97,7 @@ export class DiscoverProvider {
       }
 
       case "popular-manga": {
-        const url = new URL(MANGATARO_DOMAIN)
+        const url = new URL(DOMAIN)
           .addPathComponent("wp-json")
           .addPathComponent("manga")
           .addPathComponent("v1")
@@ -114,7 +114,7 @@ export class DiscoverProvider {
       }
 
       case "high-score": {
-        const url = new URL(MANGATARO_DOMAIN)
+        const url = new URL(DOMAIN)
           .addPathComponent("wp-json")
           .addPathComponent("manga")
           .addPathComponent("v1")

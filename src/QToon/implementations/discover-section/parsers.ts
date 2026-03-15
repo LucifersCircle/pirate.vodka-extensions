@@ -1,11 +1,7 @@
 import type { DiscoverSection, SimpleCarouselItem } from "@paperback/types";
 import { ContentRating, DiscoverSectionType } from "@paperback/types";
-import type { QToonComic, QToonCompositionBlock } from "../shared/models";
-
-export interface SectionEndpoint {
-  type: "ranking" | "album";
-  id: string; // rsid or asid
-}
+import type { QToonComic, QToonCompositionBlock, SectionEndpoint } from "../shared/models";
+import { comicId } from "../shared/utils";
 
 export function extractEndpoint(block: QToonCompositionBlock): SectionEndpoint | undefined {
   if (block.ranking?.rsid) return { type: "ranking", id: block.ranking.rsid };
@@ -25,10 +21,10 @@ export function parseCompositionBlocks(blocks: QToonCompositionBlock[]): Discove
 
 export function parseQToonComics(comics: QToonComic[]): SimpleCarouselItem[] {
   return comics
-    .filter((comic) => comic.csid || comic.webLinkId)
+    .filter((comic) => comicId(comic))
     .map((comic) => ({
       type: "simpleCarouselItem" as const,
-      mangaId: comic.webLinkId || comic.csid,
+      mangaId: comicId(comic),
       imageUrl: comic.image.thumb.url,
       title: comic.title ?? "",
       subtitle: comic.author ?? "",

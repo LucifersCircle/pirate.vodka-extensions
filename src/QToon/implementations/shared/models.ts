@@ -91,3 +91,23 @@ export interface QToonEpisodeResources {
   resources: QToonResource[];
   more: number;
 }
+
+export interface SearchMetadata {
+  page: number;
+}
+
+export interface FilterEntry {
+  id: string;
+  value: string | Record<string, "included" | "excluded">;
+}
+
+export interface DiscoverMetadata {
+  page: number;
+  endpointType: "ranking" | "album";
+  endpointId: string;
+}
+
+export interface SectionEndpoint {
+  type: "ranking" | "album";
+  id: string; // rsid or asid
+}

@@ -1,6 +1,6 @@
 import type { Chapter, ChapterDetails, Request, SourceManga } from "@paperback/types";
 import { URL } from "@paperback/types";
-import { QTOON_API, requestToken } from "../../main";
+import { DOMAIN_API, requestToken } from "../../main";
 import { fetchEncryptedJSON } from "../../services/network";
 import { decryptImageUrl } from "../shared/utils";
 import type {
@@ -12,7 +12,7 @@ import { parseQToonEpisodes } from "./parsers";
 
 export class ChapterProvider {
   async getChapters(sourceManga: SourceManga): Promise<Chapter[]> {
-    const url = new URL(QTOON_API)
+    const url = new URL(DOMAIN_API)
       .addPathComponent("api")
       .addPathComponent("w")
       .addPathComponent("comic")
@@ -27,7 +27,7 @@ export class ChapterProvider {
   }
 
   async getChapterDetails(chapter: Chapter): Promise<ChapterDetails> {
-    const episodeUrl = new URL(QTOON_API)
+    const episodeUrl = new URL(DOMAIN_API)
       .addPathComponent("api")
       .addPathComponent("w")
       .addPathComponent("comic")
@@ -49,7 +49,7 @@ export class ChapterProvider {
     let hasMore = true;
 
     while (hasMore) {
-      const resourceUrl = new URL(QTOON_API)
+      const resourceUrl = new URL(DOMAIN_API)
         .addPathComponent("api")
         .addPathComponent("w")
         .addPathComponent("resource")
@@ -64,7 +64,7 @@ export class ChapterProvider {
 
       for (const resource of resourceData.resources ?? []) {
         allPages.push({
-          url: decryptImageUrl(resource.url, requestToken),
+          url: await decryptImageUrl(resource.url, requestToken),
           idx: resource.rgIdx,
         });
       }

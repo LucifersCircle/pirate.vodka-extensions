@@ -1,4 +1,9 @@
-import CryptoJS from "crypto-js";
+import type { QToonComic } from "./models";
+
+// resolves the preferred public ID for a comic (webLinkId over csid)
+export function comicId(comic: QToonComic): string {
+  return comic.webLinkId || comic.csid;
+}
 
 export function applyMixins(derivedCtor: any, constructors: any[]) {
   constructors.forEach((baseCtor) => {
@@ -23,32 +28,41 @@ export function generateDid(length = 24): string {
 }
 
 export function md5(input: string): string {
-  return CryptoJS.MD5(input).toString();
+  const encoder = new TextEncoder();
+  const array = encoder.encode(input);
+  // @ts-expect-error (remove this once method is in types)
+  return Application.crypto_md5Hash(array.buffer);
 }
 
-function aesDecrypt(data: string, key: string, iv: string): string {
-  const keyBytes = CryptoJS.enc.Utf8.parse(key);
-  const ivBytes = CryptoJS.enc.Utf8.parse(iv);
-  const decrypted = CryptoJS.AES.decrypt(data, keyBytes, {
-    iv: ivBytes,
-    mode: CryptoJS.mode.CBC,
-    padding: CryptoJS.pad.Pkcs7,
-  });
-  return decrypted.toString(CryptoJS.enc.Utf8);
+async function aesDecrypt(data: string, key: string, iv: string): Promise<string> {
+  const subtle = new SubtleCrypto();
+  const encoder = new TextEncoder();
+  const keyBytes = encoder.encode(key);
+  const ivBytes = encoder.encode(iv);
+  const cryptoKey = await subtle.importKey("raw", keyBytes.buffer, { name: "AES-CBC" }, false, [
+    "decrypt",
+  ]);
+  const cipherBuffer = Application.base64Decode(data) as unknown as ArrayBuffer;
+  const decrypted = await subtle.decrypt(
+    { name: "AES-CBC", iv: ivBytes.buffer },
+    cryptoKey,
+    cipherBuffer,
+  );
+  return new TextDecoder().decode(decrypted);
 }
 
-export function decryptResponse(data: string, ts: number, did: string): string {
+export async function decryptResponse(data: string, ts: number, did: string): Promise<string> {
   const inner = md5(`${did}${ts}`);
-  const outer = md5(`${inner}OQlM9JBJgLWsgffb`);
+  const outer = md5(`${inner}OQlM9JBJgLWsgffb`); // API response decryption salt
   const key = outer.substring(0, 16);
   const iv = outer.substring(16, 32);
-  return aesDecrypt(data, key, iv);
+  return await aesDecrypt(data, key, iv);
 }
 
-export function decryptImageUrl(url: string, did: string): string {
+export async function decryptImageUrl(url: string, did: string): Promise<string> {
   const inner = md5(did);
-  const outer = md5(`${inner}9tv86uBwmOYs7QZ0`);
+  const outer = md5(`${inner}9tv86uBwmOYs7QZ0`); // image URL decryption salt
   const key = outer.substring(0, 16);
   const iv = outer.substring(16, 32);
-  return aesDecrypt(url, key, iv);
+  return await aesDecrypt(url, key, iv);
 }

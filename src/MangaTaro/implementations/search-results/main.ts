@@ -7,9 +7,10 @@ import type {
   SortingOption,
 } from "@paperback/types";
 import { ContentRating, URL } from "@paperback/types";
-import { MANGATARO_DOMAIN } from "../../main";
+import { DOMAIN } from "../../main";
 import { fetchJSON } from "../../services/network";
 import type { MangaTaroLoadItem, MangaTaroLoadRequest } from "../shared/models";
+import { formatMangaId, isNovel, slugFromUrl } from "../shared/utils";
 import {
   SORT_OPTIONS,
   buildSearchFilters,
@@ -48,7 +49,7 @@ export class SearchProvider {
     const genreMatchMode = readDropdownFilter(filters, "genreMatchMode", "any");
     const sort = sortingOption?.id ?? "post_desc";
 
-    const url = new URL(MANGATARO_DOMAIN)
+    const url = new URL(DOMAIN)
       .addPathComponent("wp-json")
       .addPathComponent("manga")
       .addPathComponent("v1")
@@ -76,18 +77,14 @@ export class SearchProvider {
     const json = await fetchJSON<MangaTaroLoadItem[]>(request);
 
     const items: SearchResultItem[] = json
-      .filter((item) => item.type.toLowerCase() !== "novel")
-      .map((item) => {
-        const slug = item.url.split("/").filter(Boolean).pop() ?? item.id;
-        const mangaId = `${slug}:${item.id}`;
-        return {
-          mangaId,
-          title: item.title,
-          imageUrl: item.cover,
-          subtitle: item.type,
-          contentRating: ContentRating.EVERYONE,
-        };
-      });
+      .filter((item) => !isNovel(item.type))
+      .map((item) => ({
+        mangaId: formatMangaId(slugFromUrl(item.url) || item.id, item.id),
+        title: item.title,
+        imageUrl: item.cover,
+        subtitle: item.type,
+        contentRating: ContentRating.EVERYONE,
+      }));
 
     return {
       items,

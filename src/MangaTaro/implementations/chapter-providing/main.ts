@@ -1,8 +1,8 @@
 import type { Chapter, ChapterDetails, Request, SourceManga } from "@paperback/types";
 import { URL } from "@paperback/types";
-import { MANGATARO_DOMAIN } from "../../main";
+import { DOMAIN } from "../../main";
 import { fetchJSON, fetchText } from "../../services/network";
-import { extractNumericId, generateToken } from "../shared/utils";
+import { extractNumericId, generateToken, parseMangaId } from "../shared/utils";
 import type {
   MangaTaroChapter,
   MangaTaroChaptersResponse,
@@ -12,30 +12,26 @@ import { parseChapterList } from "./parsers";
 
 export class ChapterProvider {
   async getChapters(sourceManga: SourceManga): Promise<Chapter[]> {
-    const parts = sourceManga.mangaId.split(":");
-    const slug = parts[0] ?? sourceManga.mangaId;
-    let numericId = parts[1];
+    const { slug, numericId: resolvedId } = parseMangaId(sourceManga.mangaId);
+    let numericId = resolvedId;
 
     // slug-only mangaIds (from wp-json discover sections) have no numeric id. resolve by fetching the manga page
     if (!numericId || !/^\d+$/.test(numericId)) {
-      const pageUrl = new URL(MANGATARO_DOMAIN)
-        .addPathComponent("manga")
-        .addPathComponent(slug)
-        .toString();
+      const pageUrl = new URL(DOMAIN).addPathComponent("manga").addPathComponent(slug).toString();
       const html = await fetchText({ url: pageUrl, method: "GET" } as Request);
       const resolved = extractNumericId(html);
       if (!resolved) throw new Error(`Could not resolve numeric ID for manga: ${slug}`);
       numericId = resolved;
     }
 
-    const LIMIT = 500;
+    const LIMIT = 500; // API max per request
     const allChapters: MangaTaroChapter[] = [];
     let offset = 0;
     let hasMore = true;
 
     while (hasMore) {
       const { token, timestamp } = generateToken();
-      const url = new URL(MANGATARO_DOMAIN)
+      const url = new URL(DOMAIN)
         .addPathComponent("auth")
         .addPathComponent("manga-chapters")
         .setQueryItem("manga_id", numericId)
@@ -60,7 +56,7 @@ export class ChapterProvider {
   async getChapterDetails(chapter: Chapter): Promise<ChapterDetails> {
     const chapterId = chapter.chapterId;
 
-    const url = new URL(MANGATARO_DOMAIN)
+    const url = new URL(DOMAIN)
       .addPathComponent("auth")
       .addPathComponent("chapter-content")
       .setQueryItem("chapter_id", chapterId)

@@ -1,7 +1,8 @@
 import type { SourceManga } from "@paperback/types";
 import { ContentRating } from "@paperback/types";
-import { QTOON_DOMAIN } from "../../main";
+import { DOMAIN } from "../../main";
 import type { QToonComic } from "../shared/models";
+import { comicId } from "../shared/utils";
 
 export function parseQToonMangaDetails(comic: QToonComic, mangaId: string): SourceManga {
   const tags = [
@@ -41,7 +42,7 @@ export function parseQToonMangaDetails(comic: QToonComic, mangaId: string): Sour
       status,
       contentRating: ContentRating.EVERYONE,
       tagGroups,
-      shareUrl: `${QTOON_DOMAIN}/detail/${comic.webLinkId || comic.csid}`,
+      shareUrl: `${DOMAIN}/detail/${comicId(comic)}`,
     },
   };
 }
