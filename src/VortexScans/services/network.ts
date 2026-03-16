@@ -26,7 +26,6 @@ export class VortexScansInterceptor extends PaperbackInterceptor {
     response: Response,
     data: ArrayBuffer,
   ): Promise<ArrayBuffer> {
-    // Cloudflare managed challenge
     if (response.headers?.["cf-mitigated"] === "challenge") {
       throw new CloudflareError({
         url: request.url,
@@ -37,7 +36,7 @@ export class VortexScansInterceptor extends PaperbackInterceptor {
       });
     }
 
-    // vShield PoW challenge — returns 200 with challenge HTML instead of real content
+    // vshield PoW challenge returns 200 with challenge HTML instead of real content
     if (request.url.includes("vortexscans.org")) {
       const body = Application.arrayBufferToUTF8String(data);
       if (typeof body === "string" && body.includes("vShield")) {
@@ -54,8 +53,7 @@ export class VortexScansInterceptor extends PaperbackInterceptor {
     return data;
   }
 
-  // vShield redirect handler, extracts Set-Cookie from 302 responses
-  // and attaches it to the proposed redirect request
+  // vshield redirect handler — extracts Set-Cookie from 302 and attaches to redirect
   async handleRedirect(
     proposedRequest: Request,
     redirectedResponse: Response,
@@ -73,7 +71,6 @@ export class VortexScansInterceptor extends PaperbackInterceptor {
 
     const value = rest.join("=");
 
-    // Persist protection cookies for subsequent requests
     this.cookieStorage.setCookie({
       name,
       value,
@@ -81,7 +78,6 @@ export class VortexScansInterceptor extends PaperbackInterceptor {
       path: "/",
     });
 
-    // Attach to this redirect request via headers
     const existing = proposedRequest.headers?.["cookie"] ?? "";
     const cookieHeader = existing ? `${existing}; ${name}=${value}` : `${name}=${value}`;
 

@@ -9,14 +9,12 @@ const PAGE_SIZE = 48;
 
 export class MangaProvider {
   async getMangaDetails(mangaId: string): Promise<SourceManga> {
-    // Check cache first
     const cached = Application.getState(`post_${mangaId}`) as string | undefined;
     if (cached) {
       const post = JSON.parse(cached) as VortexPost;
       return parseMangaDetails(post);
     }
 
-    // Paginate through /api/posts until we find the post
     for (let page = 1; page <= 10; page++) {
       const url = new URL(VORTEX_API_BASE)
         .addPathComponent("posts")
@@ -31,7 +29,6 @@ export class MangaProvider {
       const json = await fetchJSON<VortexQueryResponse>(request);
       const posts = json.posts ?? [];
 
-      // Cache all posts from this page
       for (const p of posts) {
         Application.setState(JSON.stringify(p), `post_${p.id}`);
       }
@@ -41,7 +38,6 @@ export class MangaProvider {
         return parseMangaDetails(post);
       }
 
-      // No more pages
       if (posts.length < PAGE_SIZE) break;
     }
 

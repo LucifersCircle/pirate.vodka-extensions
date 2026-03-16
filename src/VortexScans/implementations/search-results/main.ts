@@ -28,23 +28,29 @@ export class SearchProvider {
       .replace(/[\u201C\u201D]/g, '"')
       .replace(/\s+/g, " ");
 
-    let urlBuilder = new URL(VORTEX_API_BASE)
-      .addPathComponent("posts")
+    const [orderBy, orderDirection] = (sortingOption?.id ?? "lastChapterAddedAt:desc").split(":");
+
+    const url = new URL(VORTEX_API_BASE)
+      .addPathComponent("query")
       .setQueryItem("perPage", PAGE_SIZE.toString())
       .setQueryItem("page", page.toString())
-      .setQueryItem("isNovel", "false");
+      .setQueryItem("orderBy", orderBy)
+      .setQueryItem("orderDirection", orderDirection);
 
     if (searchTerm) {
-      urlBuilder = urlBuilder.setQueryItem("searchTerm", searchTerm);
+      url.setQueryItem("searchTerm", searchTerm);
     }
 
-    // Status filter
     const statusFilter = query.filters?.find((f) => f.id === "status");
     if (statusFilter?.value) {
-      urlBuilder = urlBuilder.setQueryItem("seriesStatus", statusFilter.value as string);
+      url.setQueryItem("seriesStatus", statusFilter.value as string);
     }
 
-    // Genre filter
+    const typeFilter = query.filters?.find((f) => f.id === "type");
+    if (typeFilter?.value) {
+      url.setQueryItem("seriesType", typeFilter.value as string);
+    }
+
     const genreFilter = query.filters?.find((f) => f.id === "genres");
     if (
       genreFilter?.value &&
@@ -52,28 +58,24 @@ export class SearchProvider {
       !Array.isArray(genreFilter.value)
     ) {
       const genreValue = genreFilter.value;
-      const selectedGenres = Object.keys(genreValue).filter(
-        (key) => genreValue[key] === "included",
-      );
-      if (selectedGenres.length > 0) {
-        urlBuilder = urlBuilder.setQueryItem("genreIds", selectedGenres.join(","));
+      const included = Object.keys(genreValue).filter((key) => genreValue[key] === "included");
+      const excluded = Object.keys(genreValue).filter((key) => genreValue[key] === "excluded");
+      if (included.length > 0) {
+        url.setQueryItem("genreIds", included.join(","));
+      }
+      if (excluded.length > 0) {
+        url.setQueryItem("excludedGenreIds", excluded.join(","));
       }
     }
 
-    // Sorting — default to hot (popular)
-    const tag = sortingOption?.id ?? "hot";
-    urlBuilder = urlBuilder.setQueryItem("tag", tag);
-
-    const url = urlBuilder.toString();
-    const request: Request = { url, method: "GET" };
+    const request: Request = { url: url.toString(), method: "GET" };
     let json = await fetchJSON<VortexQueryResponse>(request);
     let results = parseSearchResults(json);
 
-    // If no results and search contains straight apostrophe, try with curly
+    // retry with curly apostrophe if straight quote search returns nothing
     if (results.length === 0 && searchTerm.includes("'")) {
-      const curlySearchTerm = searchTerm.replace(/'/g, "\u2019");
-      urlBuilder = urlBuilder.setQueryItem("searchTerm", curlySearchTerm);
-      const retryRequest: Request = { url: urlBuilder.toString(), method: "GET" };
+      url.setQueryItem("searchTerm", searchTerm.replace(/'/g, "\u2019"));
+      const retryRequest: Request = { url: url.toString(), method: "GET" };
       json = await fetchJSON<VortexQueryResponse>(retryRequest);
       results = parseSearchResults(json);
     }
@@ -96,23 +98,40 @@ export class SearchProvider {
       options: [
         { id: "", value: "All" },
         { id: "ONGOING", value: "Ongoing" },
-        { id: "HIATUS", value: "Hiatus" },
-        { id: "DROPPED", value: "Dropped" },
         { id: "COMPLETED", value: "Completed" },
+        { id: "CANCELLED", value: "Cancelled" },
+        { id: "DROPPED", value: "Dropped" },
+        { id: "MASS_RELEASED", value: "Mass Released" },
+        { id: "COMING_SOON", value: "Coming Soon" },
+        { id: "HIATUS", value: "Hiatus" },
       ],
       value: "",
     };
 
-    // Fetch and cache genres
+    const typeFilter: SearchFilter = {
+      type: "dropdown",
+      id: "type",
+      title: "Type",
+      options: [
+        { id: "", value: "All" },
+        { id: "MANHWA", value: "Manhwa" },
+        { id: "MANHUA", value: "Manhua" },
+        { id: "MANGA", value: "Manga" },
+        { id: "SPANISH", value: "Spanish" },
+        { id: "RUSSIAN", value: "Russian" },
+      ],
+      value: "",
+    };
+
     const genresCacheDate = Number(Application.getState("genres-cache-date") ?? 0);
     let genres: VortexGenre[];
 
     if (genresCacheDate + 604800 > Date.now() / 1000) {
       genres = JSON.parse(Application.getState("genres") as string) as VortexGenre[];
     } else {
-      const url = `${VORTEX_API_BASE}/genres`;
-      const request: Request = { url, method: "GET" };
-      genres = await fetchJSON<VortexGenre[]>(request);
+      const genresUrl = `${VORTEX_API_BASE}/genres`;
+      const genresRequest: Request = { url: genresUrl, method: "GET" };
+      genres = await fetchJSON<VortexGenre[]>(genresRequest);
 
       Application.setState(JSON.stringify(genres), "genres");
       Application.setState(String(Date.now() / 1000), "genres-cache-date");
@@ -129,18 +148,21 @@ export class SearchProvider {
           value: g.name,
         })),
       value: {},
-      allowExclusion: false,
+      allowExclusion: true,
       allowEmptySelection: true,
       maximum: undefined,
     };
 
-    return [statusFilter, genreFilter];
+    return [statusFilter, typeFilter, genreFilter];
   }
 
   async getSortingOptions(): Promise<SortingOption[]> {
     return [
-      { id: "hot", label: "Hot" },
-      { id: "new", label: "New" },
+      { id: "lastChapterAddedAt:desc", label: "Latest Chapters" },
+      { id: "totalViews:desc", label: "Most Popular" },
+      { id: "createdAt:desc", label: "Newest Added" },
+      { id: "createdAt:asc", label: "Oldest First" },
+      { id: "postTitle:asc", label: "A-Z" },
     ];
   }
 }

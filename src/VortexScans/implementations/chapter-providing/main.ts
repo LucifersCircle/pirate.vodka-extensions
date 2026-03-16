@@ -32,7 +32,6 @@ export class ChapterProvider {
       throw new Error("This chapter is locked (premium/coins required).");
     }
 
-    // Get slug from additionalInfo, or fetch it
     let slug = sourceManga.mangaInfo?.additionalInfo?.slug;
     if (!slug) {
       const mangaProvider = new MangaProvider();
