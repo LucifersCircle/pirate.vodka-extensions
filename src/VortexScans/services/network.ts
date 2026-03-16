@@ -26,6 +26,7 @@ export class VortexScansInterceptor extends PaperbackInterceptor {
     response: Response,
     data: ArrayBuffer,
   ): Promise<ArrayBuffer> {
+    // Cloudflare managed challenge
     if (response.headers?.["cf-mitigated"] === "challenge") {
       throw new CloudflareError({
         url: request.url,
@@ -34,6 +35,20 @@ export class VortexScansInterceptor extends PaperbackInterceptor {
           "user-agent": await Application.getDefaultUserAgent(),
         },
       });
+    }
+
+    // vShield PoW challenge — returns 200 with challenge HTML instead of real content
+    if (request.url.includes("vortexscans.org")) {
+      const body = Application.arrayBufferToUTF8String(data);
+      if (typeof body === "string" && body.includes("vShield")) {
+        throw new CloudflareError({
+          url: request.url,
+          method: request.method ?? "GET",
+          headers: {
+            "user-agent": await Application.getDefaultUserAgent(),
+          },
+        });
+      }
     }
 
     return data;
