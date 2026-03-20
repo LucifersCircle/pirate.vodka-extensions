@@ -32,9 +32,29 @@ export function parseChapterList(
 }
 
 export function parseChapterDetails(html: string, chapter: Chapter): ChapterDetails {
-  // extract from data-image-index imgs in the reader section (ordered)
-  const indexedRegex = /data-image-index="(\d+)"[^>]*src="(https?:\/\/[^"]+)"/gi;
+  // hidden SEO section has all pages in order, extract from there first
+  const seoSection = html.match(
+    /<section[^>]*aria-label="[^"]*comic pages"[^>]*>([\s\S]*?)<\/section>/i,
+  );
 
+  if (seoSection) {
+    const imgRegex = /src="(https?:\/\/storage\.vexmanga\.com\/[^"]+)"/gi;
+    const pages: string[] = [];
+    let match;
+    while ((match = imgRegex.exec(seoSection[1]!)) !== null) {
+      pages.push(match[1]!);
+    }
+    if (pages.length > 0) {
+      return {
+        id: chapter.chapterId,
+        mangaId: chapter.sourceManga.mangaId,
+        pages,
+      };
+    }
+  }
+
+  // fallback: data-image-index imgs from the reader
+  const indexedRegex = /data-image-index="(\d+)"[^>]*src="(https?:\/\/[^"]+)"/gi;
   const indexed: { index: number; url: string }[] = [];
   let match;
   while ((match = indexedRegex.exec(html)) !== null) {
@@ -50,24 +70,5 @@ export function parseChapterDetails(html: string, chapter: Chapter): ChapterDeta
     };
   }
 
-  // fallback: grab all storage URLs and dedupe
-  const fallbackRegex = /https?:\/\/storage\.vexmanga\.com\/[^"'\\]+?\.(?:webp|jpe?g|png)/gi;
-  const urls = Array.from(new Set(html.match(fallbackRegex) ?? []));
-
-  if (urls.length === 0) {
-    throw new Error("No chapter page data could be parsed from VortexScans for this chapter.");
-  }
-
-  // sort by page number in filename (page-NNNN)
-  urls.sort((a, b) => {
-    const numA = parseInt(a.match(/page-(\d+)/)?.[1] ?? "0");
-    const numB = parseInt(b.match(/page-(\d+)/)?.[1] ?? "0");
-    return numA - numB;
-  });
-
-  return {
-    id: chapter.chapterId,
-    mangaId: chapter.sourceManga.mangaId,
-    pages: urls,
-  };
+  throw new Error("No chapter page data could be parsed from VortexScans for this chapter.");
 }
