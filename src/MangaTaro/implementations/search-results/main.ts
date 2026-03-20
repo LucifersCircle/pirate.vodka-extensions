@@ -7,7 +7,7 @@ import type {
   SortingOption,
 } from "@paperback/types";
 import { ContentRating, URL } from "@paperback/types";
-import { DOMAIN } from "../../main";
+import { DOMAIN } from "../shared/models";
 import { fetchJSON } from "../../services/network";
 import type { MangaTaroLoadItem, MangaTaroLoadRequest } from "../shared/models";
 import { formatMangaId, isNovel, slugFromUrl } from "../shared/utils";
@@ -74,9 +74,9 @@ export class SearchProvider {
       body: JSON.stringify(body),
     };
 
-    const json = await fetchJSON<MangaTaroLoadItem[]>(request);
+    const data = await fetchJSON<MangaTaroLoadItem[]>(request);
 
-    const items: SearchResultItem[] = json
+    const items: SearchResultItem[] = data
       .filter((item) => !isNovel(item.type))
       .map((item) => ({
         mangaId: formatMangaId(slugFromUrl(item.url) || item.id, item.id),
@@ -88,7 +88,7 @@ export class SearchProvider {
 
     return {
       items,
-      metadata: items.length > 0 ? { page: page + 1 } : undefined,
+      metadata: data.length > 0 ? { page: page + 1 } : undefined,
     };
   }
 }
