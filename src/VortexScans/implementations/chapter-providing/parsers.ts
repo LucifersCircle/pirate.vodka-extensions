@@ -32,50 +32,42 @@ export function parseChapterList(
 }
 
 export function parseChapterDetails(html: string, chapter: Chapter): ChapterDetails {
-  const pageRegex =
-    /https?:\/\/[^"'\\]*?(?:storage\.vexmanga\.com|wsrv\.nl)[^"'\\]+?\.(?:webp|jpe?g|png)/gi;
+  // extract from data-image-index imgs in the reader section (ordered)
+  const indexedRegex = /data-image-index="(\d+)"[^>]*src="(https?:\/\/[^"]+)"/gi;
 
-  const rawMatches = html.match(pageRegex) ?? [];
+  const indexed: { index: number; url: string }[] = [];
+  let match;
+  while ((match = indexedRegex.exec(html)) !== null) {
+    indexed.push({ index: parseInt(match[1]!), url: match[2]! });
+  }
 
-  if (rawMatches.length === 0) {
+  if (indexed.length > 0) {
+    indexed.sort((a, b) => a.index - b.index);
+    return {
+      id: chapter.chapterId,
+      mangaId: chapter.sourceManga.mangaId,
+      pages: indexed.map((p) => p.url),
+    };
+  }
+
+  // fallback: grab all storage URLs and dedupe
+  const fallbackRegex = /https?:\/\/storage\.vexmanga\.com\/[^"'\\]+?\.(?:webp|jpe?g|png)/gi;
+  const urls = Array.from(new Set(html.match(fallbackRegex) ?? []));
+
+  if (urls.length === 0) {
     throw new Error("No chapter page data could be parsed from VortexScans for this chapter.");
   }
 
-  const normalised = rawMatches.map((u) => u.replace(/([^:])\/\/+/g, "$1/"));
-  const unique = Array.from(new Set(normalised));
-
-  // group by directory to find the main set of chapter pages
-  const groups = new Map<string, string[]>();
-  for (const url of unique) {
-    const dir = url.replace(/\/[^/?#]+(\?.*)?$/, "");
-    const list = groups.get(dir);
-    if (list) {
-      list.push(url);
-    } else {
-      groups.set(dir, [url]);
-    }
-  }
-
-  let bestList: string[] | null = null;
-  for (const list of groups.values()) {
-    if (!bestList || list.length > bestList.length) {
-      bestList = list;
-    }
-  }
-
-  if (!bestList || bestList.length === 0) {
-    throw new Error("No chapter page data could be parsed from VortexScans for this chapter.");
-  }
-
-  const pages = bestList.sort((a, b) => {
-    const numA = parseInt(a.match(/(\d+)(?=\.[^.]*$)/)?.[1] ?? "0");
-    const numB = parseInt(b.match(/(\d+)(?=\.[^.]*$)/)?.[1] ?? "0");
+  // sort by page number in filename (page-NNNN)
+  urls.sort((a, b) => {
+    const numA = parseInt(a.match(/page-(\d+)/)?.[1] ?? "0");
+    const numB = parseInt(b.match(/page-(\d+)/)?.[1] ?? "0");
     return numA - numB;
   });
 
   return {
     id: chapter.chapterId,
     mangaId: chapter.sourceManga.mangaId,
-    pages,
+    pages: urls,
   };
 }
