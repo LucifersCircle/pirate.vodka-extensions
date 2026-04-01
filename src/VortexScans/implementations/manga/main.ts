@@ -7,10 +7,12 @@ import { parseMangaDetails } from "./parsers";
 
 export class MangaProvider {
   async getMangaDetails(mangaId: string): Promise<SourceManga> {
-    const cached = Application.getState(`post_${mangaId}`) as string | undefined;
+    const cacheKey = `post_${mangaId}`;
+    const cached = Application.getState(cacheKey) as string | undefined;
+    let cachedPost: VortexPost | undefined;
+
     if (cached) {
-      const post = JSON.parse(cached) as VortexPost;
-      return parseMangaDetails(post);
+      cachedPost = JSON.parse(cached) as VortexPost;
     }
 
     for (let page = 1; page <= 10; page++) {
@@ -37,6 +39,10 @@ export class MangaProvider {
       }
 
       if (posts.length < PAGE_SIZE) break;
+    }
+
+    if (cachedPost) {
+      return parseMangaDetails(cachedPost);
     }
 
     throw new Error(`Could not find manga with id: ${mangaId}`);
