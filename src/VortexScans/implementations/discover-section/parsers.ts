@@ -1,8 +1,8 @@
 import type { DiscoverSectionItem } from "@paperback/types";
 import type { VortexQueryResponse } from "../shared/models";
 
-export function parseDiscoverItems(json: VortexQueryResponse): DiscoverSectionItem[] {
-  const posts = json.posts ?? [];
+export function parseDiscoverItems(data: VortexQueryResponse): DiscoverSectionItem[] {
+  const posts = data.posts ?? [];
 
   return posts
     .filter((post) => post.postTitle && post.postTitle.trim().length > 0)

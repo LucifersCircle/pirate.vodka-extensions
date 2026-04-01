@@ -1,3 +1,6 @@
+export const DOMAIN = "https://vortexscans.io";
+export const DOMAIN_API = "https://api.vortexscans.io/api";
+
 export interface VortexQueryResponse {
   posts: VortexPost[];
   totalCount?: number;
@@ -64,5 +67,34 @@ export interface VortexChaptersResponse {
 
 export type Metadata = {
   page?: number;
-  completed?: boolean;
 };
+
+export const PAGE_SIZE = 48;
+
+export const SORT_OPTIONS = [
+  { id: "lastChapterAddedAt:desc", label: "Latest Chapters" },
+  { id: "totalViews:desc", label: "Most Popular" },
+  { id: "createdAt:desc", label: "Newest Added" },
+  { id: "createdAt:asc", label: "Oldest First" },
+  { id: "postTitle:asc", label: "A-Z" },
+];
+
+export const STATUS_OPTIONS = [
+  { id: "", value: "All" },
+  { id: "ONGOING", value: "Ongoing" },
+  { id: "COMPLETED", value: "Completed" },
+  { id: "CANCELLED", value: "Cancelled" },
+  { id: "DROPPED", value: "Dropped" },
+  { id: "MASS_RELEASED", value: "Mass Released" },
+  { id: "COMING_SOON", value: "Coming Soon" },
+  { id: "HIATUS", value: "Hiatus" },
+];
+
+export const TYPE_OPTIONS = [
+  { id: "", value: "All" },
+  { id: "MANHWA", value: "Manhwa" },
+  { id: "MANHUA", value: "Manhua" },
+  { id: "MANGA", value: "Manga" },
+  { id: "SPANISH", value: "Spanish" },
+  { id: "RUSSIAN", value: "Russian" },
+];

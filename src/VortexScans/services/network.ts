@@ -1,7 +1,8 @@
 import type { CookieStorageInterceptor, Request, Response } from "@paperback/types";
 import { CloudflareError, PaperbackInterceptor } from "@paperback/types";
-import { VORTEX_DOMAIN } from "../main";
+import { DOMAIN } from "../implementations/shared/models";
 
+// non-standard constructor and handleRedirect are required for vShield PoW challenge handling
 export class VortexScansInterceptor extends PaperbackInterceptor {
   private cookieStorage: CookieStorageInterceptor;
 
@@ -15,7 +16,7 @@ export class VortexScansInterceptor extends PaperbackInterceptor {
       ...request,
       headers: {
         ...request.headers,
-        referer: `${VORTEX_DOMAIN}/`,
+        referer: `${DOMAIN}/`,
         "user-agent": await Application.getDefaultUserAgent(),
       },
     };
@@ -74,7 +75,7 @@ export class VortexScansInterceptor extends PaperbackInterceptor {
     this.cookieStorage.setCookie({
       name,
       value,
-      domain: "vortexscans.org",
+      domain: new globalThis.URL(DOMAIN).hostname,
       path: "/",
     });
 
@@ -95,7 +96,7 @@ export async function fetchJSON<T>(request: Request): Promise<T> {
   const [response, buffer] = await Application.scheduleRequest(request);
 
   if (response.status !== 200) {
-    throw new Error(`[VortexScans] Request failed with status ${response.status}: ${request.url}`);
+    throw new Error(`Request failed with status ${response.status}: ${request.url}`);
   }
 
   const data = Application.arrayBufferToUTF8String(buffer);
@@ -104,7 +105,7 @@ export async function fetchJSON<T>(request: Request): Promise<T> {
     return typeof data === "string" ? (JSON.parse(data) as T) : (data as T);
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`[VortexScans] Failed to parse JSON from ${request.url}: ${reason}`);
+    throw new Error(`Failed to parse JSON from ${request.url}: ${reason}`);
   }
 }
 
@@ -112,7 +113,7 @@ export async function fetchText(request: Request): Promise<string> {
   const [response, buffer] = await Application.scheduleRequest(request);
 
   if (response.status !== 200) {
-    throw new Error(`[VortexScans] Request failed with status ${response.status}: ${request.url}`);
+    throw new Error(`Request failed with status ${response.status}: ${request.url}`);
   }
 
   const data = Application.arrayBufferToUTF8String(buffer);

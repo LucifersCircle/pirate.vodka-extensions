@@ -7,9 +7,6 @@ import { SearchProvider } from "./implementations/search-results/main";
 import { applyMixins } from "./implementations/shared/utils";
 import { VortexScansInterceptor } from "./services/network";
 
-export const VORTEX_DOMAIN = "https://vortexscans.org";
-export const VORTEX_API_BASE = "https://api.vortexscans.org/api";
-
 export interface VortexScansImplementation
   extends SearchProvider, MangaProvider, ChapterProvider, DiscoverProvider {}
 

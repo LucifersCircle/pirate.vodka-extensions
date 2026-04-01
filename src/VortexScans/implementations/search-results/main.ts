@@ -7,12 +7,16 @@ import type {
   SortingOption,
 } from "@paperback/types";
 import { URL } from "@paperback/types";
-import { VORTEX_API_BASE } from "../../main";
+import {
+  DOMAIN_API,
+  PAGE_SIZE,
+  SORT_OPTIONS,
+  STATUS_OPTIONS,
+  TYPE_OPTIONS,
+} from "../shared/models";
 import type { Metadata, VortexGenre, VortexQueryResponse } from "../shared/models";
 import { fetchJSON } from "../../services/network";
 import { parseSearchResults } from "./parsers";
-
-const PAGE_SIZE = 48;
 
 export class SearchProvider {
   async getSearchResults(
@@ -30,7 +34,7 @@ export class SearchProvider {
 
     const [orderBy, orderDirection] = (sortingOption?.id ?? "lastChapterAddedAt:desc").split(":");
 
-    const url = new URL(VORTEX_API_BASE)
+    const url = new URL(DOMAIN_API)
       .addPathComponent("query")
       .setQueryItem("perPage", PAGE_SIZE.toString())
       .setQueryItem("page", page.toString())
@@ -69,20 +73,21 @@ export class SearchProvider {
     }
 
     const request: Request = { url: url.toString(), method: "GET" };
-    let json = await fetchJSON<VortexQueryResponse>(request);
-    let results = parseSearchResults(json);
+    let data = await fetchJSON<VortexQueryResponse>(request);
+    let results = parseSearchResults(data);
 
     // retry with curly apostrophe if straight quote search returns nothing
     if (results.length === 0 && searchTerm.includes("'")) {
       url.setQueryItem("searchTerm", searchTerm.replace(/'/g, "\u2019"));
       const retryRequest: Request = { url: url.toString(), method: "GET" };
-      json = await fetchJSON<VortexQueryResponse>(retryRequest);
-      results = parseSearchResults(json);
+      data = await fetchJSON<VortexQueryResponse>(retryRequest);
+      results = parseSearchResults(data);
     }
 
-    const hasNext = json.totalCount
-      ? page * PAGE_SIZE < json.totalCount
-      : results.length >= PAGE_SIZE;
+    // use raw post count for pagination to avoid early termination from novel filtering
+    const hasNext = data.totalCount
+      ? page * PAGE_SIZE < data.totalCount
+      : (data.posts?.length ?? 0) >= PAGE_SIZE;
 
     return {
       items: results,
@@ -95,16 +100,7 @@ export class SearchProvider {
       type: "dropdown",
       id: "status",
       title: "Status",
-      options: [
-        { id: "", value: "All" },
-        { id: "ONGOING", value: "Ongoing" },
-        { id: "COMPLETED", value: "Completed" },
-        { id: "CANCELLED", value: "Cancelled" },
-        { id: "DROPPED", value: "Dropped" },
-        { id: "MASS_RELEASED", value: "Mass Released" },
-        { id: "COMING_SOON", value: "Coming Soon" },
-        { id: "HIATUS", value: "Hiatus" },
-      ],
+      options: STATUS_OPTIONS,
       value: "",
     };
 
@@ -112,14 +108,7 @@ export class SearchProvider {
       type: "dropdown",
       id: "type",
       title: "Type",
-      options: [
-        { id: "", value: "All" },
-        { id: "MANHWA", value: "Manhwa" },
-        { id: "MANHUA", value: "Manhua" },
-        { id: "MANGA", value: "Manga" },
-        { id: "SPANISH", value: "Spanish" },
-        { id: "RUSSIAN", value: "Russian" },
-      ],
+      options: TYPE_OPTIONS,
       value: "",
     };
 
@@ -129,7 +118,7 @@ export class SearchProvider {
     if (genresCacheDate + 604800 > Date.now() / 1000) {
       genres = JSON.parse(Application.getState("genres") as string) as VortexGenre[];
     } else {
-      const genresUrl = `${VORTEX_API_BASE}/genres`;
+      const genresUrl = `${DOMAIN_API}/genres`;
       const genresRequest: Request = { url: genresUrl, method: "GET" };
       genres = await fetchJSON<VortexGenre[]>(genresRequest);
 
@@ -157,12 +146,6 @@ export class SearchProvider {
   }
 
   async getSortingOptions(): Promise<SortingOption[]> {
-    return [
-      { id: "lastChapterAddedAt:desc", label: "Latest Chapters" },
-      { id: "totalViews:desc", label: "Most Popular" },
-      { id: "createdAt:desc", label: "Newest Added" },
-      { id: "createdAt:asc", label: "Oldest First" },
-      { id: "postTitle:asc", label: "A-Z" },
-    ];
+    return SORT_OPTIONS;
   }
 }

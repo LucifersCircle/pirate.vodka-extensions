@@ -2,8 +2,8 @@ import type { SearchResultItem } from "@paperback/types";
 import { ContentRating } from "@paperback/types";
 import type { VortexQueryResponse } from "../shared/models";
 
-export function parseSearchResults(json: VortexQueryResponse): SearchResultItem[] {
-  return (json.posts ?? [])
+export function parseSearchResults(data: VortexQueryResponse): SearchResultItem[] {
+  return (data.posts ?? [])
     .filter((post) => post.postTitle && post.postTitle.trim().length > 0 && !post.isNovel)
     .map((post) => {
       const mangaId = post.id.toString();

@@ -1,6 +1,6 @@
 import type { Chapter, ChapterDetails, Request, SourceManga } from "@paperback/types";
 import { URL } from "@paperback/types";
-import { VORTEX_API_BASE, VORTEX_DOMAIN } from "../../main";
+import { DOMAIN, DOMAIN_API } from "../shared/models";
 import { MangaProvider } from "../manga/main";
 import type { VortexChaptersResponse } from "../shared/models";
 import { fetchJSON, fetchText } from "../../services/network";
@@ -10,7 +10,7 @@ export class ChapterProvider {
   async getChapters(sourceManga: SourceManga): Promise<Chapter[]> {
     const postId = sourceManga.mangaId;
 
-    const url = new URL(VORTEX_API_BASE)
+    const url = new URL(DOMAIN_API)
       .addPathComponent("chapters")
       .setQueryItem("postId", postId)
       .setQueryItem("skip", "0")
@@ -20,9 +20,9 @@ export class ChapterProvider {
       .toString();
 
     const request: Request = { url, method: "GET" };
-    const json = await fetchJSON<VortexChaptersResponse>(request);
+    const data = await fetchJSON<VortexChaptersResponse>(request);
 
-    return parseChapterList(json, sourceManga);
+    return parseChapterList(data, sourceManga);
   }
 
   async getChapterDetails(chapter: Chapter): Promise<ChapterDetails> {
@@ -40,10 +40,10 @@ export class ChapterProvider {
     }
 
     if (!slug) {
-      throw new Error(`[VortexScans] Missing slug for manga ${sourceManga.mangaId}`);
+      throw new Error(`Missing slug for manga ${sourceManga.mangaId}`);
     }
 
-    const url = new URL(VORTEX_DOMAIN)
+    const url = new URL(DOMAIN)
       .addPathComponent("series")
       .addPathComponent(slug)
       .addPathComponent(chapter.chapterId)

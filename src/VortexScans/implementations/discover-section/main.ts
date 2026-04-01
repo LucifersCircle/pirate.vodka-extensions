@@ -1,6 +1,6 @@
 import type { DiscoverSection, DiscoverSectionItem, PagedResults, Request } from "@paperback/types";
 import { DiscoverSectionType, URL } from "@paperback/types";
-import { VORTEX_API_BASE } from "../../main";
+import { DOMAIN_API, PAGE_SIZE } from "../shared/models";
 import type { Metadata, VortexQueryResponse } from "../shared/models";
 import { fetchJSON } from "../../services/network";
 import { parseDiscoverItems } from "./parsers";
@@ -28,22 +28,22 @@ export class DiscoverProvider {
     const page = metadata?.page ?? 1;
     const tag = section.id === "latest_new" ? "new" : "hot";
 
-    const url = new URL(VORTEX_API_BASE)
+    const url = new URL(DOMAIN_API)
       .addPathComponent("posts")
       .setQueryItem("page", page.toString())
-      .setQueryItem("perPage", "48")
+      .setQueryItem("perPage", PAGE_SIZE.toString())
       .setQueryItem("searchTerm", "")
       .setQueryItem("isNovel", "false")
       .setQueryItem("tag", tag)
       .toString();
 
     const request: Request = { url, method: "GET" };
-    const json = await fetchJSON<VortexQueryResponse>(request);
-    const items = parseDiscoverItems(json);
+    const data = await fetchJSON<VortexQueryResponse>(request);
+    const items = parseDiscoverItems(data);
 
     return {
       items,
-      metadata: items.length > 0 ? { page: page + 1 } : undefined,
+      metadata: items.length >= PAGE_SIZE ? { page: page + 1 } : undefined,
     };
   }
 }

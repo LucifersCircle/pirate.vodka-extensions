@@ -1,11 +1,9 @@
 import type { Request, SourceManga } from "@paperback/types";
 import { URL } from "@paperback/types";
-import { VORTEX_API_BASE } from "../../main";
+import { DOMAIN_API, PAGE_SIZE } from "../shared/models";
 import type { VortexPost, VortexQueryResponse } from "../shared/models";
 import { fetchJSON } from "../../services/network";
 import { parseMangaDetails } from "./parsers";
-
-const PAGE_SIZE = 48;
 
 export class MangaProvider {
   async getMangaDetails(mangaId: string): Promise<SourceManga> {
@@ -16,7 +14,7 @@ export class MangaProvider {
     }
 
     for (let page = 1; page <= 10; page++) {
-      const url = new URL(VORTEX_API_BASE)
+      const url = new URL(DOMAIN_API)
         .addPathComponent("posts")
         .setQueryItem("page", page.toString())
         .setQueryItem("perPage", PAGE_SIZE.toString())
@@ -26,8 +24,8 @@ export class MangaProvider {
         .toString();
 
       const request: Request = { url, method: "GET" };
-      const json = await fetchJSON<VortexQueryResponse>(request);
-      const posts = json.posts ?? [];
+      const data = await fetchJSON<VortexQueryResponse>(request);
+      const posts = data.posts ?? [];
 
       for (const p of posts) {
         Application.setState(JSON.stringify(p), `post_${p.id}`);
@@ -41,6 +39,6 @@ export class MangaProvider {
       if (posts.length < PAGE_SIZE) break;
     }
 
-    throw new Error(`[VortexScans] Could not find manga with id: ${mangaId}`);
+    throw new Error(`Could not find manga with id: ${mangaId}`);
   }
 }
