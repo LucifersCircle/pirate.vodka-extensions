@@ -2,39 +2,54 @@ import type { Chapter, ChapterDetails, Request, SourceManga } from "@paperback/t
 import { URL } from "@paperback/types";
 import { QISCANS_API_BASE, QISCANS_DOMAIN } from "../../main";
 import { MangaProvider } from "../manga/main";
-import type { QIScansChaptersResponse } from "../shared/models";
+import type { QIScansSeriesChapter, QIScansSeriesChaptersResponse } from "../shared/models";
 import { fetchJSON, fetchText } from "../../services/network";
+import { decodeMangaId } from "../shared/utils";
 import { parseChapterDetails, parseChapterList } from "./parsers";
+
+const CHAPTERS_PER_PAGE = 100;
 
 export class ChapterProvider {
   async getChapters(sourceManga: SourceManga): Promise<Chapter[]> {
     const mangaId = sourceManga.mangaId;
 
-    // ensure postId
-    if (!sourceManga.mangaInfo?.additionalInfo?.postId) {
+    if (!sourceManga.mangaInfo?.additionalInfo?.slug) {
       const mangaProvider = new MangaProvider();
       const updated = await mangaProvider.getMangaDetails(mangaId);
       sourceManga.mangaInfo = updated.mangaInfo;
     }
 
-    const postId = sourceManga.mangaInfo?.additionalInfo?.postId;
-    if (!postId) {
-      throw new Error(`[QiScans] Missing postId for ${mangaId}`);
+    const slug = sourceManga.mangaInfo?.additionalInfo?.slug ?? decodeMangaId(sourceManga.mangaId);
+    if (!slug) {
+      throw new Error(`[QiScans] Missing slug for ${mangaId}`);
     }
 
-    const url = new URL(QISCANS_API_BASE)
-      .addPathComponent("chapters")
-      .setQueryItem("postId", postId)
-      .setQueryItem("skip", "0")
-      .setQueryItem("take", "500")
-      .setQueryItem("order", "desc")
-      .setQueryItem("search", "")
-      .toString();
+    const chapters: QIScansSeriesChapter[] = [];
+    let page = 1;
 
-    const request: Request = { url, method: "GET" };
-    const json = await fetchJSON<QIScansChaptersResponse>(request);
+    while (true) {
+      const url = new URL(QISCANS_API_BASE)
+        .addPathComponent("v1")
+        .addPathComponent("series")
+        .addPathComponent(slug)
+        .addPathComponent("chapters")
+        .setQueryItem("page", page.toString())
+        .setQueryItem("perPage", CHAPTERS_PER_PAGE.toString())
+        .setQueryItem("sort", "desc")
+        .toString();
 
-    return parseChapterList(json, sourceManga);
+      const request: Request = { url, method: "GET" };
+      const data = await fetchJSON<QIScansSeriesChaptersResponse>(request);
+      chapters.push(...(data.data ?? []));
+
+      if (!data.next || page >= data.totalPages) {
+        break;
+      }
+
+      page = data.next;
+    }
+
+    return parseChapterList(chapters, sourceManga);
   }
 
   async getChapterDetails(chapter: Chapter): Promise<ChapterDetails> {
@@ -45,15 +60,11 @@ export class ChapterProvider {
       throw new Error("This chapter is locked (premium/coins required).");
     }
 
-    const shareUrl = sourceManga.mangaInfo?.shareUrl;
-    if (!shareUrl) {
-      throw new Error(`[QiScans] Missing shareUrl for ${sourceManga.mangaId}`);
-    }
-
-    const seriesSlug = shareUrl.split("/").filter(Boolean).pop();
+    const seriesSlug =
+      sourceManga.mangaInfo?.additionalInfo?.slug ?? decodeMangaId(sourceManga.mangaId);
     const url = new URL(QISCANS_DOMAIN)
       .addPathComponent("series")
-      .addPathComponent(seriesSlug!)
+      .addPathComponent(seriesSlug)
       .addPathComponent(chapter.chapterId)
       .toString();
 

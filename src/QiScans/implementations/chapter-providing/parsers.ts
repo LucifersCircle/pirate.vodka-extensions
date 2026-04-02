@@ -1,35 +1,33 @@
 import type { Chapter, ChapterDetails, SourceManga } from "@paperback/types";
-import type { QIScansChaptersResponse } from "../shared/models";
+import type { QIScansSeriesChapter } from "../shared/models";
 
 export function parseChapterList(
-  json: QIScansChaptersResponse,
+  chapters: QIScansSeriesChapter[],
   sourceManga: SourceManga,
 ): Chapter[] {
-  const chapters = json.post?.chapters ?? [];
-
   if (chapters.length === 0) {
     return [];
   }
 
-  // sort by number, then by date
   const sorted = [...chapters].sort((a, b) => {
     if (a.number !== b.number) return a.number - b.number;
     return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
   });
 
-  // filter out locked chapters
-  const unlocked = sorted.filter((ch) => !ch.isLocked);
+  const available = sorted.filter(
+    (chapter) => chapter.publishStatus === "PUBLIC" && !chapter.requiresPurchase,
+  );
 
-  return unlocked.map((ch, index) => ({
-    chapterId: ch.slug,
+  return available.map((chapter, index) => ({
+    chapterId: chapter.slug,
     sourceManga,
-    title: "",
-    chapNum: ch.number,
+    title: chapter.title?.trim() || "",
+    chapNum: chapter.number,
     volume: 0,
     volumetitle: "",
     langCode: "en",
     sortingIndex: index,
-    publishDate: new Date(ch.createdAt),
+    publishDate: new Date(chapter.createdAt),
   }));
 }
 

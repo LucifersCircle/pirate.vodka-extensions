@@ -1,6 +1,73 @@
-export interface QIScansQueryResponse {
-  posts: QIScansPost[];
-  totalCount: number;
+export interface QIScansSeriesSearchResponse {
+  data: QIScansSeriesSearchItem[];
+}
+
+export interface QIScansSeriesSearchItem {
+  slug: string;
+  title: string;
+  alternativeTitles?: string;
+  cover: string;
+  type: string;
+  status: string;
+  publishStatus: string;
+  createdAt: string;
+  avgRating: number | null;
+  redirectUrl: string;
+  discountActive: boolean;
+  discountPercentage: number | null;
+  discountEndAt: string | null;
+}
+
+export interface QIScansSeriesDetailsResponse {
+  id: number;
+  slug: string;
+  title: string;
+  alternativeTitles: string;
+  description: string;
+  author: string;
+  artist: string;
+  cover: string;
+  type: string;
+  status: string;
+  publishStatus: string;
+  lastChapterAddedAt: string;
+  createdAt: string;
+  genres: QIScansGenre[];
+  stats: {
+    averageRating: number | null;
+    reviewCount: number;
+    chapterCount: number;
+    commentCount: number;
+  };
+  navigation?: {
+    first?: {
+      number: number;
+      slug: string;
+    };
+  };
+}
+
+export interface QIScansSeriesChaptersResponse {
+  data: QIScansSeriesChapter[];
+  totalItems: number;
+  totalPages: number;
+  current: number;
+  next: number | null;
+}
+
+export interface QIScansSeriesChapter {
+  id: number;
+  slug: string;
+  number: number;
+  title: string;
+  cover: string;
+  price: number;
+  isFree: boolean;
+  publishStatus: string;
+  totalViews: number;
+  commentCount: number;
+  createdAt: string;
+  requiresPurchase: boolean;
 }
 
 export interface QIScansV2Response {

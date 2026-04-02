@@ -8,81 +8,91 @@ import type {
 } from "@paperback/types";
 import { URL } from "@paperback/types";
 import { QISCANS_API_BASE } from "../../main";
-import type { Metadata, QIScansGenre, QIScansQueryResponse } from "../shared/models";
+import type { Metadata, QIScansSeriesSearchResponse } from "../shared/models";
+import { normalizeSearchTerm } from "../shared/utils";
 import { fetchJSON } from "../../services/network";
 import { parseSearchResults } from "./parsers";
 
 const PAGE_SIZE = 20;
+const MIN_SEARCH_TERM_LENGTH = 2;
+
+async function fetchSeriesSearchResults(
+  url: string,
+  searchTerm: string,
+): Promise<QIScansSeriesSearchResponse> {
+  try {
+    return await fetchJSON<QIScansSeriesSearchResponse>({ url, method: "GET" });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (searchTerm.length < MIN_SEARCH_TERM_LENGTH && message.includes("status 400")) {
+      return { data: [] };
+    }
+
+    throw error;
+  }
+}
 
 export class SearchProvider {
   async getSearchResults(
     query: SearchQuery,
-    metadata: Metadata,
+    metadata?: Metadata,
     sortingOption?: SortingOption,
   ): Promise<PagedResults<SearchResultItem>> {
     const page = metadata?.page ?? 1;
+    const searchTerm = normalizeSearchTerm(query.title ?? "");
 
-    const searchTerm = (query.title ?? "")
-      .trim()
-      .replace(/[\u2018\u2019]/g, "'")
-      .replace(/[\u201C\u201D]/g, '"')
-      .replace(/\s+/g, " ");
-
-    let urlBuilder = new URL(QISCANS_API_BASE)
-      .addPathComponent("query")
-      .setQueryItem("perPage", PAGE_SIZE.toString())
-      .setQueryItem("page", page.toString());
-
-    if (searchTerm) {
-      urlBuilder = urlBuilder.setQueryItem("searchTerm", searchTerm);
+    if (searchTerm.length > 0 && searchTerm.length < MIN_SEARCH_TERM_LENGTH) {
+      return {
+        items: [],
+        metadata: undefined,
+      };
     }
 
-    // get status
-    const statusFilter = query.filters?.find((f) => f.id === "status");
-    if (statusFilter?.value) {
-      urlBuilder = urlBuilder.setQueryItem("seriesStatus", statusFilter.value as string);
-    }
+    let urlBuilder = searchTerm
+      ? new URL(QISCANS_API_BASE)
+          .addPathComponent("v1")
+          .addPathComponent("series")
+          .addPathComponent("search")
+          .setQueryItem("q", searchTerm)
+          .setQueryItem("page", page.toString())
+          .setQueryItem("perPage", PAGE_SIZE.toString())
+      : new URL(QISCANS_API_BASE)
+          .addPathComponent("v1")
+          .addPathComponent("series")
+          .setQueryItem("page", page.toString())
+          .setQueryItem("perPage", PAGE_SIZE.toString())
+          .setQueryItem("sort", sortingOption?.id ?? "latest");
 
-    // get genres
-    const genreFilter = query.filters?.find((f) => f.id === "genres");
-    if (
-      genreFilter?.value &&
-      typeof genreFilter.value === "object" &&
-      !Array.isArray(genreFilter.value)
-    ) {
-      const genreValue = genreFilter.value;
-      const selectedGenres = Object.keys(genreValue).filter(
-        (key) => genreValue[key] === "included",
-      );
-      if (selectedGenres.length > 0) {
-        urlBuilder = urlBuilder.setQueryItem("genreIds", selectedGenres.join(","));
+    if (!searchTerm) {
+      const statusFilter = query.filters?.find((filter) => filter.id === "status");
+      if (typeof statusFilter?.value === "string" && statusFilter.value.trim()) {
+        urlBuilder = urlBuilder.setQueryItem("status", statusFilter.value);
       }
     }
 
-    // get sort
-    const sortBy = sortingOption?.id ?? "createdAt";
-    urlBuilder = urlBuilder.setQueryItem("orderBy", sortBy);
-
     const url = urlBuilder.toString();
-    const request: Request = { url, method: "GET" };
-    let json = await fetchJSON<QIScansQueryResponse>(request);
-    let results = parseSearchResults(json);
+    let data = searchTerm
+      ? await fetchSeriesSearchResults(url, searchTerm)
+      : await fetchJSON<QIScansSeriesSearchResponse>({ url, method: "GET" } as Request);
+    let results = parseSearchResults(data);
 
-    // if no results and search contains straight apostrophe, try with curly
     if (results.length === 0 && searchTerm.includes("'")) {
       const curlySearchTerm = searchTerm.replace(/'/g, "\u2019");
-      urlBuilder = urlBuilder.setQueryItem("searchTerm", curlySearchTerm);
-      const retryUrl = urlBuilder.toString();
+      urlBuilder = new URL(QISCANS_API_BASE)
+        .addPathComponent("v1")
+        .addPathComponent("series")
+        .addPathComponent("search")
+        .setQueryItem("q", curlySearchTerm)
+        .setQueryItem("page", page.toString())
+        .setQueryItem("perPage", PAGE_SIZE.toString());
 
-      const retryRequest: Request = { url: retryUrl, method: "GET" };
-      json = await fetchJSON<QIScansQueryResponse>(retryRequest);
-      results = parseSearchResults(json);
+      const retryUrl = urlBuilder.toString();
+      data = await fetchSeriesSearchResults(retryUrl, curlySearchTerm);
+      results = parseSearchResults(data);
     }
 
-    // check if there's a next page based on totalCount
-    const hasNext = json.totalCount
-      ? page * PAGE_SIZE < json.totalCount
-      : results.length >= PAGE_SIZE;
+    const hasNext = (data.data?.length ?? 0) >= PAGE_SIZE;
 
     return {
       items: results,
@@ -105,47 +115,13 @@ export class SearchProvider {
       value: "",
     };
 
-    // fetch and cache genres
-    const genresCacheDate = Number(Application.getState("genres-cache-date") ?? 0);
-    let genres: QIScansGenre[];
-
-    if (genresCacheDate + 604800 > Date.now() / 1000) {
-      // cache valid for 1 week
-      genres = JSON.parse(Application.getState("genres") as string) as QIScansGenre[];
-    } else {
-      const url = `${QISCANS_API_BASE}/genres`;
-      const request: Request = { url, method: "GET" };
-      genres = await fetchJSON<QIScansGenre[]>(request);
-
-      Application.setState(JSON.stringify(genres), "genres");
-      Application.setState(String(Date.now() / 1000), "genres-cache-date");
-    }
-
-    const genreFilter: SearchFilter = {
-      type: "multiselect",
-      id: "genres",
-      title: "Genres",
-      options: genres
-        .filter((g) => g.name !== "hidden")
-        .map((g) => ({
-          id: g.id.toString(),
-          value: g.name,
-        })),
-      value: {},
-      allowExclusion: false,
-      allowEmptySelection: true,
-      maximum: undefined,
-    };
-
-    return [statusFilter, genreFilter];
+    return [statusFilter];
   }
 
   async getSortingOptions(): Promise<SortingOption[]> {
     return [
-      { id: "createdAt", label: "Created At" },
-      { id: "updatedAt", label: "Updated At" },
-      { id: "totalViews", label: "Views" },
-      { id: "postTitle", label: "Title" },
+      { id: "latest", label: "Latest" },
+      { id: "newest", label: "Newest" },
     ];
   }
 }
