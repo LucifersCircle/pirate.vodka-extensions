@@ -94,6 +94,43 @@ export interface QIScansSeriesChapterImage {
   height: number;
 }
 
+export interface QIScansHomeResponse {
+  banners: QIScansHomeSeriesItem[];
+  popular: QIScansHomeSeriesItem[];
+  newSeries: QIScansHomeSeriesItem[];
+  pinned: QIScansHomeSeriesItem[];
+  editorsPick: QIScansHomeSeriesItem[];
+}
+
+export interface QIScansHomeSeriesItem {
+  id: number;
+  slug: string;
+  title: string;
+  cover: string;
+  coverBlurHash?: string;
+  type: string;
+  status: string;
+  redirectUrl: string;
+  avgRating: number | null;
+  lastChapterAddedAt?: string;
+  description?: string;
+  genres?: QIScansHomeGenre[];
+  chapters?: QIScansHomeChapter[];
+}
+
+export interface QIScansHomeGenre {
+  id: number;
+  slug: string;
+  name: string;
+}
+
+export interface QIScansHomeChapter {
+  slug: string;
+  number: number;
+  price: number;
+  createdAt: string;
+}
+
 export interface QIScansV2Response {
   data: QIScansPost[];
 }
