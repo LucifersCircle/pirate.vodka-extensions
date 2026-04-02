@@ -1,5 +1,5 @@
 import type { Chapter, ChapterDetails, SourceManga } from "@paperback/types";
-import type { QIScansSeriesChapter } from "../shared/models";
+import type { QIScansSeriesChapter, QIScansSeriesChapterDetailsResponse } from "../shared/models";
 
 export function parseChapterList(
   chapters: QIScansSeriesChapter[],
@@ -31,52 +31,18 @@ export function parseChapterList(
   }));
 }
 
-export function parseChapterDetails(html: string, chapter: Chapter): ChapterDetails {
-  // match image URLs in the uploads/series path
-  const pageRegex =
-    /https?:\/\/[^"'\\]*?\/(uploads?|rezo)\/series\/[^"'\\]+?\.(?:webp|jpe?g|png)/gi;
+export function parseChapterDetails(
+  data: QIScansSeriesChapterDetailsResponse,
+  chapter: Chapter,
+): ChapterDetails {
+  const pages = [...(data.images ?? [])]
+    .sort((a, b) => a.order - b.order)
+    .map((image) => image.url)
+    .filter((url) => url.length > 0);
 
-  const rawMatches = html.match(pageRegex) ?? [];
-
-  if (rawMatches.length === 0) {
+  if (pages.length === 0) {
     throw new Error("No chapter page data could be parsed from QiScans for this chapter.");
   }
-
-  // normalize URLs (collapse double slashes)
-  const normalised = rawMatches.map((u) => u.replace(/([^:])\/\/+/g, "$1/"));
-
-  // dedupe
-  const unique = Array.from(new Set(normalised));
-
-  // group by directory
-  const groups = new Map<string, string[]>();
-  for (const url of unique) {
-    const dir = url.replace(/\/[^/?#]+(\?.*)?$/, "");
-    const list = groups.get(dir);
-    if (list) {
-      list.push(url);
-    } else {
-      groups.set(dir, [url]);
-    }
-  }
-
-  // pick the directory with most images
-  let bestList: string[] | null = null;
-  for (const list of groups.values()) {
-    if (!bestList || list.length > bestList.length) {
-      bestList = list;
-    }
-  }
-
-  if (!bestList || bestList.length === 0) {
-    throw new Error("No chapter page data could be parsed from QiScans for this chapter.");
-  }
-
-  const pages = bestList.sort((a, b) => {
-    const numA = parseInt(a.match(/(\d+)(?=\.[^.]*$)/)?.[1] ?? "0");
-    const numB = parseInt(b.match(/(\d+)(?=\.[^.]*$)/)?.[1] ?? "0");
-    return numA - numB;
-  });
 
   return {
     id: chapter.chapterId,

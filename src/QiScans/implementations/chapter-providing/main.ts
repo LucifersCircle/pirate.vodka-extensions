@@ -1,9 +1,13 @@
 import type { Chapter, ChapterDetails, Request, SourceManga } from "@paperback/types";
 import { URL } from "@paperback/types";
-import { QISCANS_API_BASE, QISCANS_DOMAIN } from "../../main";
+import { QISCANS_API_BASE } from "../../main";
 import { MangaProvider } from "../manga/main";
-import type { QIScansSeriesChapter, QIScansSeriesChaptersResponse } from "../shared/models";
-import { fetchJSON, fetchText } from "../../services/network";
+import type {
+  QIScansSeriesChapter,
+  QIScansSeriesChapterDetailsResponse,
+  QIScansSeriesChaptersResponse,
+} from "../shared/models";
+import { fetchJSON } from "../../services/network";
 import { decodeMangaId } from "../shared/utils";
 import { parseChapterDetails, parseChapterList } from "./parsers";
 
@@ -54,22 +58,19 @@ export class ChapterProvider {
 
   async getChapterDetails(chapter: Chapter): Promise<ChapterDetails> {
     const sourceManga = chapter.sourceManga;
-
-    // check locked status
-    if (chapter.title?.toLowerCase().includes("(locked)")) {
-      throw new Error("This chapter is locked (premium/coins required).");
-    }
-
     const seriesSlug =
       sourceManga.mangaInfo?.additionalInfo?.slug ?? decodeMangaId(sourceManga.mangaId);
-    const url = new URL(QISCANS_DOMAIN)
+    const url = new URL(QISCANS_API_BASE)
+      .addPathComponent("v1")
       .addPathComponent("series")
       .addPathComponent(seriesSlug)
+      .addPathComponent("chapters")
       .addPathComponent(chapter.chapterId)
       .toString();
 
-    const html = await fetchText({ url, method: "GET" });
+    const request: Request = { url, method: "GET" };
+    const data = await fetchJSON<QIScansSeriesChapterDetailsResponse>(request);
 
-    return parseChapterDetails(html, chapter);
+    return parseChapterDetails(data, chapter);
   }
 }

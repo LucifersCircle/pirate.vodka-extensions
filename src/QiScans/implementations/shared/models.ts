@@ -70,6 +70,30 @@ export interface QIScansSeriesChapter {
   requiresPurchase: boolean;
 }
 
+export interface QIScansSeriesChapterDetailsResponse {
+  id: number;
+  slug: string;
+  number: number;
+  title: string;
+  content: string;
+  cover: string;
+  publishStatus: string;
+  price: number;
+  isFree: boolean;
+  requiresPurchase: boolean;
+  totalViews: number;
+  images: QIScansSeriesChapterImage[];
+  totalImages: number;
+  createdAt: string;
+}
+
+export interface QIScansSeriesChapterImage {
+  url: string;
+  order: number;
+  width: number;
+  height: number;
+}
+
 export interface QIScansV2Response {
   data: QIScansPost[];
 }
