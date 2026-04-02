@@ -63,23 +63,7 @@ export class SearchProvider {
 
     const url = urlBuilder.toString();
     const request: Request = { url, method: "GET" };
-    let data: QIScansSeriesSearchResponse;
-
-    if (searchTerm) {
-      try {
-        data = await fetchJSON<QIScansSeriesSearchResponse>(request);
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-
-        if (searchTerm.length < 2 && message.includes("status 400")) {
-          data = { data: [] };
-        } else {
-          throw error;
-        }
-      }
-    } else {
-      data = await fetchJSON<QIScansSeriesSearchResponse>(request);
-    }
+    let data: QIScansSeriesSearchResponse = await fetchJSON<QIScansSeriesSearchResponse>(request);
 
     let results = parseSearchResults(data);
 

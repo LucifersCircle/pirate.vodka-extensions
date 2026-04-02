@@ -50,14 +50,3 @@ export async function fetchJSON<T>(request: Request): Promise<T> {
     throw new Error(`[QiScans] Failed to parse JSON from ${request.url}: ${reason}`);
   }
 }
-
-export async function fetchText(request: Request): Promise<string> {
-  const [response, buffer] = await Application.scheduleRequest(request);
-
-  if (response.status !== 200) {
-    throw new Error(`[QiScans] Request failed with status ${response.status}: ${request.url}`);
-  }
-
-  const data = Application.arrayBufferToUTF8String(buffer);
-  return typeof data === "string" ? data : String(data);
-}
