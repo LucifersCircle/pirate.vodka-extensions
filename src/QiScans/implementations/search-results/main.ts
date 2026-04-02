@@ -68,6 +68,11 @@ export class SearchProvider {
       if (typeof statusFilter?.value === "string" && statusFilter.value.trim()) {
         urlBuilder = urlBuilder.setQueryItem("status", statusFilter.value);
       }
+
+      const typeFilter = query.filters?.find((filter) => filter.id === "type");
+      if (typeof typeFilter?.value === "string" && typeFilter.value.trim()) {
+        urlBuilder = urlBuilder.setQueryItem("type", typeFilter.value);
+      }
     }
 
     const url = urlBuilder.toString();
@@ -115,13 +120,28 @@ export class SearchProvider {
       value: "",
     };
 
-    return [statusFilter];
+    const typeFilter: SearchFilter = {
+      type: "dropdown",
+      id: "type",
+      title: "Type",
+      options: [
+        { id: "", value: "All Types" },
+        { id: "MANGA", value: "Manga" },
+        { id: "MANHWA", value: "Manhwa" },
+        { id: "MANHUA", value: "Manhua" },
+      ],
+      value: "",
+    };
+
+    return [statusFilter, typeFilter];
   }
 
   async getSortingOptions(): Promise<SortingOption[]> {
     return [
-      { id: "latest", label: "Latest" },
+      { id: "latest", label: "Latest Updated" },
       { id: "newest", label: "Newest" },
+      { id: "popular", label: "Popular" },
+      { id: "alphabetical", label: "A-Z" },
     ];
   }
 }

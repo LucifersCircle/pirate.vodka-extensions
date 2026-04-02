@@ -25,6 +25,12 @@ export function parseSearchResults(data: QIScansSeriesSearchResponse): SearchRes
       if (series.title.startsWith("http://") || series.title.startsWith("https://")) {
         return false;
       }
+      if (series.type === "NOVEL") {
+        return false;
+      }
+      if (series.redirectUrl?.trim()) {
+        return false;
+      }
       return true;
     })
     .map((series) => {
