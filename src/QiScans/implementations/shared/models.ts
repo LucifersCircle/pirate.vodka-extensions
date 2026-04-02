@@ -7,6 +7,12 @@ export interface QIScansSeriesSearchResponse {
   data: QIScansSeriesSearchItem[];
 }
 
+export interface QIScansSeriesGenre {
+  id: number;
+  name: string;
+  slug: string;
+}
+
 export interface QIScansSeriesSearchItem {
   slug: string;
   title: string;

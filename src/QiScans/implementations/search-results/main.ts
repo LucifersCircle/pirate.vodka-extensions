@@ -8,7 +8,7 @@ import type {
 } from "@paperback/types";
 import { URL } from "@paperback/types";
 import { DOMAIN_API, PAGE_SIZE } from "../shared/models";
-import type { Metadata, QIScansSeriesSearchResponse } from "../shared/models";
+import type { Metadata, QIScansSeriesGenre, QIScansSeriesSearchResponse } from "../shared/models";
 import { normalizeSearchTerm } from "../shared/utils";
 import { fetchJSON } from "../../services/network";
 import { parseSearchResults } from "./parsers";
@@ -73,6 +73,11 @@ export class SearchProvider {
       if (typeof typeFilter?.value === "string" && typeFilter.value.trim()) {
         urlBuilder = urlBuilder.setQueryItem("type", typeFilter.value);
       }
+
+      const genreFilter = query.filters?.find((filter) => filter.id === "genre");
+      if (typeof genreFilter?.value === "string" && genreFilter.value.trim()) {
+        urlBuilder = urlBuilder.setQueryItem("genre", genreFilter.value);
+      }
     }
 
     const url = urlBuilder.toString();
@@ -106,6 +111,14 @@ export class SearchProvider {
   }
 
   async getSearchFilters(): Promise<SearchFilter[]> {
+    const genresUrl = new URL(DOMAIN_API)
+      .addPathComponent("v1")
+      .addPathComponent("series")
+      .addPathComponent("genres")
+      .toString();
+    const genresRequest: Request = { url: genresUrl, method: "GET" };
+    const genres = await fetchJSON<QIScansSeriesGenre[]>(genresRequest);
+
     const statusFilter: SearchFilter = {
       type: "dropdown",
       id: "status",
@@ -133,7 +146,21 @@ export class SearchProvider {
       value: "",
     };
 
-    return [statusFilter, typeFilter];
+    const genreFilter: SearchFilter = {
+      type: "dropdown",
+      id: "genre",
+      title: "Genre",
+      options: [
+        { id: "", value: "All Genres" },
+        ...genres.map((genre) => ({
+          id: genre.slug,
+          value: genre.name.trim(),
+        })),
+      ],
+      value: "",
+    };
+
+    return [statusFilter, typeFilter, genreFilter];
   }
 
   async getSortingOptions(): Promise<SortingOption[]> {
