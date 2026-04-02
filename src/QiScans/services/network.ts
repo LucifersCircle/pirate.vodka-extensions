@@ -1,6 +1,6 @@
 import type { Request, Response } from "@paperback/types";
 import { CloudflareError, PaperbackInterceptor } from "@paperback/types";
-import { QISCANS_DOMAIN } from "../main";
+import { DOMAIN } from "../implementations/shared/models";
 
 export class QiScansInterceptor extends PaperbackInterceptor {
   async interceptRequest(request: Request): Promise<Request> {
@@ -8,7 +8,7 @@ export class QiScansInterceptor extends PaperbackInterceptor {
       ...request,
       headers: {
         ...request.headers,
-        referer: `${QISCANS_DOMAIN}/`,
+        referer: `${DOMAIN}/`,
         "user-agent": await Application.getDefaultUserAgent(),
       },
     };
@@ -60,14 +60,4 @@ export async function fetchText(request: Request): Promise<string> {
 
   const data = Application.arrayBufferToUTF8String(buffer);
   return typeof data === "string" ? data : String(data);
-}
-
-export async function fetchImage(request: Request): Promise<ArrayBuffer> {
-  const [response, buffer] = await Application.scheduleRequest(request);
-
-  if (response.status !== 200) {
-    throw new Error(`[QiScans] Request failed with status ${response.status}: ${request.url}`);
-  }
-
-  return buffer;
 }

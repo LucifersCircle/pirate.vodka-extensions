@@ -1,6 +1,6 @@
 import type { DiscoverSection, DiscoverSectionItem, PagedResults, Request } from "@paperback/types";
 import { DiscoverSectionType, URL } from "@paperback/types";
-import { QISCANS_API_BASE } from "../../main";
+import { DOMAIN_API } from "../shared/models";
 import type { QIScansHomeResponse } from "../shared/models";
 import { fetchJSON } from "../../services/network";
 import { parseDiscoverItems } from "./parsers";
@@ -40,10 +40,7 @@ export class DiscoverProvider {
     section: DiscoverSection,
     _metadata?: { page?: number },
   ): Promise<PagedResults<DiscoverSectionItem>> {
-    const url = new URL(QISCANS_API_BASE)
-      .addPathComponent("v1")
-      .addPathComponent("home")
-      .toString();
+    const url = new URL(DOMAIN_API).addPathComponent("v1").addPathComponent("home").toString();
     const request: Request = { url, method: "GET" };
     const data = await fetchJSON<QIScansHomeResponse>(request);
     const items = parseDiscoverItems(data, section.id);

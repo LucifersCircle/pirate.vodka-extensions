@@ -7,25 +7,24 @@ import type {
   SortingOption,
 } from "@paperback/types";
 import { URL } from "@paperback/types";
-import { QISCANS_API_BASE } from "../../main";
+import { DOMAIN_API, PAGE_SIZE } from "../shared/models";
 import type { Metadata, QIScansSeriesSearchResponse } from "../shared/models";
 import { normalizeSearchTerm } from "../shared/utils";
 import { fetchJSON } from "../../services/network";
 import { parseSearchResults } from "./parsers";
 
-const PAGE_SIZE = 20;
-const MIN_SEARCH_TERM_LENGTH = 2;
-
 async function fetchSeriesSearchResults(
   url: string,
   searchTerm: string,
 ): Promise<QIScansSeriesSearchResponse> {
+  const request: Request = { url, method: "GET" };
+
   try {
-    return await fetchJSON<QIScansSeriesSearchResponse>({ url, method: "GET" });
+    return await fetchJSON<QIScansSeriesSearchResponse>(request);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
 
-    if (searchTerm.length < MIN_SEARCH_TERM_LENGTH && message.includes("status 400")) {
+    if (searchTerm.length < 2 && message.includes("status 400")) {
       return { data: [] };
     }
 
@@ -42,7 +41,7 @@ export class SearchProvider {
     const page = metadata?.page ?? 1;
     const searchTerm = normalizeSearchTerm(query.title ?? "");
 
-    if (searchTerm.length > 0 && searchTerm.length < MIN_SEARCH_TERM_LENGTH) {
+    if (searchTerm.length > 0 && searchTerm.length < 2) {
       return {
         items: [],
         metadata: undefined,
@@ -50,14 +49,14 @@ export class SearchProvider {
     }
 
     let urlBuilder = searchTerm
-      ? new URL(QISCANS_API_BASE)
+      ? new URL(DOMAIN_API)
           .addPathComponent("v1")
           .addPathComponent("series")
           .addPathComponent("search")
           .setQueryItem("q", searchTerm)
           .setQueryItem("page", page.toString())
           .setQueryItem("perPage", PAGE_SIZE.toString())
-      : new URL(QISCANS_API_BASE)
+      : new URL(DOMAIN_API)
           .addPathComponent("v1")
           .addPathComponent("series")
           .setQueryItem("page", page.toString())
@@ -72,14 +71,15 @@ export class SearchProvider {
     }
 
     const url = urlBuilder.toString();
+    const request: Request = { url, method: "GET" };
     let data = searchTerm
       ? await fetchSeriesSearchResults(url, searchTerm)
-      : await fetchJSON<QIScansSeriesSearchResponse>({ url, method: "GET" } as Request);
+      : await fetchJSON<QIScansSeriesSearchResponse>(request);
     let results = parseSearchResults(data);
 
     if (results.length === 0 && searchTerm.includes("'")) {
       const curlySearchTerm = searchTerm.replace(/'/g, "\u2019");
-      urlBuilder = new URL(QISCANS_API_BASE)
+      urlBuilder = new URL(DOMAIN_API)
         .addPathComponent("v1")
         .addPathComponent("series")
         .addPathComponent("search")

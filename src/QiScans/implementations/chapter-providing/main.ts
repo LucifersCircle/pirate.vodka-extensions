@@ -1,7 +1,7 @@
 import type { Chapter, ChapterDetails, Request, SourceManga } from "@paperback/types";
 import { URL } from "@paperback/types";
-import { QISCANS_API_BASE } from "../../main";
 import { MangaProvider } from "../manga/main";
+import { DOMAIN_API } from "../shared/models";
 import type {
   QIScansSeriesChapter,
   QIScansSeriesChapterDetailsResponse,
@@ -10,8 +10,6 @@ import type {
 import { fetchJSON } from "../../services/network";
 import { decodeMangaId } from "../shared/utils";
 import { parseChapterDetails, parseChapterList } from "./parsers";
-
-const CHAPTERS_PER_PAGE = 100;
 
 export class ChapterProvider {
   async getChapters(sourceManga: SourceManga): Promise<Chapter[]> {
@@ -32,13 +30,13 @@ export class ChapterProvider {
     let page = 1;
 
     while (true) {
-      const url = new URL(QISCANS_API_BASE)
+      const url = new URL(DOMAIN_API)
         .addPathComponent("v1")
         .addPathComponent("series")
         .addPathComponent(slug)
         .addPathComponent("chapters")
         .setQueryItem("page", page.toString())
-        .setQueryItem("perPage", CHAPTERS_PER_PAGE.toString())
+        .setQueryItem("perPage", "30")
         .setQueryItem("sort", "desc")
         .toString();
 
@@ -60,7 +58,7 @@ export class ChapterProvider {
     const sourceManga = chapter.sourceManga;
     const seriesSlug =
       sourceManga.mangaInfo?.additionalInfo?.slug ?? decodeMangaId(sourceManga.mangaId);
-    const url = new URL(QISCANS_API_BASE)
+    const url = new URL(DOMAIN_API)
       .addPathComponent("v1")
       .addPathComponent("series")
       .addPathComponent(seriesSlug)
