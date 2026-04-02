@@ -2,6 +2,7 @@ import type { SourceManga } from "@paperback/types";
 import { ContentRating } from "@paperback/types";
 import type { QIScansSeriesDetailsResponse } from "../shared/models";
 import { encodeMangaId } from "../shared/utils";
+import { DOMAIN } from "../shared/models";
 
 export function parseMangaDetails(series: QIScansSeriesDetailsResponse): SourceManga {
   const author = series.author?.trim();
@@ -48,7 +49,7 @@ export function parseMangaDetails(series: QIScansSeriesDetailsResponse): SourceM
         slug: series.slug,
       },
 
-      shareUrl: `https://qimanhwa.com/series/${series.slug}`,
+      shareUrl: `${DOMAIN}/series/${series.slug}`,
     },
   };
 }
