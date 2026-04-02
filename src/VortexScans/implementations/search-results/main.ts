@@ -16,7 +16,13 @@ import {
 } from "../shared/models";
 import type { Metadata, VortexGenre, VortexQueryResponse } from "../shared/models";
 import { fetchJSON } from "../../services/network";
-import { parseSearchResults } from "./parsers";
+import {
+  buildSearchFilters,
+  parseSearchResults,
+  readDropdownFilter,
+  readExcludedMultiselectFilter,
+  readMultiselectFilter,
+} from "./parsers";
 
 export class SearchProvider {
   async getSearchResults(
@@ -25,6 +31,8 @@ export class SearchProvider {
     sortingOption?: SortingOption,
   ): Promise<PagedResults<SearchResultItem>> {
     const page = metadata?.page ?? 1;
+    type FilterEntry = { id: string; value: string | Record<string, "included" | "excluded"> };
+    const filters = (query.filters ?? []) as FilterEntry[];
 
     const searchTerm = (query.title ?? "")
       .trim()
@@ -33,6 +41,10 @@ export class SearchProvider {
       .replace(/\s+/g, " ");
 
     const [orderBy, orderDirection] = (sortingOption?.id ?? "lastChapterAddedAt:desc").split(":");
+    const status = readDropdownFilter(filters, "status", "");
+    const type = readDropdownFilter(filters, "type", "");
+    const includedGenres = readMultiselectFilter(filters, "genres");
+    const excludedGenres = readExcludedMultiselectFilter(filters, "genres");
 
     const url = new URL(DOMAIN_API)
       .addPathComponent("query")
@@ -45,31 +57,19 @@ export class SearchProvider {
       url.setQueryItem("searchTerm", searchTerm);
     }
 
-    const statusFilter = query.filters?.find((f) => f.id === "status");
-    if (statusFilter?.value) {
-      url.setQueryItem("seriesStatus", statusFilter.value as string);
+    if (status) {
+      url.setQueryItem("seriesStatus", status);
     }
 
-    const typeFilter = query.filters?.find((f) => f.id === "type");
-    if (typeFilter?.value) {
-      url.setQueryItem("seriesType", typeFilter.value as string);
+    if (type) {
+      url.setQueryItem("seriesType", type);
     }
 
-    const genreFilter = query.filters?.find((f) => f.id === "genres");
-    if (
-      genreFilter?.value &&
-      typeof genreFilter.value === "object" &&
-      !Array.isArray(genreFilter.value)
-    ) {
-      const genreValue = genreFilter.value;
-      const included = Object.keys(genreValue).filter((key) => genreValue[key] === "included");
-      const excluded = Object.keys(genreValue).filter((key) => genreValue[key] === "excluded");
-      if (included.length > 0) {
-        url.setQueryItem("genreIds", included.join(","));
-      }
-      if (excluded.length > 0) {
-        url.setQueryItem("excludedGenreIds", excluded.join(","));
-      }
+    if (includedGenres.length > 0) {
+      url.setQueryItem("genreIds", includedGenres.join(","));
+    }
+    if (excludedGenres.length > 0) {
+      url.setQueryItem("excludedGenreIds", excludedGenres.join(","));
     }
 
     const request: Request = { url: url.toString(), method: "GET" };
@@ -96,22 +96,6 @@ export class SearchProvider {
   }
 
   async getSearchFilters(): Promise<SearchFilter[]> {
-    const statusFilter: SearchFilter = {
-      type: "dropdown",
-      id: "status",
-      title: "Status",
-      options: STATUS_OPTIONS,
-      value: "",
-    };
-
-    const typeFilter: SearchFilter = {
-      type: "dropdown",
-      id: "type",
-      title: "Type",
-      options: TYPE_OPTIONS,
-      value: "",
-    };
-
     const genresCacheDate = Number(Application.getState("genres-cache-date") ?? 0);
     let genres: VortexGenre[];
 
@@ -126,23 +110,7 @@ export class SearchProvider {
       Application.setState(String(Date.now() / 1000), "genres-cache-date");
     }
 
-    const genreFilter: SearchFilter = {
-      type: "multiselect",
-      id: "genres",
-      title: "Genres",
-      options: genres
-        .filter((g) => g.name !== "hidden")
-        .map((g) => ({
-          id: g.id.toString(),
-          value: g.name,
-        })),
-      value: {},
-      allowExclusion: true,
-      allowEmptySelection: true,
-      maximum: undefined,
-    };
-
-    return [statusFilter, typeFilter, genreFilter];
+    return buildSearchFilters(genres, STATUS_OPTIONS, TYPE_OPTIONS);
   }
 
   async getSortingOptions(): Promise<SortingOption[]> {

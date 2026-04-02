@@ -40,10 +40,13 @@ export class DiscoverProvider {
     const request: Request = { url, method: "GET" };
     const data = await fetchJSON<VortexQueryResponse>(request);
     const items = parseDiscoverItems(data);
+    const hasNext = data.totalCount
+      ? page * PAGE_SIZE < data.totalCount
+      : (data.posts?.length ?? 0) >= PAGE_SIZE;
 
     return {
       items,
-      metadata: items.length >= PAGE_SIZE ? { page: page + 1 } : undefined,
+      metadata: hasNext ? { page: page + 1 } : undefined,
     };
   }
 }

@@ -1,5 +1,5 @@
-export const DOMAIN = "https://vortexscans.io";
-export const DOMAIN_API = "https://api.vortexscans.io/api";
+export const DOMAIN = "https://vortexcomics.org";
+export const DOMAIN_API = "https://api.vortexcomics.org/api";
 
 export interface VortexQueryResponse {
   posts: VortexPost[];

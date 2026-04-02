@@ -1,5 +1,6 @@
 import type { SourceManga } from "@paperback/types";
 import { ContentRating } from "@paperback/types";
+import { DOMAIN } from "../shared/models";
 import type { VortexPost } from "../shared/models";
 
 export function parseMangaDetails(post: VortexPost): SourceManga {
@@ -41,7 +42,7 @@ export function parseMangaDetails(post: VortexPost): SourceManga {
         slug: post.slug,
       },
 
-      shareUrl: `https://vortexscans.org/series/${post.slug}`,
+      shareUrl: `${DOMAIN}/series/${post.slug}`,
     },
   };
 }

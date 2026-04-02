@@ -5,10 +5,10 @@ const CHAPTER_IMAGE_REGEX =
   /https?:\/\/[^"'\\\s]+\/(?:public\/)?upload\/series\/[^"'\\\s]+?\.(?:webp|jpe?g|png)(?:\?[^"'\\\s]*)?/gi;
 
 export function parseChapterList(
-  json: VortexChaptersResponse,
+  data: VortexChaptersResponse,
   sourceManga: SourceManga,
 ): Chapter[] {
-  const chapters = json.post?.chapters ?? [];
+  const chapters = data.post?.chapters ?? [];
 
   if (chapters.length === 0) {
     return [];

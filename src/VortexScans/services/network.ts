@@ -1,6 +1,6 @@
 import type { CookieStorageInterceptor, Request, Response } from "@paperback/types";
 import { CloudflareError, PaperbackInterceptor } from "@paperback/types";
-import { DOMAIN } from "../implementations/shared/models";
+import { DOMAIN, DOMAIN_API } from "../implementations/shared/models";
 
 // non-standard constructor and handleRedirect are required for vShield PoW challenge handling
 export class VortexScansInterceptor extends PaperbackInterceptor {
@@ -38,7 +38,7 @@ export class VortexScansInterceptor extends PaperbackInterceptor {
     }
 
     // vshield PoW challenge returns 200 with challenge HTML instead of real content
-    if (request.url.includes("vortexscans.org")) {
+    if (request.url.startsWith(DOMAIN) || request.url.startsWith(DOMAIN_API)) {
       const body = Application.arrayBufferToUTF8String(data);
       if (typeof body === "string" && body.includes("vShield")) {
         throw new CloudflareError({
