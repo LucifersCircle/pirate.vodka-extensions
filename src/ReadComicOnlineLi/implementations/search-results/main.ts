@@ -8,6 +8,7 @@ import type {
 import { URL } from "@paperback/types";
 import { DOMAIN } from "../shared/models";
 import { fetchCheerio } from "../../services/network";
+import { getDefaultSearchPage, getDefaultSearchSort } from "../settings-form/forms/main";
 import {
   buildSearchFilters,
   parseSearchResults,
@@ -38,7 +39,7 @@ export class SearchProvider {
     const filters = (query.filters ?? []) as FilterEntry[];
     const includedGenres = readMultiselectFilter(filters, "genres");
     const excludedGenres = readExcludedMultiselectFilter(filters, "genres");
-    const status = sortingOption?.id ?? "";
+    const status = sortingOption?.id ?? getDefaultSearchSort();
     const publicationYear = readDropdownFilter(filters, "publicationYear", "");
     const hasAdvancedSearchInput =
       searchTerm.length > 0 ||
@@ -49,11 +50,7 @@ export class SearchProvider {
 
     if (!hasAdvancedSearchInput) {
       const $ = await fetchCheerio({
-        url: new URL(DOMAIN)
-          .addPathComponent("ComicList")
-          .addPathComponent("MostPopular")
-          .setQueryItem("page", String(page))
-          .toString(),
+        url: buildDefaultSearchPageUrl(page),
         method: "GET",
       });
       const items = parseSearchResults($);
@@ -85,14 +82,49 @@ export class SearchProvider {
   }
 
   async getSortingOptions(): Promise<SortingOption[]> {
-    return [
+    const options: SortingOption[] = [
       { id: "", label: "Any Status" },
       { id: "Ongoing", label: "Ongoing" },
       { id: "Completed", label: "Completed" },
     ];
+
+    const defaultSort = getDefaultSearchSort();
+    if (!defaultSort) {
+      return options;
+    }
+
+    const defaultIndex = options.findIndex((option) => option.id === defaultSort);
+    if (defaultIndex <= 0) {
+      return options;
+    }
+
+    const [defaultOption] = options.splice(defaultIndex, 1);
+    options.unshift(defaultOption);
+    return options;
   }
 }
 
 function formatGenreValues(values: string[]): string {
   return values.length > 0 ? `${values.join(",")},` : "";
+}
+
+function buildDefaultSearchPageUrl(page: number): string {
+  const path = new URL(DOMAIN).addPathComponent("ComicList");
+
+  switch (getDefaultSearchPage()) {
+    case "latest-update":
+      path.addPathComponent("LatestUpdate");
+      break;
+
+    case "new-comic":
+      path.addPathComponent("Newest");
+      break;
+
+    default:
+      path.addPathComponent("MostPopular");
+      break;
+  }
+
+  path.setQueryItem("page", String(page));
+  return path.toString();
 }
