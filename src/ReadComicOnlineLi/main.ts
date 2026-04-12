@@ -4,11 +4,12 @@ import { ChapterProvider } from "./implementations/chapter-providing/main";
 import { DiscoverProvider } from "./implementations/discover-section/main";
 import { MangaProvider } from "./implementations/manga/main";
 import { SearchProvider } from "./implementations/search-results/main";
+import { SettingsFormProvider } from "./implementations/settings-form/forms/main";
 import { applyMixins } from "./implementations/shared/utils";
 import { ReadComicOnlineLiInterceptor } from "./services/network";
 
 export interface ReadComicOnlineLiImplementation
-  extends SearchProvider, MangaProvider, ChapterProvider, DiscoverProvider {}
+  extends SearchProvider, MangaProvider, ChapterProvider, DiscoverProvider, SettingsFormProvider {}
 
 export class ReadComicOnlineLiExtension implements Omit<Extension, keyof MangaProviding> {
   cookieStorageInterceptor = new CookieStorageInterceptor({
@@ -49,6 +50,7 @@ applyMixins(ReadComicOnlineLiExtension, [
   MangaProvider,
   ChapterProvider,
   DiscoverProvider,
+  SettingsFormProvider,
 ]);
 
 export const ReadComicOnlineLi = new ReadComicOnlineLiExtension();
