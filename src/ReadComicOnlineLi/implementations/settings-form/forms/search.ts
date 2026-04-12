@@ -27,7 +27,7 @@ const DEFAULT_PAGE_OPTIONS = [
 
 export class SearchSettingsForm extends Form {
   override getSections(): FormSectionElement[] {
-    return [
+    const sections: FormSectionElement[] = [
       Section(
         {
           id: "default-sort",
@@ -35,14 +35,21 @@ export class SearchSettingsForm extends Form {
         },
         [this.defaultSortRow()],
       ),
-      Section(
-        {
-          id: "default-search-page",
-          footer: "Page used when search is opened without a query or filters.",
-        },
-        [this.defaultSearchPageRow()],
-      ),
     ];
+
+    if (getDefaultSearchSort() === "") {
+      sections.push(
+        Section(
+          {
+            id: "default-search-page",
+            footer: "Page used when search is opened without a query or filters.",
+          },
+          [this.defaultSearchPageRow()],
+        ),
+      );
+    }
+
+    return sections;
   }
 
   defaultSortRow(): FormItemElement<unknown> {
