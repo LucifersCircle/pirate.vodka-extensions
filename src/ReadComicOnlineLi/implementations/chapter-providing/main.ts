@@ -1,7 +1,7 @@
 import type { Chapter, ChapterDetails, SourceManga } from "@paperback/types";
 import { URL } from "@paperback/types";
 import { DOMAIN } from "../shared/models";
-import { fetchCheerio } from "../../services/network";
+import { createChapterPageUrls, fetchCheerio } from "../../services/network";
 import { parseChapterDetails, parseChapterList } from "./parsers";
 
 export class ChapterProvider {
@@ -19,7 +19,11 @@ export class ChapterProvider {
     const url = `${DOMAIN}/Comic/${chapter.chapterId}&readType=1`;
 
     const $ = await fetchCheerio({ url, method: "GET" });
-    const pages = parseChapterDetails($);
+    const pages = createChapterPageUrls(
+      chapter.sourceManga.mangaId,
+      chapter.chapterId,
+      parseChapterDetails($),
+    );
 
     return {
       id: chapter.chapterId,
