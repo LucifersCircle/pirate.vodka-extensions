@@ -1,3 +1,9 @@
+import {
+  DEFAULT_DISCOVER_SECTION_IDS,
+  DISCOVER_SECTIONS,
+  type DiscoverSectionDefinition,
+} from "./models";
+
 export function applyMixins(derivedCtor: any, constructors: any[]) {
   constructors.forEach((baseCtor) => {
     Object.getOwnPropertyNames(baseCtor.prototype).forEach((name) => {
@@ -19,6 +25,39 @@ export function cleanText(raw: string): string {
     .replace(/\u00a0/g, " ")
     .replace(/&nbsp;/g, " ")
     .trim();
+}
+
+export function getDiscoverSectionDefinition(
+  sectionId: string,
+): DiscoverSectionDefinition | undefined {
+  return DISCOVER_SECTIONS.find((section) => section.id === sectionId);
+}
+
+export function normalizeDiscoverSectionIds(value: unknown, includeMissing: boolean): string[] {
+  const knownSectionIds = new Set(DEFAULT_DISCOVER_SECTION_IDS);
+  const normalizedSectionIds: string[] = [];
+
+  if (Array.isArray(value)) {
+    for (const sectionId of value) {
+      if (
+        typeof sectionId === "string" &&
+        knownSectionIds.has(sectionId) &&
+        !normalizedSectionIds.includes(sectionId)
+      ) {
+        normalizedSectionIds.push(sectionId);
+      }
+    }
+  }
+
+  if (includeMissing) {
+    for (const sectionId of DEFAULT_DISCOVER_SECTION_IDS) {
+      if (!normalizedSectionIds.includes(sectionId)) {
+        normalizedSectionIds.push(sectionId);
+      }
+    }
+  }
+
+  return normalizedSectionIds;
 }
 
 /**

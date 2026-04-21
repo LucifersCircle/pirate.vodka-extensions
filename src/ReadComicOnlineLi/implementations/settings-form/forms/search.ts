@@ -26,8 +26,8 @@ const DEFAULT_PAGE_OPTIONS = [
 ];
 
 export class SearchSettingsForm extends Form {
-  override getSections(): FormSectionElement[] {
-    const sections: FormSectionElement[] = [
+  override getSections(): FormSectionElement<unknown>[] {
+    const sections: FormSectionElement<unknown>[] = [
       Section(
         {
           id: "default-sort",

@@ -3,7 +3,7 @@ import { DiscoverSettingsForm } from "./discover";
 import { SearchSettingsForm } from "./search";
 
 export class ReadComicOnlineLiSettingsForm extends Form {
-  override getSections(): FormSectionElement[] {
+  override getSections(): FormSectionElement<unknown>[] {
     return [
       Section("mainSettings", [
         NavigationRow("search_settings", {
