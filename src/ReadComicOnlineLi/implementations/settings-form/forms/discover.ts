@@ -116,7 +116,8 @@ export class DiscoverSettingsForm extends Form {
 
     const nextSectionIds = [...sectionIds];
     this.removeSection(nextSectionIds, sourceIndex, sectionId);
-    nextSectionIds.splice(destinationIndex, 0, sectionId);
+    const boundedDestinationIndex = Math.max(0, Math.min(destinationIndex, nextSectionIds.length));
+    nextSectionIds.splice(boundedDestinationIndex, 0, sectionId);
 
     return nextSectionIds;
   }

@@ -22,7 +22,11 @@ export function parseChapterList($: CheerioAPI, sourceManga: SourceManga): Chapt
     const numMatch = title.match(/#(\d+(?:\.\d+)?)/);
     const chapNum = numMatch ? parseFloat(numMatch[1]) : 0;
 
-    const publishDate = dateText ? new Date(dateText) : new Date();
+    const parsedPublishDate = dateText ? new Date(dateText) : undefined;
+    const publishDate =
+      parsedPublishDate && !Number.isNaN(parsedPublishDate.getTime())
+        ? parsedPublishDate
+        : new Date();
 
     chapters.push({
       chapterId,

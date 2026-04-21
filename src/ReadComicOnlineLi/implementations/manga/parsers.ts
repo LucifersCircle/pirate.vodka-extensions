@@ -23,7 +23,7 @@ export function parseMangaDetails($: CheerioAPI, mangaId: string): SourceManga {
 
   const author = collectLinks("Writer:").join(", ");
   const artist = collectLinks("Artist:").join(", ");
-  const status = $('p:has(span:contains("Status:"))').contents().not("span").text().trim();
+  const status = $('p:has(span:contains("Status:"))', info).contents().not("span").text().trim();
   const synopsis = $("div.section.group").eq(1).text().trim();
 
   const genres: { id: string; title: string }[] = [];

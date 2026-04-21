@@ -26,7 +26,7 @@ export function parseSearchResults($: CheerioAPI): SearchResultItem[] {
       mangaId,
       title: Application.decodeHTMLEntities(title),
       imageUrl: fullImageUrl,
-      subtitle,
+      subtitle: Application.decodeHTMLEntities(subtitle),
       contentRating: ContentRating.EVERYONE,
     });
   });
@@ -51,26 +51,26 @@ export function readDropdownFilter(
 }
 
 export function readMultiselectFilter(filters: FilterEntry[], filterId: string): string[] {
-  const entry = filters.find((filter) => filter.id === filterId);
-  if (!entry) return [];
-
-  const value = entry.value;
-  if (typeof value === "string") return [];
-
-  return Object.entries(value)
-    .filter(([, state]) => state === "included")
-    .map(([id]) => id);
+  return readMultiselectFilterByState(filters, filterId, "included");
 }
 
 export function readExcludedMultiselectFilter(filters: FilterEntry[], filterId: string): string[] {
+  return readMultiselectFilterByState(filters, filterId, "excluded");
+}
+
+function readMultiselectFilterByState(
+  filters: FilterEntry[],
+  filterId: string,
+  selectedState: "included" | "excluded",
+): string[] {
   const entry = filters.find((filter) => filter.id === filterId);
   if (!entry) return [];
 
   const value = entry.value;
-  if (typeof value === "string") return [];
+  if (typeof value !== "object" || value === null) return [];
 
   return Object.entries(value)
-    .filter(([, state]) => state === "excluded")
+    .filter(([, state]) => state === selectedState)
     .map(([id]) => id);
 }
 
