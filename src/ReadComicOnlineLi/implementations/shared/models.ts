@@ -1,8 +1,25 @@
+import type { SortingOption } from "@paperback/types";
+
 export const DOMAIN = "https://readcomiconline.li";
+export const DOMAIN_IMAGE = "https://2.bp.blogspot.com";
+export const DOMAIN_IMAGE_PROXY = "https://ano1.rconet.biz/pic";
 
 export type Metadata = {
   page?: number;
 };
+
+export type FilterValue = string | Record<string, "included" | "excluded">;
+
+export type FilterEntry = {
+  id: string;
+  value: FilterValue;
+};
+
+export const SORT_OPTIONS: SortingOption[] = [
+  { id: "", label: "Any Status" },
+  { id: "Ongoing", label: "Ongoing" },
+  { id: "Completed", label: "Completed" },
+];
 
 export type ListDiscoverSectionDefinition = {
   id: string;

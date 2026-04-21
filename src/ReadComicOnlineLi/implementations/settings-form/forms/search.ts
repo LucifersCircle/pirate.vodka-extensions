@@ -12,18 +12,7 @@ import {
   setDefaultSearchPage,
   setDefaultSearchSort,
 } from "./main";
-
-const SORT_OPTIONS = [
-  { id: "", title: "Any Status" },
-  { id: "Ongoing", title: "Ongoing" },
-  { id: "Completed", title: "Completed" },
-];
-
-const DEFAULT_PAGE_OPTIONS = [
-  { id: "most-popular", title: "Most Popular" },
-  { id: "latest-update", title: "Latest Update" },
-  { id: "new-comic", title: "New Comic" },
-];
+import { DEFAULT_PAGE_OPTIONS, SEARCH_STATUS_OPTIONS } from "../models";
 
 export class SearchSettingsForm extends Form {
   override getSections(): FormSectionElement<unknown>[] {
@@ -55,7 +44,7 @@ export class SearchSettingsForm extends Form {
   defaultSortRow(): FormItemElement<unknown> {
     const props: SelectRowProps = {
       title: "Default Sort",
-      options: SORT_OPTIONS,
+      options: SEARCH_STATUS_OPTIONS,
       value: [getDefaultSearchSort()],
       minItemCount: 1,
       maxItemCount: 1,

@@ -1,10 +1,7 @@
 import type { SearchFilter, SearchResultItem } from "@paperback/types";
 import { ContentRating } from "@paperback/types";
 import type { CheerioAPI } from "cheerio";
-import { DOMAIN } from "../shared/models";
-
-type FilterValue = string | Record<string, "included" | "excluded">;
-type FilterEntry = { id: string; value: FilterValue };
+import { DOMAIN, type FilterEntry } from "../shared/models";
 
 export function parseSearchResults($: CheerioAPI): SearchResultItem[] {
   const results: SearchResultItem[] = [];
@@ -35,6 +32,10 @@ export function parseSearchResults($: CheerioAPI): SearchResultItem[] {
   });
 
   return results;
+}
+
+export function parseHasNextPage($: CheerioAPI): boolean {
+  return $("a.next_bt").length > 0;
 }
 
 export function readDropdownFilter(

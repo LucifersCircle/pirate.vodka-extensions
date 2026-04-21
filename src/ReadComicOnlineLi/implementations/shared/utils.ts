@@ -1,6 +1,8 @@
 import {
   DEFAULT_DISCOVER_SECTION_IDS,
   DISCOVER_SECTIONS,
+  DOMAIN_IMAGE,
+  DOMAIN_IMAGE_PROXY,
   type DiscoverSectionDefinition,
 } from "./models";
 
@@ -60,41 +62,22 @@ export function normalizeDiscoverSectionIds(value: unknown, includeMissing: bool
   return normalizedSectionIds;
 }
 
-/**
- * Reimplements the `beau()` function from rguard.min.js to deobfuscate image URLs.
- * See https://readcomiconline.li/Scripts/rguard.min.js?v=1.5.8
- *
- * The site serves image URLs as obfuscated strings with random anti-scraping padding
- * inserted at known positions. This function strips the padding, base64 decodes the
- * cleaned string to reveal the real blogspot CDN path (e.g. /pw/AP1GczMn4wam...),
- * then reconstructs the full URL with auth query params.
- *
- * Processing steps:
- *   1. Replace hardcoded obfuscation tokens: pw_.g28x -> 'b', d2pr.x_27 -> 'h'
- *   2. If the result already starts with "https", return as-is (already decoded)
- *   3. Separate query params (?rhlupa=<base64 IP+timestamp>&rnvuka=<base64 user-agent>)
- *   4. Strip the size suffix (=s0 or =s1600) before the query string
- *   5. step1(): Strip 15 padding chars from the start and 17 padding chars at position 33-49
- *   6. step2(): Strip 9 padding chars before the last 2 characters
- *   7. Base64 decode the cleaned string to get the real CDN path
- *   8. Strip 4 padding chars at position 13 in the decoded result
- *   9. Append the size suffix (=s0 or =s1600) replacing the last 2 decoded chars
- *  10. Reconstruct full URL: https://2.bp.blogspot.com/ + path + query params
- */
+// reimplements rguard beau() image URL decoding
+// source: https://readcomiconline.li/Scripts/rguard.min.js?v=1.5.8
+// strips anti-scraping padding, decodes the cdn path, then restores auth params
 export function beauDecode(url: string): string | null {
-  // rguard.min.js hardcoded replacements
+  // rguard hardcoded replacements
   url = url.replace(/pw_.g28x/g, "b").replace(/d2pr.x_27/g, "h");
 
-  // URL already fully formed after replacements — no further decoding needed
+  // already decoded after replacements
   if (url.indexOf("https") === 0) return url;
 
-  // Separate auth query params (rhlupa = base64 IP+timestamp, rnvuka = base64 user-agent)
+  // split auth query params before path cleanup
   const qIdx = url.indexOf("?");
   if (qIdx < 0) return null;
   const queryParams = url.substring(qIdx);
 
-  // Determine image quality from size param and strip it
-  // =s0 is default/thumbnail quality, =s1600 is high quality (1600px)
+  // detect image quality suffix before path cleanup
   const isS0 = url.indexOf("=s0?") > 0;
   let path: string;
   if (isS0) {
@@ -105,34 +88,31 @@ export function beauDecode(url: string): string | null {
     path = url.substring(0, idx);
   }
 
-  // step1: strip 15 anti-scraping padding prefix and 17 padding chars at position 33-49
+  // strip 15-byte prefix and 17-byte middle padding
   path = path.substring(15, 33) + path.substring(50);
 
-  // step2: strip 9 anti-scraping padding before the last 2 chars
+  // strip 9-byte padding before the final 2 chars
   path = path.substring(0, path.length - 11) + path[path.length - 2] + path[path.length - 1];
 
-  // Base64 decode to reveal the real CDN path (e.g. /pw/AP1GczMn4wam...)
-  // Native atob() causes stack overflow in Paperback runtime,
-  // Application.base64Decode() returns a polyfill ArrayBuffer incompatible with native calls
+  // decode real cdn path without native atob
   const decoded = b64decode(path);
 
-  // Strip 4 anti-scraping padding chars at position 13 in the decoded path
+  // strip 4-byte decoded path padding at position 13
   let result = decoded.substring(0, 13) + decoded.substring(17);
 
-  // Replace last 2 chars with the size suffix
+  // restore size suffix
   result = result.substring(0, result.length - 2) + (isS0 ? "=s0" : "=s1600");
 
-  // Reconstruct the full blogspot CDN URL
-  return "https://2.bp.blogspot.com/" + result + queryParams;
+  // rguard proxies ip= image urls through ano1 before assigning img src
+  const host = queryParams.includes("ip=") ? DOMAIN_IMAGE_PROXY : DOMAIN_IMAGE;
+  const imagePath = result.startsWith("/") ? result : `/${result}`;
+
+  return host + imagePath + queryParams;
 }
 
-/**
- * Base64 decoder (drop-in atob replacement).
- * Needed because Paperback's native atob() causes a stack overflow
- * and Application.base64Decode() returns a polyfill ArrayBuffer
- * that lacks a native backing pointer for arrayBufferToUTF8String().
- */
 const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+// atob/Application.base64Decode are unsafe in Paperback here
 export function b64decode(input: string): string {
   let output = "";
   const str = input.replace(/=+$/, "");

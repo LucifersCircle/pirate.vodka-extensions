@@ -1,30 +1,31 @@
 import type {
   PagedResults,
+  Request,
   SearchFilter,
   SearchQuery,
   SearchResultItem,
   SortingOption,
 } from "@paperback/types";
 import { URL } from "@paperback/types";
-import { DOMAIN } from "../shared/models";
+import { DOMAIN, SORT_OPTIONS, type FilterEntry } from "../shared/models";
 import { fetchCheerio } from "../../services/network";
 import { getDefaultSearchPage, getDefaultSearchSort } from "../settings-form/forms/main";
 import {
   buildSearchFilters,
+  parseHasNextPage,
   parseSearchResults,
   readDropdownFilter,
   readExcludedMultiselectFilter,
   readMultiselectFilter,
 } from "./parsers";
 
-type FilterEntry = { id: string; value: string | Record<string, "included" | "excluded"> };
-
 export class SearchProvider {
   async getSearchFilters(): Promise<SearchFilter[]> {
-    const $ = await fetchCheerio({
+    const request: Request = {
       url: new URL(DOMAIN).addPathComponent("AdvanceSearch").toString(),
       method: "GET",
-    });
+    };
+    const $ = await fetchCheerio(request);
 
     return buildSearchFilters($);
   }
@@ -49,15 +50,17 @@ export class SearchProvider {
       status.length > 0;
 
     if (!hasAdvancedSearchInput) {
-      const $ = await fetchCheerio({
+      const request: Request = {
         url: buildDefaultSearchPageUrl(page),
         method: "GET",
-      });
+      };
+      const $ = await fetchCheerio(request);
       const items = parseSearchResults($);
+      const hasMore = parseHasNextPage($);
 
       return {
         items,
-        metadata: items.length > 0 ? { page: page + 1 } : undefined,
+        metadata: hasMore ? { page: page + 1 } : undefined,
       };
     }
 
@@ -71,7 +74,10 @@ export class SearchProvider {
       .setQueryItem("page", String(page))
       .toString();
 
-    const request = { url, method: "GET" as const };
+    const request: Request = {
+      url,
+      method: "GET",
+    };
     const $ = await fetchCheerio(request);
     const items = parseSearchResults($);
 
@@ -82,25 +88,7 @@ export class SearchProvider {
   }
 
   async getSortingOptions(): Promise<SortingOption[]> {
-    const options: SortingOption[] = [
-      { id: "", label: "Any Status" },
-      { id: "Ongoing", label: "Ongoing" },
-      { id: "Completed", label: "Completed" },
-    ];
-
-    const defaultSort = getDefaultSearchSort();
-    if (!defaultSort) {
-      return options;
-    }
-
-    const defaultIndex = options.findIndex((option) => option.id === defaultSort);
-    if (defaultIndex <= 0) {
-      return options;
-    }
-
-    const [defaultOption] = options.splice(defaultIndex, 1);
-    options.unshift(defaultOption);
-    return options;
+    return SORT_OPTIONS;
   }
 }
 

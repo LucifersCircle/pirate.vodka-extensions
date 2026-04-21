@@ -1,4 +1,4 @@
-import type { Chapter, ChapterDetails, SourceManga } from "@paperback/types";
+import type { Chapter, ChapterDetails, Request, SourceManga } from "@paperback/types";
 import { URL } from "@paperback/types";
 import { DOMAIN } from "../shared/models";
 import { createChapterPageUrls, fetchCheerio } from "../../services/network";
@@ -11,14 +11,18 @@ export class ChapterProvider {
       .addPathComponent(sourceManga.mangaId)
       .toString();
 
-    const $ = await fetchCheerio({ url, method: "GET" });
+    const request: Request = { url, method: "GET" };
+    const $ = await fetchCheerio(request);
     return parseChapterList($, sourceManga);
   }
 
   async getChapterDetails(chapter: Chapter): Promise<ChapterDetails> {
-    const url = `${DOMAIN}/Comic/${chapter.chapterId}&readType=1`;
+    const url = new URL(`${DOMAIN}/Comic/${chapter.chapterId}`)
+      .setQueryItem("readType", "1")
+      .toString();
 
-    const $ = await fetchCheerio({ url, method: "GET" });
+    const request: Request = { url, method: "GET" };
+    const $ = await fetchCheerio(request);
     const pages = createChapterPageUrls(
       chapter.sourceManga.mangaId,
       chapter.chapterId,

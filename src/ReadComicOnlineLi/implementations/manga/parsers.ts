@@ -12,14 +12,14 @@ export function parseMangaDetails($: CheerioAPI, mangaId: string): SourceManga {
     $('link[rel="image_src"]').attr("href") ?? $("div.col.cover img").attr("src") ?? "";
   const fullThumbnail = thumbnailHref.startsWith("/") ? DOMAIN + thumbnailHref : thumbnailHref;
 
-  const collectLinks = (label: string): string[] => {
+  function collectLinks(label: string): string[] {
     const links: string[] = [];
     $(`p:has(span:contains("${label}")) a`, info).each((_, el) => {
       const text = $(el).text().trim();
       if (text) links.push(text);
     });
     return links;
-  };
+  }
 
   const author = collectLinks("Writer:").join(", ");
   const artist = collectLinks("Artist:").join(", ");

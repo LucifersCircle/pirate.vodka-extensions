@@ -16,7 +16,7 @@ export class ReadComicOnlineLiExtension implements Omit<Extension, keyof MangaPr
     storage: "stateManager",
   });
   globalRateLimiter = new BasicRateLimiter("rateLimiter", {
-    numberOfRequests: 5,
+    numberOfRequests: 10,
     bufferInterval: 1,
     ignoreImages: true,
   });

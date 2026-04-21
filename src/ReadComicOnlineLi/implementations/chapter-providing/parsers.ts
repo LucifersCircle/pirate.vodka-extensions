@@ -40,26 +40,11 @@ export function parseChapterList($: CheerioAPI, sourceManga: SourceManga): Chapt
   return chapters;
 }
 
-/**
- * Extracts chapter image URLs from the page HTML.
- *
- * The site obfuscates image URLs in inline JavaScript. Each image URL is assigned
- * to a `pth` variable, deobfuscated via `.replace()` calls, then pushed to `lstImages`.
- * An external script (rguard.min.js) further processes the array with `beau()`.
- *
- * Deobfuscation pipeline:
- *   1. Extract raw `pth = '...'` assignments from inline <script> blocks
- *   2. Apply page-specific `pth.replace(/longPattern/g, 'char')` substitutions
- *   3. Apply rguard.min.js `beau()` decoding (see beauDecode below)
- *
- * See https://readcomiconline.li/Scripts/rguard.min.js?v=1.5.8
- */
+// extracts obfuscated `pth` image assignments and decodes them through rguard beau()
 export function parseChapterDetails($: CheerioAPI): string[] {
   const html = $.html();
 
-  // Step 1: Collect page-specific deobfuscation patterns from pth.replace() calls.
-  // These replace long obfuscation tokens with single characters,
-  // e.g. pth = pth.replace(/ZT__BmiyOG_/g, 'g')
+  // collect page-specific pth.replace() substitutions
   const replacements: { pattern: RegExp; replacement: string }[] = [];
   const replaceRegex = /pth\s*=\s*pth\.replace\(\/([^/]+)\/g,\s*'([^']*)'\)/g;
   let replMatch;
@@ -71,9 +56,7 @@ export function parseChapterDetails($: CheerioAPI): string[] {
     }
   }
 
-  // Step 2: Extract raw pth string values. The page uses `lstImages.push(pth)`
-  // with a variable reference (not a string literal), so we capture from
-  // the `pth = '...'` assignments instead of from .push() calls.
+  // extract raw pth assignments; lstImages.push() only receives variable refs
   const rawPaths: string[] = [];
   const seen = new Set<string>();
   const pthRegex = /(?:var\s+)?pth\s*=\s*'([^']+)'/g;
@@ -85,7 +68,7 @@ export function parseChapterDetails($: CheerioAPI): string[] {
     rawPaths.push(val);
   }
 
-  // Step 3: Apply page-specific replacements, then rguard.min.js beau() decoding
+  // apply page substitutions before rguard beau() decoding
   return rawPaths
     .map((pth) => {
       for (const { pattern, replacement } of replacements) {
