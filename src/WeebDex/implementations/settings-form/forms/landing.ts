@@ -5,7 +5,7 @@ import { SearchSettingsForm } from "./search";
 import { SiteSettingsForm } from "./site";
 
 export class WeebDexSettingsForm extends Form {
-  override getSections(): FormSectionElement[] {
+  override getSections(): FormSectionElement<unknown>[] {
     return [
       Section("mainSettings", [
         NavigationRow("site_settings", {

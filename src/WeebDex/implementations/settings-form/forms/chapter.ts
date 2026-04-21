@@ -9,7 +9,7 @@ import {
 import { getHideBonusChapters, setHideBonusChapters } from "./main";
 
 export class ChapterSettingsForm extends Form {
-  override getSections(): FormSectionElement[] {
+  override getSections(): FormSectionElement<unknown>[] {
     return [
       Section(
         {

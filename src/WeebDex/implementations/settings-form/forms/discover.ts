@@ -21,7 +21,7 @@ import {
 } from "./main";
 
 export class DiscoverSettingsForm extends Form {
-  override getSections(): FormSectionElement[] {
+  override getSections(): FormSectionElement<unknown>[] {
     return [
       Section(
         {

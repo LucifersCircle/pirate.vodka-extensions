@@ -45,7 +45,7 @@ export class SiteSettingsForm extends Form {
       });
   }
 
-  override getSections(): FormSectionElement[] {
+  override getSections(): FormSectionElement<unknown>[] {
     return [
       Section(
         {

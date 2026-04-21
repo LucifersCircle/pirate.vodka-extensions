@@ -19,7 +19,7 @@ import {
 } from "./main";
 
 export class SearchSettingsForm extends Form {
-  override getSections(): FormSectionElement[] {
+  override getSections(): FormSectionElement<unknown>[] {
     return [
       Section(
         {
