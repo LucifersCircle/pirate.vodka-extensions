@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-04-21T21:18:33.555Z",
+  "buildTime": "2026-04-24T04:01:39.536Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.68",
     "types": "1.0.0-alpha.68"
@@ -10,7 +10,7 @@
   },
   "sources": [
     {
-      "name": "ReadComicOnlineLi",
+      "name": "ReadComicOnline",
       "description": "Extension that pulls content from readcomiconline.li.",
       "version": "1.0.0-alpha.1",
       "icon": "icon.png",
@@ -29,7 +29,7 @@
           "name": "Lucifers Circle"
         }
       ],
-      "id": "ReadComicOnlineLi"
+      "id": "ReadComicOnline"
     },
     {
       "name": "VortexScans",

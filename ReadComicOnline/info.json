@@ -1,0 +1,1 @@
+{"name":"ReadComicOnline","description":"Extension that pulls content from readcomiconline.li.","version":"1.0.0-alpha.1","icon":"icon.png","language":"en","contentRating":"SAFE","capabilities":[16,4,1,64,32],"badges":[],"developers":[{"name":"Lucifers Circle"}],"id":"ReadComicOnline"}
