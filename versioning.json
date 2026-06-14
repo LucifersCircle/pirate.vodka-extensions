@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-06-13T23:06:51.380Z",
+  "buildTime": "2026-06-14T05:57:42.506Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.91",
     "types": "1.0.0-alpha.91"
@@ -9,6 +9,28 @@
     "description": "Paperback extensions from pirate.vodka. Maintained by Lucifers Circle."
   },
   "sources": [
+    {
+      "name": "Kagane",
+      "description": "Extension that pulls content from kagane.to.",
+      "version": "1.0.0-alpha.1",
+      "icon": "icon.png",
+      "language": "en",
+      "contentRating": "SAFE",
+      "capabilities": [
+        1,
+        16,
+        4,
+        64,
+        32
+      ],
+      "badges": [],
+      "developers": [
+        {
+          "name": "Lucifers Circle"
+        }
+      ],
+      "id": "Kagane"
+    },
     {
       "name": "ReadComicOnline",
       "description": "Extension that pulls content from readcomiconline.li.",
