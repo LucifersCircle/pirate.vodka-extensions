@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-07-19T15:54:18.672Z",
+  "buildTime": "2026-07-19T17:59:48.779Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.92",
     "types": "1.0.0-alpha.92"
@@ -12,7 +12,7 @@
     {
       "name": "Kagane",
       "description": "Extension that pulls content from kagane.to.",
-      "version": "0.0.1-alpha.1",
+      "version": "0.0.1-alpha.2",
       "icon": "icon.png",
       "language": "en",
       "contentRating": "SAFE",
