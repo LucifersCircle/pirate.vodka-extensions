@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-07-19T18:22:10.577Z",
+  "buildTime": "2026-07-19T20:18:37.488Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.92",
     "types": "1.0.0-alpha.92"
@@ -34,7 +34,7 @@
     {
       "name": "VortexScans",
       "description": "Extension that pulls content from vortexscans.org.",
-      "version": "0.0.1-alpha.2",
+      "version": "0.0.1-alpha.3",
       "icon": "icon.png",
       "language": "en",
       "contentRating": "SAFE",
