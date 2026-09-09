@@ -3,11 +3,13 @@
 
 import {
   Form,
+  InputRow,
   Section,
   SelectRow,
   ToggleRow,
   type FormItemElement,
   type FormSectionElement,
+  type InputRowProps,
   type SelectRowProps,
   type ToggleRowProps,
 } from "@paperback/types";
@@ -15,36 +17,39 @@ import {
 import {
   CHAPTER_TITLE_MODE_OPTIONS,
   CONTENT_RATING_OPTIONS,
-  GENRE_OPTIONS,
   LANGUAGE_OPTIONS,
   SOURCE_DISPLAY_MODE_OPTIONS,
+  type GenreDto,
 } from "../shared/models";
+import { HIDDEN_TAG_CATEGORIES } from "../shared/tag-options";
 import {
   getChapterTitleMode,
   getContentLanguages,
-  getContentRatingSetting,
+  getContentRatingSettings,
   getDataSaver,
+  getCustomHiddenTags,
   getExcludedGenres,
+  getHiddenTagCategories,
   getShowEdition,
   getShowSource,
   getSourceDisplayMode,
   setChapterTitleMode,
   setContentLanguages,
-  setContentRatingSetting,
+  setContentRatingSettings,
   setDataSaver,
+  setCustomHiddenTags,
   setExcludedGenres,
+  setHiddenTagCategories,
   setShowEdition,
   setShowSource,
   setSourceDisplayMode,
 } from "./main";
 
-const GENRE_SELECT_OPTIONS = GENRE_OPTIONS.map((genre) => ({
-  id: encodeFormOptionId(genre),
-  title: genre,
-}));
-const GENRE_BY_SELECT_ID = new Map(GENRE_SELECT_OPTIONS.map((option) => [option.id, option.title]));
-
 export class KaganeSettingsForm extends Form {
+  constructor(private readonly genres: GenreDto[]) {
+    super();
+  }
+
   override getSections(): FormSectionElement<unknown>[] {
     return [
       Section(
@@ -58,6 +63,8 @@ export class KaganeSettingsForm extends Form {
           this.contentRatingRow(),
           this.sourceDisplayModeRow(),
           this.excludedGenresRow(),
+          this.hiddenTagCategoriesRow(),
+          this.customHiddenTagsRow(),
         ],
       ),
       Section("display", [this.showEditionRow(), this.showSourceRow(), this.chapterTitleModeRow()]),
@@ -82,9 +89,9 @@ export class KaganeSettingsForm extends Form {
     const props: SelectRowProps = {
       title: "Content Rating",
       options: CONTENT_RATING_OPTIONS,
-      value: [getContentRatingSetting()],
+      value: getContentRatingSettings(),
       minItemCount: 1,
-      maxItemCount: 1,
+      maxItemCount: CONTENT_RATING_OPTIONS.length,
       onValueChange: Application.Selector(this as KaganeSettingsForm, "handleContentRating"),
     };
 
@@ -105,16 +112,45 @@ export class KaganeSettingsForm extends Form {
   }
 
   excludedGenresRow(): FormItemElement<unknown> {
+    const options = this.genres
+      .map((genre) => ({ id: genre.id, title: genre.genre_name }))
+      .sort((left, right) => left.title.localeCompare(right.title));
     const props: SelectRowProps = {
       title: "Excluded Genres",
-      options: GENRE_SELECT_OPTIONS,
-      value: getExcludedGenres().map(encodeFormOptionId),
+      options,
+      value: getExcludedGenres(),
       minItemCount: 0,
-      maxItemCount: GENRE_SELECT_OPTIONS.length,
+      maxItemCount: options.length,
       onValueChange: Application.Selector(this as KaganeSettingsForm, "handleExcludedGenres"),
     };
 
     return SelectRow("excluded-genres", props);
+  }
+
+  hiddenTagCategoriesRow(): FormItemElement<unknown> {
+    const props: SelectRowProps = {
+      title: "Hidden Tags",
+      options: HIDDEN_TAG_CATEGORIES.map((category) => ({
+        id: category.id,
+        title: category.title,
+      })),
+      value: getHiddenTagCategories(),
+      minItemCount: 0,
+      maxItemCount: HIDDEN_TAG_CATEGORIES.length,
+      onValueChange: Application.Selector(this as KaganeSettingsForm, "handleHiddenTagCategories"),
+    };
+
+    return SelectRow("hidden-tag-categories", props);
+  }
+
+  customHiddenTagsRow(): FormItemElement<unknown> {
+    const props: InputRowProps = {
+      title: "Custom Hidden Tags (comma-separated)",
+      value: getCustomHiddenTags().join(", "),
+      onValueChange: Application.Selector(this as KaganeSettingsForm, "handleCustomHiddenTags"),
+    };
+
+    return InputRow("custom-hidden-tags", props);
   }
 
   showEditionRow(): FormItemElement<unknown> {
@@ -167,7 +203,7 @@ export class KaganeSettingsForm extends Form {
   }
 
   async handleContentRating(value: string[]): Promise<void> {
-    setContentRatingSetting(value[0] ?? "safe");
+    setContentRatingSettings(value);
     Application.invalidateDiscoverSections();
     this.reloadForm();
   }
@@ -179,11 +215,19 @@ export class KaganeSettingsForm extends Form {
   }
 
   async handleExcludedGenres(value: string[]): Promise<void> {
-    setExcludedGenres(
-      value
-        .map((id) => GENRE_BY_SELECT_ID.get(id))
-        .filter((genre): genre is string => genre !== undefined),
-    );
+    setExcludedGenres(value);
+    Application.invalidateDiscoverSections();
+    this.reloadForm();
+  }
+
+  async handleHiddenTagCategories(value: string[]): Promise<void> {
+    setHiddenTagCategories(value);
+    Application.invalidateDiscoverSections();
+    this.reloadForm();
+  }
+
+  async handleCustomHiddenTags(value: string): Promise<void> {
+    setCustomHiddenTags(value);
     Application.invalidateDiscoverSections();
     this.reloadForm();
   }
@@ -207,10 +251,4 @@ export class KaganeSettingsForm extends Form {
     setDataSaver(value);
     this.reloadForm();
   }
-}
-
-function encodeFormOptionId(value: string): string {
-  return encodeURIComponent(value).replace(/[!'*~]/g, (char) => {
-    return `%${char.charCodeAt(0).toString(16).toUpperCase()}`;
-  });
 }

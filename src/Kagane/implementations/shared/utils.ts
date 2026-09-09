@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright © 2026 Inkdex */
 
-import { ContentRating, URL } from "@paperback/types";
+import { CloudflareError, ContentRating, URL } from "@paperback/types";
 
 import { fetchJSON } from "../../services/network";
 import {
@@ -9,8 +9,11 @@ import {
   BASE_URL,
   CONTENT_RATING_VALUES,
   DATA_SAVER_KEY,
+  GENRES_CACHE_KEY,
   INTEGRITY_EXP_KEY,
   INTEGRITY_TOKEN_KEY,
+  SOURCES_CACHE_KEY,
+  TAXONOMY_CACHE_TTL_MS,
   type ChallengeDto,
   type GenreDto,
   type IntegrityDto,
@@ -19,6 +22,16 @@ import {
   type KaganeSearchBook,
   type SourcesDto,
 } from "./models";
+
+interface PersistedCache<T> {
+  cachedAt: number;
+  entries: T[];
+}
+
+let genreMemo: PersistedCache<GenreDto> | undefined;
+let genreRequest: Promise<GenreDto[]> | undefined;
+let sourceMemo: PersistedCache<SourcesDto["sources"][number]> | undefined;
+let sourceRequest: Promise<SourcesDto["sources"]> | undefined;
 
 export function applyMixins(derivedCtor: Constructor, constructors: Constructor[]) {
   for (const baseCtor of constructors) {
@@ -121,38 +134,173 @@ function getDataSaver(): boolean {
 }
 
 export async function getKaganeMetadata(): Promise<KaganeMetadata> {
-  const [genres, sources] = await Promise.all([
+  const [genres, sources] = await Promise.all([getKaganeGenres(), getKaganeSources()]);
+
+  return {
+    genres: Object.fromEntries(genres.map((genre) => [genre.id, genre.genre_name])),
+    sources,
+  };
+}
+
+export async function getKaganeGenres(): Promise<GenreDto[]> {
+  if (genreMemo && isFresh(genreMemo)) return genreMemo.entries;
+  if (genreRequest) return genreRequest;
+
+  genreRequest = loadCachedEntries(GENRES_CACHE_KEY, genreMemo, isGenreDto, () =>
     fetchJSON<GenreDto[]>({
       url: `${API_URL}/api/v2/genres/list`,
       method: "GET",
     }),
-    fetchJSON<SourcesDto>({
+  ).then((cache) => {
+    genreMemo = cache;
+    return cache.entries;
+  });
+
+  try {
+    return await genreRequest;
+  } finally {
+    genreRequest = undefined;
+  }
+}
+
+export async function getKaganeSources(): Promise<SourcesDto["sources"]> {
+  if (sourceMemo && isFresh(sourceMemo)) return sourceMemo.entries;
+  if (sourceRequest) return sourceRequest;
+
+  sourceRequest = loadCachedEntries(SOURCES_CACHE_KEY, sourceMemo, isSourceDto, async () => {
+    const response = await fetchJSON<SourcesDto>({
       url: `${API_URL}/api/v2/sources/list`,
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ source_types: null }),
-    }),
-  ]);
+    });
+    return response.sources ?? [];
+  }).then((cache) => {
+    sourceMemo = cache;
+    return cache.entries;
+  });
 
-  return {
-    genres: Object.fromEntries(genres.map((genre) => [genre.id, genre.genre_name])),
-    sources: sources.sources ?? [],
-  };
+  try {
+    return await sourceRequest;
+  } finally {
+    sourceRequest = undefined;
+  }
+}
+
+async function loadCachedEntries<T>(
+  cacheKey: string,
+  memoryCache: PersistedCache<T> | undefined,
+  isEntry: (entry: unknown) => entry is T,
+  fetchEntries: () => Promise<T[]>,
+): Promise<PersistedCache<T>> {
+  const persistedCache = readPersistedCache(cacheKey, isEntry);
+  const cached =
+    persistedCache && (!memoryCache || persistedCache.cachedAt > memoryCache.cachedAt)
+      ? persistedCache
+      : memoryCache;
+  if (cached && isFresh(cached)) return cached;
+
+  try {
+    const entries = (await fetchEntries()).filter(isEntry);
+    const cache = { cachedAt: Date.now(), entries };
+    persistCache(cacheKey, cache);
+    return cache;
+  } catch (error) {
+    if (error instanceof CloudflareError) throw error;
+    if (cached) return cached;
+    throw error;
+  }
+}
+
+function readPersistedCache<T>(
+  cacheKey: string,
+  isEntry: (entry: unknown) => entry is T,
+): PersistedCache<T> | undefined {
+  const raw = Application.getState(cacheKey);
+  if (typeof raw !== "string") return undefined;
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      !isRecord(parsed) ||
+      typeof parsed.cachedAt !== "number" ||
+      !Array.isArray(parsed.entries)
+    ) {
+      return undefined;
+    }
+    if (!parsed.entries.every(isEntry)) return undefined;
+    return { cachedAt: parsed.cachedAt, entries: parsed.entries };
+  } catch {
+    return undefined;
+  }
+}
+
+function persistCache<T>(cacheKey: string, cache: PersistedCache<T>): void {
+  try {
+    Application.setState(JSON.stringify(cache), cacheKey);
+  } catch {
+    // A working memory cache is still preferable to failing the caller.
+  }
+}
+
+function isFresh<T>(cache: PersistedCache<T>): boolean {
+  return Date.now() - cache.cachedAt < TAXONOMY_CACHE_TTL_MS;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isGenreDto(value: unknown): value is GenreDto {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    value.id.length > 0 &&
+    typeof value.genre_name === "string" &&
+    value.genre_name.length > 0 &&
+    (value.genre_type === undefined ||
+      value.genre_type === null ||
+      typeof value.genre_type === "string")
+  );
+}
+
+function isSourceDto(value: unknown): value is SourcesDto["sources"][number] {
+  return (
+    isRecord(value) &&
+    typeof value.source_id === "string" &&
+    value.source_id.length > 0 &&
+    typeof value.source_type === "string" &&
+    typeof value.title === "string"
+  );
 }
 
 export function titleCase(value: string): string {
   return value.length > 0 ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
 
-export function normalizeContentRating(value: unknown): KaganeContentRating {
-  return typeof value === "string" && CONTENT_RATING_VALUES.includes(value as KaganeContentRating)
-    ? (value as KaganeContentRating)
-    : "safe";
+export function normalizeContentRatings(value: unknown): KaganeContentRating[] {
+  if (Array.isArray(value)) {
+    const selected = CONTENT_RATING_VALUES.filter((rating) => value.includes(rating));
+    return selected.length > 0 ? selected : ["safe", "suggestive"];
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (Array.isArray(parsed)) return normalizeContentRatings(parsed);
+    } catch {
+      // Legacy values are stored as a single rating rather than JSON.
+    }
+
+    const legacyIndex = CONTENT_RATING_VALUES.indexOf(value as KaganeContentRating);
+    if (legacyIndex >= 0) return CONTENT_RATING_VALUES.slice(0, legacyIndex + 1);
+  }
+
+  return ["safe", "suggestive"];
 }
 
-export function getContentRatingValues(maxRating: KaganeContentRating): string[] {
-  const index = CONTENT_RATING_VALUES.indexOf(maxRating);
-  return CONTENT_RATING_VALUES.slice(0, Math.max(index, 0) + 1).map(titleCase);
+export function getContentRatingValues(ratings: KaganeContentRating[]): string[] {
+  return ratings.map(titleCase);
 }
 
 export function getPaperbackContentRating(contentRating?: string | null): ContentRating {
@@ -172,7 +320,8 @@ export function getPaperbackContentRating(contentRating?: string | null): Conten
 export function parseKaganeDate(value?: string | null): Date | undefined {
   if (!value) return undefined;
 
-  const parsed = new Date(value.endsWith("Z") ? value : `${value}Z`);
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
+  const parsed = new Date(hasTimezone ? value : `${value}Z`);
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 

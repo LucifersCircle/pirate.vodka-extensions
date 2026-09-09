@@ -10,14 +10,19 @@ import {
   CONTENT_RATING_KEY,
   DATA_SAVER_KEY,
   EXCLUDED_GENRES_KEY,
-  GENRE_OPTIONS,
   LANGUAGE_OPTIONS,
   SHOW_EDITION_KEY,
   SHOW_SOURCE_KEY,
   SOURCE_DISPLAY_MODE_KEY,
+  type GenreDto,
   type KaganeContentRating,
 } from "../shared/models";
-import { normalizeContentRating } from "../shared/utils";
+import { getKaganeGenres, normalizeContentRatings } from "../shared/utils";
+import {
+  CUSTOM_HIDDEN_TAGS_KEY,
+  HIDDEN_TAG_CATEGORIES,
+  HIDDEN_TAG_CATEGORIES_KEY,
+} from "../shared/tag-options";
 import { KaganeSettingsForm } from "./forms";
 
 function readStringArray(key: string, fallback: string[], validIds?: Set<string>): string[] {
@@ -43,20 +48,29 @@ function readStringArray(key: string, fallback: string[], validIds?: Set<string>
   return sanitized.length > 0 || fallback.length === 0 ? sanitized : fallback;
 }
 
-export function getContentRatingSetting(): KaganeContentRating {
-  return normalizeContentRating(Application.getState(CONTENT_RATING_KEY));
+export function getContentRatingSettings(): KaganeContentRating[] {
+  const stored = Application.getState(CONTENT_RATING_KEY);
+  const normalized = normalizeContentRatings(stored);
+  if (typeof stored === "string") {
+    Application.setState(normalized, CONTENT_RATING_KEY);
+  }
+  return normalized;
 }
 
-export function setContentRatingSetting(value: string): void {
-  Application.setState(normalizeContentRating(value), CONTENT_RATING_KEY);
+export function setContentRatingSettings(value: string[]): void {
+  Application.setState(normalizeContentRatings(value), CONTENT_RATING_KEY);
 }
 
 export function getSourceDisplayMode(): string {
-  return Application.getState(SOURCE_DISPLAY_MODE_KEY) === "official" ? "official" : "all";
+  const value = Application.getState(SOURCE_DISPLAY_MODE_KEY);
+  return value === "official" || value === "scanlations" ? value : "all";
 }
 
 export function setSourceDisplayMode(value: string): void {
-  Application.setState(value === "official" ? "official" : "all", SOURCE_DISPLAY_MODE_KEY);
+  Application.setState(
+    value === "official" || value === "scanlations" ? value : "all",
+    SOURCE_DISPLAY_MODE_KEY,
+  );
 }
 
 export function getShowEdition(): boolean {
@@ -99,14 +113,64 @@ export function setChapterTitleMode(value: string): void {
 }
 
 export function getExcludedGenres(): string[] {
-  return readStringArray(EXCLUDED_GENRES_KEY, [], new Set(GENRE_OPTIONS));
+  return readStringArray(EXCLUDED_GENRES_KEY, []);
 }
 
 export function setExcludedGenres(value: string[]): void {
   Application.setState(
-    value.filter((entry) => GENRE_OPTIONS.includes(entry)),
+    [...new Set(value.map((entry) => entry.trim()).filter(Boolean))],
     EXCLUDED_GENRES_KEY,
   );
+}
+
+export function getHiddenTagCategories(): string[] {
+  return readStringArray(
+    HIDDEN_TAG_CATEGORIES_KEY,
+    [],
+    new Set(HIDDEN_TAG_CATEGORIES.map((category) => category.id)),
+  );
+}
+
+export function setHiddenTagCategories(value: string[]): void {
+  const validIds = new Set(HIDDEN_TAG_CATEGORIES.map((category) => category.id));
+  Application.setState(
+    [...new Set(value.filter((entry) => validIds.has(entry)))],
+    HIDDEN_TAG_CATEGORIES_KEY,
+  );
+}
+
+export function getCustomHiddenTags(): string[] {
+  return readStringArray(CUSTOM_HIDDEN_TAGS_KEY, []);
+}
+
+export function setCustomHiddenTags(value: string): void {
+  Application.setState(
+    [
+      ...new Set(
+        value
+          .split(",")
+          .map((entry) => entry.trim())
+          .filter(Boolean),
+      ),
+    ],
+    CUSTOM_HIDDEN_TAGS_KEY,
+  );
+}
+
+export function resolveExcludedGenreIds(
+  values: string[],
+  genres: Record<string, string>,
+): string[] {
+  const entries = Object.entries(genres);
+  return [
+    ...new Set(
+      values.flatMap((value) => {
+        if (genres[value]) return [value];
+        const normalized = value.toLowerCase();
+        return entries.filter(([, name]) => name.toLowerCase() === normalized).map(([id]) => id);
+      }),
+    ),
+  ];
 }
 
 export function getContentLanguages(): string[] {
@@ -125,6 +189,20 @@ export function setContentLanguages(value: string[]): void {
 
 export class SettingsFormProvider implements SettingsFormProviding {
   async getSettingsForm(): Promise<Form> {
-    return new KaganeSettingsForm();
+    const genres = await getKaganeGenres();
+    migrateExcludedGenres(genres);
+    return new KaganeSettingsForm(genres);
+  }
+}
+
+function migrateExcludedGenres(genres: GenreDto[]): void {
+  const stored = getExcludedGenres();
+  const genreMap = Object.fromEntries(genres.map((genre) => [genre.id, genre.genre_name]));
+  const resolved = resolveExcludedGenreIds(stored, genreMap);
+  if (
+    stored.length !== resolved.length ||
+    stored.some((value, index) => value !== resolved[index])
+  ) {
+    setExcludedGenres(resolved);
   }
 }

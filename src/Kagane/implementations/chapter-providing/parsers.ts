@@ -21,10 +21,23 @@ export function parseChapterList(
   sources: SourceDto[],
 ): Chapter[] {
   const useSourceChapterNumber = shouldUseSourceChapterNumber(data, sources);
+  const isOfficial = Boolean(
+    data.source_id &&
+    sources.find((source) => source.source_id === data.source_id)?.source_type.toLowerCase() ===
+      "official",
+  );
   const books = data.series_books ?? [];
 
   return books.map((book, index) =>
-    mapChapter(book, sourceManga, chapterTitleMode, langCode, useSourceChapterNumber, index),
+    mapChapter(
+      book,
+      sourceManga,
+      chapterTitleMode,
+      langCode,
+      useSourceChapterNumber,
+      isOfficial,
+      index,
+    ),
   );
 }
 
@@ -45,6 +58,7 @@ function mapChapter(
   chapterTitleMode: string,
   langCode: string,
   useSourceChapterNumber: boolean,
+  isOfficial: boolean,
   sortingIndex: number,
 ): Chapter {
   const chapterNumber = parseChapterNumber(book.chapter_no);
@@ -60,10 +74,19 @@ function mapChapter(
     chapNum: hasVolumeOnly ? 0 : useSourceChapterNumber ? book.sort_no : (chapterNumber ?? 0),
     volume: volume ?? 0,
     langCode,
-    version: book.groups?.map((group) => group.title).join(", ") || undefined,
+    version: buildVersion(book, isOfficial),
     publishDate: parseKaganeDate(book.created_at),
     sortingIndex,
   };
 
   return chapter;
+}
+
+function buildVersion(book: ChapterBook, isOfficial: boolean): string | undefined {
+  const groups = book.groups
+    ?.map((group) => group.title.trim())
+    .filter(Boolean)
+    .join(", ");
+  if (!isOfficial) return groups || undefined;
+  return groups ? `${groups} ⭐` : "Official ⭐";
 }

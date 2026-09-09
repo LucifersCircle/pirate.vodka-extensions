@@ -18,6 +18,11 @@ export const DATA_SAVER_KEY = "kagane-data-saver";
 export const CHAPTER_TITLE_MODE_KEY = "kagane-chapter-title-mode";
 export const EXCLUDED_GENRES_KEY = "kagane-excluded-genres";
 export const CONTENT_LANGUAGES_KEY = "kagane-content-languages";
+export const GENRES_CACHE_KEY = "kagane-genres-cache-v1";
+export const SOURCES_CACHE_KEY = "kagane-sources-cache-v1";
+export const TAGS_CACHE_KEY = "kagane-tags-cache-v1";
+export const TAXONOMY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+export const HOME_SECTION_METADATA_ID = "kagane-home-section";
 
 export const CONTENT_RATING_VALUES = ["safe", "suggestive", "erotica", "pornographic"] as const;
 export type KaganeContentRating = (typeof CONTENT_RATING_VALUES)[number];
@@ -32,6 +37,7 @@ export const CONTENT_RATING_OPTIONS: Array<{ id: KaganeContentRating; title: str
 export const SOURCE_DISPLAY_MODE_OPTIONS = [
   { id: "all", title: "Show All" },
   { id: "official", title: "Official Sources Only" },
+  { id: "scanlations", title: "Scanlations Only" },
 ];
 
 export const CHAPTER_TITLE_MODE_OPTIONS = [
@@ -156,6 +162,12 @@ export const GENRE_OPTIONS = [
 export interface GenreDto {
   id: string;
   genre_name: string;
+  genre_type?: string | null;
+}
+
+export interface TagDto {
+  id: string;
+  tag_name: string;
 }
 
 export interface SourcesDto {
@@ -189,6 +201,16 @@ export interface KaganeSearchBook {
   start_year?: number | null;
   cover_image_id?: string | null;
   alternate_titles?: string[];
+  latest_chapters?: LatestChapter[];
+}
+
+export interface LatestChapter {
+  book_id: string;
+  title?: string | null;
+  chapter_no?: string | null;
+  volume_no?: string | null;
+  created_at?: string | null;
+  available_at?: string | null;
 }
 
 export interface DetailsDto {
@@ -206,6 +228,10 @@ export interface DetailsDto {
   edition_info?: string | null;
   tracker_id?: string | null;
   series_covers?: SeriesCover[];
+  average_rating?: number | null;
+  bayesian_rating?: number | null;
+  total_ratings?: number | null;
+  total_views?: number | null;
 }
 
 export interface SeriesStaff {
