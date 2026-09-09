@@ -7,7 +7,7 @@ import { DiscoverSectionType, URL } from "@paperback/types";
 import { fetchJSON } from "../../services/network";
 import { getShowSource } from "../settings-form/main";
 import { API_URL, PAGE_SIZE, type SearchDto } from "../shared/models";
-import { getKaganeMetadata } from "../shared/utils";
+import { getKaganeMetadata, hasCoverImage } from "../shared/utils";
 import { buildSearchBody } from "../search-results/main";
 import { mapDiscoverItem } from "./parsers";
 
@@ -55,9 +55,9 @@ export class DiscoverProvider {
       body: JSON.stringify(body),
     };
     const data = await fetchJSON<SearchDto>(request);
-    const items = (data.content ?? []).map((book) =>
-      mapDiscoverItem(book, kaganeMetadata.sources, getShowSource()),
-    );
+    const items = (data.content ?? [])
+      .filter(hasCoverImage)
+      .map((book) => mapDiscoverItem(book, kaganeMetadata.sources, getShowSource()));
 
     return {
       items,

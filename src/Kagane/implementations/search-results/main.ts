@@ -36,6 +36,7 @@ import {
   getContentRatingValues,
   getKaganeMetadata,
   getPaperbackContentRating,
+  hasCoverImage,
 } from "../shared/utils";
 import {
   buildSearchFilters,
@@ -93,7 +94,9 @@ export class SearchProvider {
     );
     const showSource = getShowSource();
 
-    const items = (data.content ?? []).map((book) => mapSearchResult(book, sourceMap, showSource));
+    const items = (data.content ?? [])
+      .filter(hasCoverImage)
+      .map((book) => mapSearchResult(book, sourceMap, showSource));
 
     return {
       items,

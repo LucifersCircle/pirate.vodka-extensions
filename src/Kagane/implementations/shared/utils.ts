@@ -16,6 +16,7 @@ import {
   type IntegrityDto,
   type KaganeContentRating,
   type KaganeMetadata,
+  type KaganeSearchBook,
   type SourcesDto,
 } from "./models";
 
@@ -35,8 +36,29 @@ export function applyMixins(derivedCtor: Constructor, constructors: Constructor[
 
 type Constructor = new (...args: never[]) => unknown;
 
-export function buildImageUrl(imageId?: string | null): string {
-  return imageId ? `${API_URL}/api/v2/image/${imageId}` : "";
+export function buildImageUrl(imageId?: unknown): string {
+  const normalizedImageId = normalizeImageId(imageId);
+  if (!normalizedImageId) return "";
+
+  return new URL(API_URL)
+    .addPathComponent("api")
+    .addPathComponent("v2")
+    .addPathComponent("image")
+    .addPathComponent(encodeURIComponent(normalizedImageId))
+    .toString();
+}
+
+export function hasCoverImage(
+  book: KaganeSearchBook,
+): book is KaganeSearchBook & { cover_image_id: string } {
+  return normalizeImageId(book.cover_image_id) !== undefined;
+}
+
+function normalizeImageId(imageId: unknown): string | undefined {
+  if (typeof imageId !== "string") return undefined;
+
+  const normalizedImageId = imageId.trim();
+  return normalizedImageId || undefined;
 }
 
 export async function getChallengeResponse(chapterId: string): Promise<ChallengeDto> {
