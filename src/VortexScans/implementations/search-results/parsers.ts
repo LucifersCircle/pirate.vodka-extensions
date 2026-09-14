@@ -1,10 +1,35 @@
 import type { SearchResultItem } from "@paperback/types";
 import { ContentRating } from "@paperback/types";
 import type { SearchFilter, SearchFilterValue } from "@paperback/types/lib/compat/0.8";
-import type { VortexGenre, VortexQueryResponse } from "../shared/models";
+import {
+  HOME_SECTION_METADATA_ID,
+  type VortexCollectionDetailResponse,
+  type VortexGenre,
+  type VortexQueryResponse,
+} from "../shared/models";
 import { buildMangaId } from "../shared/utils";
 
 type DropdownOption = { id: string; value: string };
+
+export type HomeSectionFilter =
+  | { kind: "latest" }
+  | { kind: "new" }
+  | { kind: "collection"; slug: string };
+
+export function readHomeSectionFilter(
+  filters?: SearchFilterValue[],
+): HomeSectionFilter | undefined {
+  const value = filters?.find((filter) => filter.id === HOME_SECTION_METADATA_ID)?.value;
+  if (value === "latest") return { kind: "latest" };
+  if (value === "new") return { kind: "new" };
+
+  if (typeof value === "string" && value.startsWith("collection:")) {
+    const slug = value.slice("collection:".length);
+    if (/^[A-Za-z0-9_-]+$/.test(slug)) return { kind: "collection", slug };
+  }
+
+  return undefined;
+}
 
 export function readDropdownFilter(
   filters: SearchFilterValue[],
@@ -98,4 +123,23 @@ export function parseSearchResults(data: VortexQueryResponse): SearchResultItem[
         contentRating: ContentRating.EVERYONE,
       };
     });
+}
+
+export function parseCollectionSearchResults(
+  data: VortexCollectionDetailResponse,
+): SearchResultItem[] {
+  return [...(data.collection?.works ?? [])]
+    .sort((left, right) => left.position - right.position)
+    .map(({ post }) => ({
+      mangaId: buildMangaId(post.id, post.slug),
+      title: Application.decodeHTMLEntities(post.postTitle),
+      imageUrl: post.featuredImage || "",
+      subtitle: formatSeriesType(post.seriesType),
+      contentRating: ContentRating.EVERYONE,
+    }));
+}
+
+function formatSeriesType(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : "";
 }

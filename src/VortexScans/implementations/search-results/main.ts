@@ -11,6 +11,7 @@ import {
   type SearchFilter,
   type SearchFilterValue,
 } from "@paperback/types/lib/compat/0.8";
+import { HomeSectionSearchForm } from "./forms";
 import {
   DOMAIN_API,
   PAGE_SIZE,
@@ -18,13 +19,20 @@ import {
   STATUS_OPTIONS,
   TYPE_OPTIONS,
 } from "../shared/models";
-import type { Metadata, VortexGenre, VortexQueryResponse } from "../shared/models";
+import type {
+  Metadata,
+  VortexCollectionDetailResponse,
+  VortexQueryResponse,
+} from "../shared/models";
 import { fetchJSON } from "../../services/network";
+import { getVortexGenres } from "../shared/utils";
 import {
   buildSearchFilters,
+  parseCollectionSearchResults,
   parseSearchResults,
   readDropdownFilter,
   readExcludedMultiselectFilter,
+  readHomeSectionFilter,
   readMultiselectFilter,
 } from "./parsers";
 
@@ -36,6 +44,18 @@ export class SearchProvider {
   ): Promise<PagedResults<SearchResultItem>> {
     const page = metadata?.page ?? 1;
     const filters = query.metadata ?? [];
+    const homeSection = readHomeSectionFilter(filters);
+
+    if (homeSection?.kind === "collection") {
+      return this.getCollectionResults(homeSection.slug);
+    }
+
+    if (homeSection?.kind === "latest" || homeSection?.kind === "new") {
+      return this.getTaggedResults(
+        page,
+        homeSection.kind === "latest" ? "latestUpdatePinned" : "new",
+      );
+    }
 
     const searchTerm = (query.title ?? "")
       .trim()
@@ -99,28 +119,53 @@ export class SearchProvider {
   }
 
   async getSearchFilters(): Promise<SearchFilter[]> {
-    const genresCacheDate = Number(Application.getState("genres-cache-date") ?? 0);
-    let genres: VortexGenre[];
-
-    if (genresCacheDate + 604800 > Date.now() / 1000) {
-      genres = JSON.parse(Application.getState("genres") as string) as VortexGenre[];
-    } else {
-      const genresUrl = `${DOMAIN_API}/genres`;
-      const genresRequest: Request = { url: genresUrl, method: "GET" };
-      genres = await fetchJSON<VortexGenre[]>(genresRequest);
-
-      Application.setState(JSON.stringify(genres), "genres");
-      Application.setState(String(Date.now() / 1000), "genres-cache-date");
-    }
-
-    return buildSearchFilters(genres, STATUS_OPTIONS, TYPE_OPTIONS);
+    return buildSearchFilters(await getVortexGenres(), STATUS_OPTIONS, TYPE_OPTIONS);
   }
 
   getAdvancedSearchForm(query: SearchQuery<SearchFilterValue[]>) {
+    if (readHomeSectionFilter(query.metadata)) {
+      return new HomeSectionSearchForm(query.metadata ?? []);
+    }
     return new SearchFilterForm(query.metadata, this.getSearchFilters());
   }
 
-  async getSortingOptions(): Promise<SortingOption[]> {
+  async getSortingOptions(query?: SearchQuery<SearchFilterValue[]>): Promise<SortingOption[]> {
+    if (readHomeSectionFilter(query?.metadata)) return [];
     return SORT_OPTIONS;
+  }
+
+  private async getTaggedResults(
+    page: number,
+    tag: "latestUpdatePinned" | "new",
+  ): Promise<PagedResults<SearchResultItem>> {
+    const url = new URL(DOMAIN_API)
+      .addPathComponent("posts")
+      .setQueryItem("page", page.toString())
+      .setQueryItem("perPage", PAGE_SIZE.toString())
+      .setQueryItem("searchTerm", "")
+      .setQueryItem("isNovel", "false")
+      .setQueryItem("tag", tag)
+      .toString();
+
+    const data = await fetchJSON<VortexQueryResponse>({ url, method: "GET" });
+    const items = parseSearchResults(data);
+
+    return {
+      items,
+      metadata: (data.posts?.length ?? 0) >= PAGE_SIZE ? { page: page + 1 } : undefined,
+    };
+  }
+
+  private async getCollectionResults(slug: string): Promise<PagedResults<SearchResultItem>> {
+    const url = new URL(DOMAIN_API)
+      .addPathComponent("collections")
+      .addPathComponent(slug)
+      .toString();
+    const data = await fetchJSON<VortexCollectionDetailResponse>({ url, method: "GET" });
+
+    return {
+      items: parseCollectionSearchResults(data),
+      metadata: undefined,
+    };
   }
 }

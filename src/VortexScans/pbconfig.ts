@@ -4,7 +4,7 @@ import { ContentRating, SourceIntents } from "@paperback/types";
 export default {
   name: "VortexScans",
   description: "Extension that pulls content from vortexscans.org.",
-  version: "0.0.1-alpha.3",
+  version: "0.0.1-alpha.5",
   icon: "icon.png",
   language: "en",
   contentRating: ContentRating.EVERYONE,

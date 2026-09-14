@@ -16,7 +16,7 @@ export class MangaProvider {
 
     try {
       const url = new URL(DOMAIN).addPathComponent("series").addPathComponent(slug).toString();
-      const post = parseMangaPage(await fetchText({ url, method: "GET" }));
+      const post = parseMangaPage(await fetchText({ url, method: "GET" }), parsed);
       if (post) {
         return parseMangaDetails(post, mangaId);
       }

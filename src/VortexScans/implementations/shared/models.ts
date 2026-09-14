@@ -1,5 +1,6 @@
 export const DOMAIN = "https://vortexscans.org";
 export const DOMAIN_API = "https://api.vortexscans.org/api";
+export const HOME_SECTION_METADATA_ID = "vortex-home-section";
 
 export interface VortexQueryResponse {
   posts: VortexPost[];
@@ -34,6 +35,9 @@ export interface VortexPost {
   createdby?: { name: string };
   author?: string;
   artist?: string;
+  averageRating?: number;
+  totalViews?: number;
+  sumViews?: number;
 }
 
 export interface VortexGenre {
@@ -63,6 +67,37 @@ export interface VortexChaptersResponse {
     chapters: VortexChapter[];
   };
   totalChapterCount: number;
+}
+
+export interface VortexCollection {
+  id: number;
+  slug: string;
+  title: string;
+  description?: string;
+  coverImage?: string;
+  bannerImage?: string | null;
+  artworkImage?: string | null;
+  displayOrder?: number;
+  totalViews?: number;
+  isPublished?: boolean;
+  likesCount?: number;
+  worksCount?: number;
+}
+
+export interface VortexCollectionsResponse {
+  collections: VortexCollection[];
+}
+
+export interface VortexCollectionWork {
+  id: number;
+  position: number;
+  post: Pick<VortexPost, "id" | "slug" | "postTitle" | "featuredImage" | "seriesType">;
+}
+
+export interface VortexCollectionDetailResponse {
+  collection: VortexCollection & {
+    works: VortexCollectionWork[];
+  };
 }
 
 export type Metadata = {
