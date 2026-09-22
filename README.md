@@ -3,6 +3,7 @@
 - VortexScans
 - ReadComicOnline
 - Kagane
+- Hijala Test (old-builder comparison baseline)
 
 ## Installation
 
