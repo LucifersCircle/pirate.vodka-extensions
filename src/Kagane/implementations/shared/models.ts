@@ -3,7 +3,7 @@
 
 import type { SortingOption } from "@paperback/types";
 
-export const BASE_URL = "https://kagane.to";
+export const BASE_URL = "https://kagane.org";
 export const API_URL = BASE_URL;
 export const PAGE_SIZE = 35;
 
