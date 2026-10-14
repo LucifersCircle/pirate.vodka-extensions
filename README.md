@@ -1,12 +1,12 @@
 ## Available Extensions
 
+- Hijala
 - VortexScans
 - Kagane
-- Hijala Test (old-builder comparison baseline)
 
 ## Extension health
 
-Both extensions are checked hourly at minute 17 (UTC). Click a run link for full
+All extensions are checked hourly at minute 17 (UTC). Click a run link for full
 logs and downloadable results.
 
 <!-- LIVE_TEST_STATUS:START -->
@@ -79,7 +79,7 @@ npm ci
 npm test
 ```
 
-`npm test` checks TypeScript, lint, formatting, and bundles both extensions.
+`npm test` checks TypeScript, lint, formatting, and bundles all extensions.
 Paperback's live tests are separate and require working source websites:
 
 ```sh
@@ -90,13 +90,15 @@ npm run test:extensions
 The suites exercise initialisation, sorting, search, manga details, chapters,
 nonempty chapter page URLs, and every discover section. Results are written to
 `bundles/live-test-results.json`. Failed or missing suites return a nonzero exit
-code.
+code. Extension directories with a `pbconfig.ts` are discovered automatically, so
+new extensions must have a passing suite and appear in the status report.
 
 To test a single extension:
 
 ```sh
 npm run test:extensions -- VortexScans
 npm run test:extensions -- Kagane
+npm run test:extensions -- Hijala
 ```
 
 Returned cover/page URLs are checked for structure, but images are not downloaded.
