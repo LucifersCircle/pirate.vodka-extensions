@@ -11,59 +11,59 @@ logs and downloadable results.
 
 <!-- LIVE_TEST_STATUS:START -->
 
-Last checked: **2026-10-14 15:06:38 UTC** · [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38586304918)
-Started: 2026-10-14 15:05:52 UTC
-Tested commit: `cbba702`
+Last checked: **2026-10-14 19:21:25 UTC** · [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38622841691)
+Started: 2026-10-14 19:20:34 UTC
+Tested commit: `c9d3c4d`
 
 | Extension   | Result  | Passed | Failed | Duration |
 | ----------- | ------- | -----: | -----: | -------: |
-| Hijala      | ✅ Pass |  14/14 |      0 |    5.39s |
-| Kagane      | ✅ Pass |  12/12 |      0 |    9.01s |
-| VortexScans | ✅ Pass |  12/12 |      0 |    7.98s |
+| Hijala      | ✅ Pass |  14/14 |      0 |    4.57s |
+| Kagane      | ❌ Fail |   4/12 |      8 |    4.86s |
+| VortexScans | ✅ Pass |  12/12 |      0 |   11.86s |
 
 <details>
 <summary>Test output</summary>
 
-| Extension   | Test                                     | Result  | Duration | Failure |
-| ----------- | ---------------------------------------- | ------- | -------: | ------- |
-| Hijala      | initialisation                           | ✅ Pass |    0.03s | —       |
-| Hijala      | getDiscoverSections                      | ✅ Pass |    0.00s | —       |
-| Hijala      | getSortingOptions                        | ✅ Pass |    0.00s | —       |
-| Hijala      | getSearchResults                         | ✅ Pass |    0.85s | —       |
-| Hijala      | getMangaDetails                          | ✅ Pass |    1.15s | —       |
-| Hijala      | getChapters                              | ✅ Pass |    0.39s | —       |
-| Hijala      | getChapterDetails                        | ✅ Pass |    0.34s | —       |
-| Hijala      | getDiscoverSectionItems: featured        | ✅ Pass |    0.52s | —       |
-| Hijala      | getDiscoverSectionItems: latest          | ✅ Pass |    0.26s | —       |
-| Hijala      | getDiscoverSectionItems: hot             | ✅ Pass |    0.26s | —       |
-| Hijala      | getDiscoverSectionItems: new             | ✅ Pass |    0.26s | —       |
-| Hijala      | getDiscoverSectionItems: popular         | ✅ Pass |    0.68s | —       |
-| Hijala      | getDiscoverSectionItems: updates         | ✅ Pass |    0.22s | —       |
-| Hijala      | getDiscoverSectionItems: genres          | ✅ Pass |    0.44s | —       |
-| Kagane      | initialisation                           | ✅ Pass |    0.02s | —       |
-| Kagane      | getDiscoverSections                      | ✅ Pass |    0.00s | —       |
-| Kagane      | getSortingOptions                        | ✅ Pass |    0.00s | —       |
-| Kagane      | getSearchResults                         | ✅ Pass |    4.83s | —       |
-| Kagane      | getMangaDetails                          | ✅ Pass |    0.32s | —       |
-| Kagane      | getChapters                              | ✅ Pass |    0.33s | —       |
-| Kagane      | getChapterDetails                        | ✅ Pass |    0.50s | —       |
-| Kagane      | getDiscoverSectionItems: popular         | ✅ Pass |    2.29s | —       |
-| Kagane      | getDiscoverSectionItems: trending        | ✅ Pass |    0.00s | —       |
-| Kagane      | getDiscoverSectionItems: latest          | ✅ Pass |    0.32s | —       |
-| Kagane      | getDiscoverSectionItems: recently-added  | ✅ Pass |    0.40s | —       |
-| Kagane      | getDiscoverSectionItems: genres          | ✅ Pass |    0.00s | —       |
-| VortexScans | initialisation                           | ✅ Pass |    0.00s | —       |
-| VortexScans | getDiscoverSections                      | ✅ Pass |    0.00s | —       |
-| VortexScans | getSortingOptions                        | ✅ Pass |    0.00s | —       |
-| VortexScans | getSearchResults                         | ✅ Pass |    3.28s | —       |
-| VortexScans | getMangaDetails                          | ✅ Pass |    2.98s | —       |
-| VortexScans | getChapters                              | ✅ Pass |    0.22s | —       |
-| VortexScans | getChapterDetails                        | ✅ Pass |    0.37s | —       |
-| VortexScans | getDiscoverSectionItems: popular-today   | ✅ Pass |    0.48s | —       |
-| VortexScans | getDiscoverSectionItems: latest-releases | ✅ Pass |    0.00s | —       |
-| VortexScans | getDiscoverSectionItems: collections     | ✅ Pass |    0.20s | —       |
-| VortexScans | getDiscoverSectionItems: most-popular    | ✅ Pass |    0.24s | —       |
-| VortexScans | getDiscoverSectionItems: genres          | ✅ Pass |    0.20s | —       |
+| Extension   | Test                                     | Result  | Duration | Failure                                                                                                                   |
+| ----------- | ---------------------------------------- | ------- | -------: | ------------------------------------------------------------------------------------------------------------------------- |
+| Hijala      | initialisation                           | ✅ Pass |    0.04s | —                                                                                                                         |
+| Hijala      | getDiscoverSections                      | ✅ Pass |    0.01s | —                                                                                                                         |
+| Hijala      | getSortingOptions                        | ✅ Pass |    0.00s | —                                                                                                                         |
+| Hijala      | getSearchResults                         | ✅ Pass |    0.65s | —                                                                                                                         |
+| Hijala      | getMangaDetails                          | ✅ Pass |    1.02s | —                                                                                                                         |
+| Hijala      | getChapters                              | ✅ Pass |    0.40s | —                                                                                                                         |
+| Hijala      | getChapterDetails                        | ✅ Pass |    0.25s | —                                                                                                                         |
+| Hijala      | getDiscoverSectionItems: featured        | ✅ Pass |    0.33s | —                                                                                                                         |
+| Hijala      | getDiscoverSectionItems: latest          | ✅ Pass |    0.26s | —                                                                                                                         |
+| Hijala      | getDiscoverSectionItems: hot             | ✅ Pass |    0.20s | —                                                                                                                         |
+| Hijala      | getDiscoverSectionItems: new             | ✅ Pass |    0.15s | —                                                                                                                         |
+| Hijala      | getDiscoverSectionItems: popular         | ✅ Pass |    0.20s | —                                                                                                                         |
+| Hijala      | getDiscoverSectionItems: updates         | ✅ Pass |    0.63s | —                                                                                                                         |
+| Hijala      | getDiscoverSectionItems: genres          | ✅ Pass |    0.43s | —                                                                                                                         |
+| Kagane      | initialisation                           | ✅ Pass |    0.03s | —                                                                                                                         |
+| Kagane      | getDiscoverSections                      | ✅ Pass |    0.01s | —                                                                                                                         |
+| Kagane      | getSortingOptions                        | ✅ Pass |    0.00s | —                                                                                                                         |
+| Kagane      | getSearchResults                         | ❌ Fail |    3.32s | Error: Request failed with status 404: https://kagane.org/api/v2/genres/list                                              |
+| Kagane      | getMangaDetails                          | ❌ Fail |    0.00s | Error: No &#96;mangaId&#96; provided in test data. Unable to infer from &#96;SearchResultsProviding.getSearchResults&#96; |
+| Kagane      | getChapters                              | ❌ Fail |    0.00s | Error: No &#96;sourceManga&#96; provided in test data. Unable to infer from &#96;MangaProviding.getMangaDetails&#96;      |
+| Kagane      | getChapterDetails                        | ❌ Fail |    0.00s | Error: No &#96;sourceManga&#96; provided in test data. Unable to infer from &#96;MangaProviding.getMangaDetails&#96;      |
+| Kagane      | getDiscoverSectionItems: popular         | ❌ Fail |    0.34s | Error: Request failed with status 404: https://kagane.org/api/v2/sources/list                                             |
+| Kagane      | getDiscoverSectionItems: trending        | ✅ Pass |    0.00s | —                                                                                                                         |
+| Kagane      | getDiscoverSectionItems: latest          | ❌ Fail |    0.37s | Error: Request failed with status 404: https://kagane.org/api/v2/genres/list                                              |
+| Kagane      | getDiscoverSectionItems: recently-added  | ❌ Fail |    0.50s | Error: Request failed with status 404: https://kagane.org/api/v2/sources/list                                             |
+| Kagane      | getDiscoverSectionItems: genres          | ❌ Fail |    0.28s | Error: Request failed with status 404: https://kagane.org/api/v2/genres/list                                              |
+| VortexScans | initialisation                           | ✅ Pass |    0.00s | —                                                                                                                         |
+| VortexScans | getDiscoverSections                      | ✅ Pass |    0.01s | —                                                                                                                         |
+| VortexScans | getSortingOptions                        | ✅ Pass |    0.00s | —                                                                                                                         |
+| VortexScans | getSearchResults                         | ✅ Pass |    5.32s | —                                                                                                                         |
+| VortexScans | getMangaDetails                          | ✅ Pass |    4.42s | —                                                                                                                         |
+| VortexScans | getChapters                              | ✅ Pass |    0.20s | —                                                                                                                         |
+| VortexScans | getChapterDetails                        | ✅ Pass |    0.34s | —                                                                                                                         |
+| VortexScans | getDiscoverSectionItems: popular-today   | ✅ Pass |    0.63s | —                                                                                                                         |
+| VortexScans | getDiscoverSectionItems: latest-releases | ✅ Pass |    0.00s | —                                                                                                                         |
+| VortexScans | getDiscoverSectionItems: collections     | ✅ Pass |    0.29s | —                                                                                                                         |
+| VortexScans | getDiscoverSectionItems: most-popular    | ✅ Pass |    0.31s | —                                                                                                                         |
+| VortexScans | getDiscoverSectionItems: genres          | ✅ Pass |    0.33s | —                                                                                                                         |
 
 </details>
 
@@ -72,6 +72,7 @@ Tested commit: `cbba702`
 
 | Checked (UTC)           | Hijala       | Kagane  | VortexScans | Run                                                                                       |
 | ----------------------- | ------------ | ------- | ----------- | ----------------------------------------------------------------------------------------- |
+| 2026-10-14 19:21:25 UTC | ✅ Pass      | ❌ Fail | ✅ Pass     | [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38622841691) |
 | 2026-10-14 15:06:38 UTC | ✅ Pass      | ✅ Pass | ✅ Pass     | [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38586304918) |
 | 2026-10-14 10:10:01 UTC | ✅ Pass      | ✅ Pass | ✅ Pass     | [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38547554906) |
 | 2026-10-14 05:38:08 UTC | ✅ Pass      | ✅ Pass | ✅ Pass     | [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38517624246) |
