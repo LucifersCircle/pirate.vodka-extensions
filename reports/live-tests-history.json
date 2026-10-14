@@ -1,5 +1,21 @@
 [
   {
+    "checkedAt": "2026-10-14T23:12:33.944Z",
+    "runUrl": "https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38652543587",
+    "sha": "508993b84d7cf95d72e25c5ba6302c787197383b",
+    "sources": {
+      "Hijala": {
+        "status": "fail"
+      },
+      "Kagane": {
+        "status": "fail"
+      },
+      "VortexScans": {
+        "status": "pass"
+      }
+    }
+  },
+  {
     "checkedAt": "2026-10-14T19:21:25.590Z",
     "runUrl": "https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38622841691",
     "sha": "c9d3c4df65b1bf5ed977b9c164f8d97414d2dde1",
