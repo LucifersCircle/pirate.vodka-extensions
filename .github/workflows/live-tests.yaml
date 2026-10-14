@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   live-tests:
-    name: Test both extensions
+    name: Test all extensions
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

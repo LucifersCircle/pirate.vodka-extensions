@@ -25,7 +25,7 @@ function suite(statuses = ["pass", "pass"]) {
 
 void test("publishes passing counts, UTC timestamps, per-test output, and the run link", () => {
   const snapshot = createSnapshot(
-    { Kagane: suite(), VortexScans: suite() },
+    { Hijala: suite(), Kagane: suite(), VortexScans: suite() },
     { checkedAt, runUrl, outcome: "success" },
   );
   const text = renderStatus(snapshot, updateHistory([], snapshot));
@@ -85,4 +85,44 @@ void test("keeps the newest 24 checks and deduplicates a retried publication", (
   assert.ok(history[0].checkedAt > history[23].checkedAt);
   const repeated = { ...createSnapshot(undefined), ...history[0] };
   assert.deepEqual(updateHistory(history, repeated), history);
+});
+
+void test("includes Hijala in summary, output, and history without rewriting old runs", () => {
+  const snapshot = createSnapshot(
+    { Hijala: suite(), Kagane: suite(), VortexScans: suite() },
+    { checkedAt, outcome: "success" },
+  );
+  const old = {
+    checkedAt: "2026-10-14T11:17:04.000Z",
+    sources: { Kagane: { status: "pass" }, VortexScans: { status: "pass" } },
+  };
+  const history = updateHistory([old], snapshot);
+  assert.equal(history[0].sources.Hijala.status, "pass");
+  assert.equal(history[1].sources.Hijala, undefined);
+  const text = renderStatus(snapshot, history);
+  assert.ok(text.includes("| Hijala | ✅ Pass | 2/2 | 0 | 1.25s |"));
+  assert.ok(text.includes("| Hijala | test 1 | ✅ Pass | 0.63s | — |"));
+  assert.ok(text.includes("| Checked (UTC) | Hijala | Kagane | VortexScans | Run |"));
+  assert.ok(text.includes("| 2026-10-14 11:17:04 UTC | — Not tested | ✅ Pass | ✅ Pass |"));
+});
+
+void test("a missing or failed Hijala suite cannot be hidden by healthy older sources", () => {
+  for (const Hijala of [undefined, suite(["pass", "fail"])]) {
+    const snapshot = createSnapshot(
+      { Hijala, Kagane: suite(), VortexScans: suite() },
+      { checkedAt, outcome: "failure" },
+    );
+    assert.equal(snapshot.sources.Hijala.status, Hijala ? "fail" : "error");
+    assert.equal(snapshot.sources.Kagane.status, "pass");
+    assert.equal(snapshot.sources.VortexScans.status, "pass");
+    assert.ok(renderStatus(snapshot, updateHistory([], snapshot)).includes("| Hijala |"));
+  }
+});
+
+void test("renders the captured source set even after an extension is removed", () => {
+  const snapshot = createSnapshot(undefined, { checkedAt });
+  snapshot.sources.Retired = { ...snapshot.sources.Hijala };
+  const text = renderStatus(snapshot, updateHistory([], snapshot));
+  assert.ok(text.includes("| Retired | ⚠️ Error"));
+  assert.ok(text.includes("| Hijala | Kagane | VortexScans | Retired | Run |"));
 });

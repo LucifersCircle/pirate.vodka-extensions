@@ -2,9 +2,11 @@ import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { discoverSources } from "./test-sources.mjs";
+
 export const START = "<!-- LIVE_TEST_STATUS:START -->";
 export const END = "<!-- LIVE_TEST_STATUS:END -->";
-const SOURCES = ["Kagane", "VortexScans"];
+
 const LABELS = { pass: "✅ Pass", fail: "❌ Fail", error: "⚠️ Error" };
 
 function cell(value) {
@@ -34,12 +36,13 @@ function runLink(snapshot) {
 }
 
 export function createSnapshot(report, options = {}) {
+  const names = discoverSources();
   const sources = {};
-  const reportedFailure = SOURCES.some((name) => {
+  const reportedFailure = names.some((name) => {
     const data = report?.[name];
     return data?.error || data?.summary?.failed > 0 || !data?.tests?.length;
   });
-  for (const name of SOURCES) {
+  for (const name of names) {
     const data = report?.[name];
     const tests = Array.isArray(data?.tests) ? data.tests : [];
     const passed = tests.filter((test) => test?.status === "pass").length;
@@ -94,13 +97,17 @@ export function updateHistory(history, snapshot) {
     runUrl: snapshot.runUrl,
     sha: snapshot.sha,
     sources: Object.fromEntries(
-      SOURCES.map((name) => [name, { status: snapshot.sources[name].status }]),
+      Object.keys(snapshot.sources).map((name) => [
+        name,
+        { status: snapshot.sources[name].status },
+      ]),
     ),
   };
   return [entry, ...history.filter((old) => old.checkedAt !== entry.checkedAt)].slice(0, 24);
 }
 
 export function renderStatus(snapshot, history) {
+  const names = Object.keys(snapshot.sources);
   const lines = [`Last checked: **${timestamp(snapshot.checkedAt)}** · ${runLink(snapshot)}`];
   if (snapshot.startedAt) lines.push(`Started: ${timestamp(snapshot.startedAt)}`);
   if (snapshot.sha) lines.push(`Tested commit: \`${snapshot.sha.slice(0, 7)}\``);
@@ -110,7 +117,7 @@ export function renderStatus(snapshot, history) {
     "| --- | --- | ---: | ---: | ---: |",
   );
   const diagnostics = [];
-  for (const name of SOURCES) {
+  for (const name of names) {
     const result = snapshot.sources[name];
     lines.push(
       `| ${name} | ${LABELS[result.status]} | ${result.passed}/${result.total} | ${result.failed} | ${duration(result.duration)} |`,
@@ -126,7 +133,7 @@ export function renderStatus(snapshot, history) {
     "| Extension | Test | Result | Duration | Failure |",
     "| --- | --- | --- | ---: | --- |",
   );
-  for (const name of SOURCES) {
+  for (const name of names) {
     if (!snapshot.sources[name].tests.length) {
       lines.push(`| ${name} | — | ⚠️ Error | — | ${cell(snapshot.sources[name].error)} |`);
     }
@@ -143,12 +150,12 @@ export function renderStatus(snapshot, history) {
     "<details>",
     "<summary>Recent checks (last 24 runs)</summary>",
     "",
-    "| Checked (UTC) | Kagane | VortexScans | Run |",
-    "| --- | --- | --- | --- |",
+    `| Checked (UTC) | ${names.join(" | ")} | Run |`,
+    `| --- | ${names.map(() => "---").join(" | ")} | --- |`,
   );
   for (const entry of history) {
     lines.push(
-      `| ${timestamp(entry.checkedAt)} | ${LABELS[entry.sources.Kagane.status]} | ${LABELS[entry.sources.VortexScans.status]} | ${runLink(entry)} |`,
+      `| ${timestamp(entry.checkedAt)} | ${names.map((name) => LABELS[entry.sources?.[name]?.status] ?? "— Not tested").join(" | ")} | ${runLink(entry)} |`,
     );
   }
   lines.push("", "</details>");

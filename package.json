@@ -16,7 +16,7 @@
     "test": "npm run test:report && npm run tsc && npm run lint:check && npm run format:check && npm run bundle",
     "prepare": "husky",
     "test:extensions": "node scripts/test-extensions.mjs",
-    "test:report": "node --test scripts/test-status.test.mjs",
+    "test:report": "node --test scripts/*.test.mjs",
     "update:test-status": "node scripts/test-status.mjs publish && oxfmt README.md reports/live-tests-history.json"
   },
   "devDependencies": {
