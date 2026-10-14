@@ -1,0 +1,19 @@
+services:
+  flaresolverr:
+    build: ./scripts/flaresolverr
+    ports:
+      - "127.0.0.1:8191:8191"
+    environment:
+      LOG_LEVEL: info
+    init: true
+    shm_size: 256mb
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import http.client; c = http.client.HTTPConnection('127.0.0.1', 8191, timeout=5); c.request('GET', '/'); assert c.getresponse().status == 200"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
