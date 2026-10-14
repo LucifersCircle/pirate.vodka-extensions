@@ -1,0 +1,132 @@
+name: Live Extension Tests
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "compose*.yaml"
+      - "package*.json"
+      - ".github/workflows/live-tests.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-extension-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  live-tests:
+    name: Test both extensions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Record start time
+        id: started
+        run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Check types, lint, formatting, and bundles
+        run: npm test
+      - name: Start FlareSolverr
+        run: docker compose up -d --build --wait --wait-timeout 90
+      - name: Run Paperback live tests
+        id: tests
+        run: |
+          set -o pipefail
+          mkdir -p bundles/live-status
+          npm run test:extensions 2>&1 | tee bundles/live-status/paperback.log
+      - name: Capture timestamped results
+        if: always()
+        env:
+          TEST_OUTCOME: ${{ steps.tests.outcome }}
+          TEST_STARTED_AT: ${{ steps.started.outputs.timestamp }}
+          TESTED_SHA: ${{ github.sha }}
+        run: node scripts/test-status.mjs capture
+      - name: Collect browser logs
+        if: always()
+        run: |
+          mkdir -p bundles/live-status
+          docker compose logs --no-color > bundles/live-status/flaresolverr.log 2>&1 || true
+          if [ -f bundles/live-test-results.json ]; then
+            cp bundles/live-test-results.json bundles/live-status/paperback.json
+          fi
+      - name: Upload results and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-test-results
+          retention-days: 7
+          path: bundles/live-status/
+      - name: Stop FlareSolverr
+        if: always()
+        run: docker compose down
+
+  publish-status:
+    name: Update README status
+    needs: live-tests
+    if: >-
+      always() && github.event_name != 'pull_request' &&
+      github.ref_name == github.event.repository.default_branch &&
+      needs.live-tests.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout latest default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Download results
+        uses: actions/download-artifact@v4
+        with:
+          name: live-test-results
+          path: bundles/live-status
+      - name: Install the README formatter
+        run: npm ci --ignore-scripts
+      - name: Update the status section and history
+        run: npm run update:test-status
+      - name: Commit README results
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md reports/live-tests-history.json
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "docs: update hourly extension test results"
+          # Reapply the status to the latest README if the branch advanced during testing.
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:$DEFAULT_BRANCH"; then
+              exit 0
+            fi
+            git fetch origin "$DEFAULT_BRANCH"
+            git reset --hard FETCH_HEAD
+            npm run update:test-status
+            git add README.md reports/live-tests-history.json
+            if git diff --cached --quiet; then
+              exit 0
+            fi
+            git commit -m "docs: update hourly extension test results"
+          done
+          exit 1

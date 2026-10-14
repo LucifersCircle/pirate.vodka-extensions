@@ -1,0 +1,17 @@
+# Optional override for the managed cloud environment's public TLS proxy CA.
+services:
+  flaresolverr:
+    build:
+      secrets:
+        - proxy_ca
+    environment:
+      PROXY_CA_FILE: /run/proxy-ca.pem
+    volumes:
+      - type: bind
+        source: ${CODEX_PROXY_CERT:?Set CODEX_PROXY_CERT to the public proxy CA file}
+        target: /run/proxy-ca.pem
+        read_only: true
+
+secrets:
+  proxy_ca:
+    file: ${CODEX_PROXY_CERT:?Set CODEX_PROXY_CERT to the public proxy CA file}
