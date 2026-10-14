@@ -42,7 +42,8 @@ void test("preserves a healthy source when the other fails and keeps table rows 
   assert.equal(snapshot.sources.Kagane.status, "fail");
   assert.equal(snapshot.sources.VortexScans.status, "pass");
   const text = renderStatus(snapshot, updateHistory([], snapshot));
-  assert.match(text, /\| Kagane \| ❌ Fail .*\n\| VortexScans \| ✅ Pass/);
+  assert.match(text, /\| Kagane \| ❌ Fail /);
+  assert.match(text, /\| VortexScans \| ✅ Pass /);
   assert.ok(text.includes("HTTP 503 \\| &lt;script&gt; retry &#96;later&#96;"));
 });
 
@@ -102,8 +103,10 @@ void test("includes Hijala in summary, output, and history without rewriting old
   const text = renderStatus(snapshot, history);
   assert.ok(text.includes("| Hijala | ✅ Pass | 2/2 | 0 | 1.25s |"));
   assert.ok(text.includes("| Hijala | test 1 | ✅ Pass | 0.63s | — |"));
-  assert.ok(text.includes("| Checked (UTC) | Hijala | Kagane | VortexScans | Run |"));
-  assert.ok(text.includes("| 2026-10-14 11:17:04 UTC | — Not tested | ✅ Pass | ✅ Pass |"));
+  const names = Object.keys(snapshot.sources);
+  assert.ok(text.includes(`| Checked (UTC) | ${names.join(" | ")} | Run |`));
+  const oldResults = names.map((name) => (old.sources[name] ? "✅ Pass" : "— Not tested"));
+  assert.ok(text.includes(`| 2026-10-14 11:17:04 UTC | ${oldResults.join(" | ")} |`));
 });
 
 void test("a missing or failed Hijala suite cannot be hidden by healthy older sources", () => {
@@ -124,5 +127,5 @@ void test("renders the captured source set even after an extension is removed", 
   snapshot.sources.Retired = { ...snapshot.sources.Hijala };
   const text = renderStatus(snapshot, updateHistory([], snapshot));
   assert.ok(text.includes("| Retired | ⚠️ Error"));
-  assert.ok(text.includes("| Hijala | Kagane | VortexScans | Retired | Run |"));
+  assert.ok(text.includes(`| ${Object.keys(snapshot.sources).join(" | ")} | Run |`));
 });
