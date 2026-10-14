@@ -5,9 +5,8 @@
 
 ## Extension health
 
-Checks run hourly at minute 17 (UTC) after this workflow reaches the default branch.
-GitHub may delay scheduled runs. Both extensions are tested against their configured
-sites, including `kagane.org`. Click a run link for full logs and downloadable results.
+Both extensions are checked hourly at minute 17 (UTC). Click a run link for full
+logs and downloadable results.
 
 <!-- LIVE_TEST_STATUS:START -->
 
@@ -89,9 +88,8 @@ npm run test:extensions
 
 The suites exercise initialisation, sorting, search, manga details, chapters,
 nonempty chapter page URLs, and every discover section. Results are written to
-`bundles/live-test-results.json`. The runner returns a nonzero exit code for a
-failed or missing suite; Paperback CLI alpha.92 itself reports failures but exits
-successfully.
+`bundles/live-test-results.json`. Failed or missing suites return a nonzero exit
+code.
 
 To test a single extension:
 
@@ -100,18 +98,10 @@ npm run test:extensions -- VortexScans
 npm run test:extensions -- Kagane
 ```
 
-Kagane uses `kagane.org` because the previous `.to` domain is unavailable.
 Returned cover/page URLs are checked for structure, but images are not downloaded.
 
-The test bridge warms source origins through FlareSolverr. Kagane API requests run
-inside its Chromium session because Cloudflare challenges Node's network stack on
-GitHub-hosted runners even when browser cookies are supplied. The local test image
-adds `/browser/request` to preserve JSON POST bodies, headers, and response status
-codes. VortexScans reuses browser cookies and its user agent with Node fetch. The
-bridge retries a Cloudflare/vShield challenge once. This supplements the Node polyfill, which
-does not implement Paperback's WebView bypass. It does not validate the app's
-WebView or extension bypass callbacks. Set `FLARESOLVERR_URL` to use another
-instance of this test image; the default is `http://127.0.0.1:8191`.
+Use the included FlareSolverr test image. Set `FLARESOLVERR_URL` to connect to
+another instance of that image; the default is `http://127.0.0.1:8191`.
 
 For a managed cloud environment with an outbound TLS proxy:
 
