@@ -1,5 +1,16 @@
 [
   {
+    "checkedAt": "2026-10-14T04:11:07.787Z",
+    "sources": {
+      "Kagane": {
+        "status": "pass"
+      },
+      "VortexScans": {
+        "status": "pass"
+      }
+    }
+  },
+  {
     "checkedAt": "2026-10-14T04:00:47.916Z",
     "sources": {
       "Kagane": {
