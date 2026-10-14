@@ -31,10 +31,16 @@ import {
   API_URL,
   PAGE_SIZE,
   SORTING_OPTIONS,
+  type KaganeContentRating,
   type KaganeMetadata,
   type KaganeSearchBook,
   type SearchDto,
 } from "../shared/models";
+import {
+  buildContentRatingFilter,
+  getPaperbackBookContentRating,
+  isContentRatingAllowed,
+} from "../shared/rating";
 import { HIDDEN_TAG_CATEGORIES } from "../shared/tag-options";
 import {
   buildPopularTagOptions,
@@ -44,13 +50,7 @@ import {
   resolveSelectedTagValues,
   resolveTagNames,
 } from "../shared/tags";
-import {
-  buildImageUrl,
-  getContentRatingValues,
-  getKaganeMetadata,
-  getPaperbackContentRating,
-  hasCoverImage,
-} from "../shared/utils";
+import { buildImageUrl, getKaganeMetadata, hasCoverImage } from "../shared/utils";
 import {
   buildSearchFilters,
   readDropdownFilter,
@@ -89,10 +89,11 @@ export class SearchProvider {
     sortingOption?: SortingOption,
   ): Promise<PagedResults<SearchResultItem>> {
     const page = metadata?.page ?? 1;
+    const contentRatings = getContentRatingSettings();
     const kaganeMetadata = await getKaganeMetadata();
     const homeSectionSort = readHomeSectionSort(query.metadata);
     const bodyQuery = homeSectionSort ? { title: "", metadata: [] } : query;
-    const searchBody = await buildSearchBody(bodyQuery, kaganeMetadata);
+    const searchBody = await buildSearchBody(bodyQuery, kaganeMetadata, contentRatings);
     const sort = homeSectionSort ?? sortingOption?.id ?? "relevance";
 
     const url = new URL(API_URL)
@@ -114,30 +115,71 @@ export class SearchProvider {
       body: JSON.stringify(searchBody),
     };
 
-    const data = await fetchJSON<SearchDto>(request);
+    const result = await fetchAllowedSearchPage(request, page, contentRatings);
     const sourceMap = new Map(
       kaganeMetadata.sources.map((source) => [source.source_id, source.title]),
     );
     const showSource = getShowSource();
 
-    const items = (data.content ?? [])
-      .filter(hasCoverImage)
-      .map((book) => mapSearchResult(book, sourceMap, showSource));
+    const items = result.books.map((book) => mapSearchResult(book, sourceMap, showSource));
 
     return {
       items,
-      metadata: data.last === false ? { page: page + 1 } : undefined,
+      metadata: result.hasNextPage ? { page: result.page + 1 } : undefined,
     };
   }
+}
+
+export async function fetchAllowedSearchPage(
+  request: Request,
+  firstPage: number,
+  contentRatings: KaganeContentRating[],
+): Promise<{
+  books: Array<KaganeSearchBook & { cover_image_id: string }>;
+  page: number;
+  hasNextPage: boolean;
+}> {
+  // Exact rating selections can leave an otherwise non-final server page empty.
+  // Advance instead of letting clients treat that empty page as exhaustion.
+  const seenPages = new Set<string>();
+  const maxRequests = 20;
+  for (let offset = 0; offset < maxRequests; offset += 1) {
+    const page = firstPage + offset;
+    const url = new URL(request.url).setQueryItem("page", String(page - 1)).toString();
+    const data = await fetchJSON<SearchDto>({ ...request, url });
+    if (!data || !Array.isArray(data.content)) {
+      throw new Error("Kagane search returned an invalid result page.");
+    }
+    if (typeof data.last !== "boolean") {
+      throw new Error("Kagane search returned missing or invalid pagination status.");
+    }
+    const content = data.content;
+    const books = content
+      .filter((book) => isContentRatingAllowed(book, contentRatings))
+      .filter(hasCoverImage);
+    const hasNextPage = data.last === false;
+    if (books.length > 0 || data.last === true) return { books, page, hasNextPage };
+
+    const fingerprint = JSON.stringify(content.map((book) => book?.series_id ?? book));
+    if (seenPages.has(fingerprint)) {
+      throw new Error("Kagane search pagination did not advance past a filtered-out page.");
+    }
+    seenPages.add(fingerprint);
+  }
+
+  throw new Error(
+    "Kagane search reached the empty-page safety limit before the end. Try a more specific search.",
+  );
 }
 
 export async function buildSearchBody(
   query: SearchQuery<SearchFilterValue[]>,
   metadata: KaganeMetadata,
+  contentRatings: KaganeContentRating[] = getContentRatingSettings(),
 ): Promise<Record<string, unknown>> {
   const filters = query.metadata ?? [];
   const body: Record<string, unknown> = {
-    content_rating: getContentRatingValues(getContentRatingSettings()),
+    ...buildContentRatingFilter(contentRatings),
     content_lang: getContentLanguages(),
   };
   const sourceTypes = getSourceTypes(getSourceDisplayMode());
@@ -271,6 +313,6 @@ function mapSearchResult(
     title,
     imageUrl: buildImageUrl(book.cover_image_id),
     subtitle: subtitles.join(" - "),
-    contentRating: getPaperbackContentRating(book.content_rating),
+    contentRating: getPaperbackBookContentRating(book),
   };
 }

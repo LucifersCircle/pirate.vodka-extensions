@@ -197,6 +197,8 @@ export interface KaganeSearchBook {
   title: string;
   source_id?: string | null;
   content_rating?: string | null;
+  age_rating?: string | null;
+  is_pornographic?: boolean | null;
   current_books?: number;
   start_year?: number | null;
   cover_image_id?: string | null;
@@ -219,6 +221,8 @@ export interface DetailsDto {
   upload_status: string;
   format?: string | null;
   content_rating?: string | null;
+  age_rating?: string | null;
+  is_pornographic?: boolean | null;
   source_id?: string | null;
   series_staff?: SeriesStaff[];
   genres?: SeriesGenre[];
@@ -254,6 +258,17 @@ export interface AlternateTitle {
 
 export interface SeriesCover {
   image_id: string;
+}
+
+export interface ChapterIndexDto {
+  count: number;
+  fields: string[];
+  books: unknown[][];
+}
+
+export interface ChapterPageDto {
+  items: ChapterBook[];
+  next_cursor: string | null;
 }
 
 export interface ChapterBook {

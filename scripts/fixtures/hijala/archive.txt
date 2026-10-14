@@ -1,0 +1,1 @@
+<!doctype html><script>(self.$R=self.$R||{})["tsr"]=[];$_TSR.router=($R=>$R[0]={matches:$R[1]=[$R[2]={l:$R[3]={data:$R[4]={genres:$R[5]=[$R[6]={id:1,name:"Action"},$R[7]={id:2,name:"Fantasy"}],posts:$R[8]=[$R[9]={genres:$R[10]=[$R[6]]}]}}}]})($R["tsr"]);document.currentScript.remove()</script>

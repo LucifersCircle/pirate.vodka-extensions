@@ -8,6 +8,7 @@ import { fetchJSON } from "../../services/network";
 import { getChapterTitleMode, getContentLanguages, getDataSaver } from "../settings-form/main";
 import { API_URL, BASE_URL, type DetailsDto, type SourceDto } from "../shared/models";
 import { getChallengeResponse, getKaganeMetadata } from "../shared/utils";
+import { fetchChapterBooks } from "./books";
 import { parseChapterList } from "./parsers";
 
 export class ChapterProvider {
@@ -26,6 +27,12 @@ export class ChapterProvider {
       url: seriesUrl(sourceManga.mangaId),
       method: "GET",
     });
+    // The rebuilt API serves chapters separately; legacy responses embed them.
+    if (data.series_books == null) {
+      data.series_books = await fetchChapterBooks(sourceManga.mangaId);
+    } else if (!Array.isArray(data.series_books)) {
+      throw new Error("Kagane series response contains an invalid chapter list.");
+    }
     const sources = await safeSources();
     const langCode = getContentLanguages()[0] ?? "en";
 

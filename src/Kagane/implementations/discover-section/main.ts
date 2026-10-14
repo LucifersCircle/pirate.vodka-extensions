@@ -5,18 +5,19 @@ import type { DiscoverSection, DiscoverSectionItem, PagedResults, Request } from
 import { CloudflareError, DiscoverSectionType, URL } from "@paperback/types";
 
 import { fetchJSON } from "../../services/network";
-import { getShowSource } from "../settings-form/main";
+import { getContentRatingSettings, getShowSource } from "../settings-form/main";
 import {
   API_URL,
   HOME_SECTION_METADATA_ID,
   PAGE_SIZE,
   type DetailsDto,
+  type KaganeContentRating,
   type KaganeMetadata,
   type KaganeSearchBook,
-  type SearchDto,
 } from "../shared/models";
-import { getKaganeGenres, getKaganeMetadata, hasCoverImage } from "../shared/utils";
-import { buildSearchBody } from "../search-results/main";
+import { getKaganeContentRating, isContentRatingAllowed } from "../shared/rating";
+import { getKaganeGenres, getKaganeMetadata } from "../shared/utils";
+import { buildSearchBody, fetchAllowedSearchPage } from "../search-results/main";
 import { mapChapterUpdateItem, mapFeaturedDiscoverItem, mapSimpleDiscoverItem } from "./parsers";
 
 const DISCOVER_SECTIONS: DiscoverSection[] = [
@@ -53,13 +54,14 @@ export class DiscoverProvider {
     if (section.id === "genres") return getGenreItems();
 
     const page = metadata?.page ?? 1;
+    const contentRatings = getContentRatingSettings();
     const sort = SORTS[section.id];
     if (!sort) {
       throw new Error(`Unknown discover section: ${section.id}`);
     }
 
     const kaganeMetadata = await getKaganeMetadata();
-    const body = await buildSearchBody({ title: "", metadata: [] }, kaganeMetadata);
+    const body = await buildSearchBody({ title: "", metadata: [] }, kaganeMetadata, contentRatings);
     const size = section.id === "popular" ? 5 : PAGE_SIZE;
     const url = new URL(API_URL)
       .addPathComponent("api")
@@ -77,13 +79,13 @@ export class DiscoverProvider {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     };
-    const data = await fetchJSON<SearchDto>(request);
-    const books = (data.content ?? []).filter(hasCoverImage);
-    const items = await mapSectionItems(section.id, books, kaganeMetadata);
+    const result = await fetchAllowedSearchPage(request, page, contentRatings);
+    const items = await mapSectionItems(section.id, result.books, kaganeMetadata, contentRatings);
 
     return {
       items,
-      metadata: section.id !== "popular" && data.last === false ? { page: page + 1 } : undefined,
+      metadata:
+        section.id !== "popular" && result.hasNextPage ? { page: result.page + 1 } : undefined,
     };
   }
 }
@@ -92,10 +94,11 @@ async function mapSectionItems(
   sectionId: string,
   books: Array<KaganeSearchBook & { cover_image_id: string }>,
   metadata: KaganeMetadata,
+  contentRatings: KaganeContentRating[],
 ): Promise<DiscoverSectionItem[]> {
   const showSource = getShowSource();
   if (sectionId === "popular") {
-    const details = await Promise.all(books.map((book) => safeDetails(book.series_id)));
+    const details = await Promise.all(books.map((book) => safeDetails(book, contentRatings)));
     return books.map((book, index) =>
       mapFeaturedDiscoverItem(book, details[index], metadata.sources, showSource),
     );
@@ -110,17 +113,29 @@ async function mapSectionItems(
   return books.map((book) => mapSimpleDiscoverItem(book, metadata.sources, showSource));
 }
 
-async function safeDetails(seriesId: string): Promise<DetailsDto | undefined> {
+async function safeDetails(
+  book: KaganeSearchBook,
+  contentRatings: KaganeContentRating[],
+): Promise<DetailsDto | undefined> {
   try {
-    return await fetchJSON<DetailsDto>({
+    const details = await fetchJSON<DetailsDto>({
       url: new URL(API_URL)
         .addPathComponent("api")
         .addPathComponent("v2")
         .addPathComponent("series")
-        .addPathComponent(seriesId)
+        .addPathComponent(book.series_id)
         .toString(),
       method: "GET",
     });
+    // Enrichment may contain a synopsis or author text not present in the search
+    // card. Do not trust it under the card's rating if its own rating differs.
+    if (
+      !isContentRatingAllowed(details, contentRatings) ||
+      getKaganeContentRating(details) !== getKaganeContentRating(book)
+    ) {
+      return undefined;
+    }
+    return details;
   } catch (error) {
     if (error instanceof CloudflareError) throw error;
     return undefined;

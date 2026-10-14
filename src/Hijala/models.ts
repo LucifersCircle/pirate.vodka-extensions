@@ -93,6 +93,10 @@ export interface Catalog {
   totalCount: number;
 }
 export interface ReaderChapter extends SiteChapter {
+  seriesSlug?: string;
+  isNovel?: boolean;
+  requiresProtectedFetch?: boolean;
+  publicImages?: { url: string; order: number }[];
   mangaPost: { slug: string; isNovel?: boolean };
   images: { url: string; order: number }[];
 }

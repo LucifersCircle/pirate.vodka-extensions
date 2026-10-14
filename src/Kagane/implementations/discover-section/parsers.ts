@@ -4,12 +4,8 @@
 import type { DiscoverSectionItem } from "@paperback/types";
 
 import type { DetailsDto, KaganeSearchBook, SourceDto } from "../shared/models";
-import {
-  buildImageUrl,
-  getPaperbackContentRating,
-  joinUnique,
-  parseKaganeDate,
-} from "../shared/utils";
+import { getPaperbackBookContentRating } from "../shared/rating";
+import { buildImageUrl, joinUnique, parseKaganeDate } from "../shared/utils";
 
 export function mapSimpleDiscoverItem(
   book: KaganeSearchBook,
@@ -22,7 +18,7 @@ export function mapSimpleDiscoverItem(
     title: buildDisplayTitle(book, sources, showSource),
     imageUrl: buildImageUrl(book.cover_image_id),
     subtitle: typeof book.current_books === "number" ? `${book.current_books} Chapters` : undefined,
-    contentRating: getPaperbackContentRating(book.content_rating),
+    contentRating: getPaperbackBookContentRating(book),
   };
 }
 
@@ -42,7 +38,7 @@ export function mapChapterUpdateItem(
     imageUrl: buildImageUrl(book.cover_image_id),
     subtitle: buildChapterLabel(latest.volume_no, latest.chapter_no),
     publishDate: parseKaganeDate(latest.available_at ?? latest.created_at),
-    contentRating: getPaperbackContentRating(book.content_rating),
+    contentRating: getPaperbackBookContentRating(book),
   };
 }
 
@@ -67,7 +63,7 @@ export function mapFeaturedDiscoverItem(
     supertitle: joinUnique(authors),
     summary: details?.description?.trim() || undefined,
     infoItems,
-    contentRating: getPaperbackContentRating(book.content_rating),
+    contentRating: getPaperbackBookContentRating(book),
   };
 }
 
