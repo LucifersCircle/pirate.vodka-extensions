@@ -6,7 +6,7 @@ import { ContentRating, SourceIntents, type ExtensionInfo } from "@paperback/typ
 export default {
   name: "Hijala",
   description: "Extension that pulls content from en-hijala.com.",
-  version: "1.0.2",
+  version: "0.0.1-alpha.2",
   icon: "icon.png",
   language: "en",
   contentRating: ContentRating.MATURE,
