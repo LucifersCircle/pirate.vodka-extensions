@@ -1,5 +1,27 @@
 [
   {
+    "checkedAt": "2026-10-15T19:07:29.412Z",
+    "runUrl": "https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38790920180",
+    "sha": "de88909c688cf5a5b0cc5029cd358ba7204a78c5",
+    "sources": {
+      "Hijala": {
+        "status": "fail"
+      },
+      "Kagane": {
+        "status": "fail"
+      },
+      "MangaSushi": {
+        "status": "fail"
+      },
+      "ManhwaNex": {
+        "status": "pass"
+      },
+      "VortexScans": {
+        "status": "fail"
+      }
+    }
+  },
+  {
     "checkedAt": "2026-10-15T18:44:07.589Z",
     "runUrl": "https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38787589893",
     "sha": "a0a9211774feb1a436515dca909cbe60f9ea26aa",
@@ -466,22 +488,6 @@
     "sources": {
       "Hijala": {
         "status": "fail"
-      },
-      "Kagane": {
-        "status": "fail"
-      },
-      "VortexScans": {
-        "status": "pass"
-      }
-    }
-  },
-  {
-    "checkedAt": "2026-10-14T19:21:25.590Z",
-    "runUrl": "https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38622841691",
-    "sha": "c9d3c4df65b1bf5ed977b9c164f8d97414d2dde1",
-    "sources": {
-      "Hijala": {
-        "status": "pass"
       },
       "Kagane": {
         "status": "fail"
