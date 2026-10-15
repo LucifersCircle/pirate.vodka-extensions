@@ -4,8 +4,8 @@ import { createRequire } from "node:module";
 import { discoverSources, SOURCE_ROOT } from "./test-sources.mjs";
 const require = createRequire(import.meta.url);
 
-// Source implementations must remain inside their ownership roots. Logical suites may
-// use shared harness modules, but their reachable local dependencies must stay owner-safe.
+// Source implementations and logical suites may use shared local modules, but every
+// reachable local dependency must stay owner-safe. Shared file edits still select all.
 // Start from suites, never the central Mana runner that intentionally imports every suite.
 export function isolatedSourceLayout(
   sources = discoverSources(),
@@ -35,7 +35,7 @@ export function isolatedSourceLayout(
           (local !== sharedSuite && local === suitePath(source)),
       );
     };
-    const inspectFile = (file, source, suiteMode, visited) => {
+    const inspectFile = (file, source, visited) => {
       if (realpathSync(file) !== resolve(file)) return false;
       if (visited.has(file)) return true;
       visited.add(file);
@@ -46,7 +46,8 @@ export function isolatedSourceLayout(
         ts.ScriptTarget.Latest,
         true,
       );
-      if (tree.parseDiagnostics.length) return false;
+      // Declarations cannot prove the dependencies of a separate runtime implementation.
+      if (tree.parseDiagnostics.length || tree.isDeclarationFile) return false;
       let safe = true;
       const inspect = (node) => {
         let specifier;
@@ -83,11 +84,10 @@ export function isolatedSourceLayout(
               if (owner && owner !== source) safe = false;
               else if (!external) {
                 const local = localPath(resolved);
-                if (!suiteMode && !local.startsWith(`${sourceRoot}/${source}/`)) safe = false;
-                else if (
+                if (
                   local.startsWith("../") ||
                   local === ".." ||
-                  !inspectFile(resolved, source, suiteMode, visited)
+                  !inspectFile(target.resolvedFileName, source, visited)
                 )
                   safe = false;
               }
@@ -111,11 +111,10 @@ export function isolatedSourceLayout(
       };
       walk(join(root, sourceRoot, source));
       const implementationFiles = new Set();
-      for (const file of files)
-        if (!inspectFile(file, source, false, implementationFiles)) return false;
+      for (const file of files) if (!inspectFile(file, source, implementationFiles)) return false;
       const suite = join(root, suitePath(source));
       // A missing contract must still be selected and fail in the live runner, not disappear.
-      if (existsSync(suite) && !inspectFile(suite, source, true, new Set())) return false;
+      if (existsSync(suite) && !inspectFile(suite, source, new Set())) return false;
     }
     return true;
   } catch {
