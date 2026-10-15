@@ -2,7 +2,8 @@ import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { discoverSources } from "./test-sources.mjs";
+import { discoverSources, reportIssues } from "./test-sources.mjs";
+import { allSelection, readSelection, validateSelection } from "./changed-sources.mjs";
 
 export const START = "<!-- LIVE_TEST_STATUS:START -->";
 export const END = "<!-- LIVE_TEST_STATUS:END -->";
@@ -36,7 +37,14 @@ function runLink(snapshot) {
 }
 
 export function createSnapshot(report, options = {}) {
-  const names = discoverSources();
+  const selection = validateSelection(
+    options.selection ??
+      allSelection(undefined, "Full live suite", options.sha ? { testedSha: options.sha } : {}),
+    discoverSources(),
+    options.sha,
+  );
+  const names = selection.selectedSources;
+  const issues = reportIssues(report, names);
   const sources = {};
   const reportedFailure = names.some((name) => {
     const data = report?.[name];
@@ -55,6 +63,8 @@ export function createSnapshot(report, options = {}) {
       data.summary.passed === passed &&
       data.summary.failed === failed;
     const error =
+      options.selectionError ||
+      issues[name] ||
       data?.error ||
       (!valid
         ? "No complete test report. Check the workflow logs for setup or runtime errors."
@@ -87,11 +97,34 @@ export function createSnapshot(report, options = {}) {
     startedAt: options.startedAt || undefined,
     runUrl: options.runUrl || undefined,
     sha: options.sha || undefined,
+    selection,
+    sourceCounts: {
+      available: selection.discoveredSources.length,
+      selected: names.length,
+      completed: names.filter((name) => sources[name].status !== "error").length,
+      passed: Object.values(sources).reduce((sum, source) => sum + source.passed, 0),
+      failed: Object.values(sources).reduce((sum, source) => sum + source.failed, 0),
+      total: Object.values(sources).reduce((sum, source) => sum + source.total, 0),
+    },
+    notSelectedSources: selection.discoveredSources.filter((name) => !names.includes(name)),
     sources,
   };
 }
 
+export function assertPublishableSnapshot(snapshot) {
+  if (!snapshot?.selection || snapshot.selection.mode !== "all")
+    throw new Error("Partial or unverified live results cannot be published");
+  validateSelection(snapshot.selection, discoverSources(), snapshot.sha);
+  if (
+    JSON.stringify(
+      Object.keys(snapshot.sources ?? {}).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+    ) !== JSON.stringify(snapshot.selection.selectedSources)
+  )
+    throw new Error("Snapshot source set differs from its full selection");
+}
+
 export function updateHistory(history, snapshot) {
+  assertPublishableSnapshot(snapshot);
   const entry = {
     checkedAt: snapshot.checkedAt,
     runUrl: snapshot.runUrl,
@@ -109,6 +142,18 @@ export function updateHistory(history, snapshot) {
 export function renderStatus(snapshot, history) {
   const names = Object.keys(snapshot.sources);
   const lines = [`Last checked: **${timestamp(snapshot.checkedAt)}** · ${runLink(snapshot)}`];
+  if (snapshot.selection)
+    lines.push(
+      `Live scope: ${snapshot.selection.mode}; ${snapshot.sourceCounts.selected}/${snapshot.sourceCounts.available} sources selected; ${snapshot.sourceCounts.completed} complete reports. ${snapshot.selection.reason}`,
+    );
+  if (snapshot.notSelectedSources?.length)
+    lines.push(
+      `Not selected (${snapshot.notSelectedSources.length}): ${snapshot.notSelectedSources.join(", ")}`,
+    );
+  if (snapshot.sourceCounts)
+    lines.push(
+      `Selected tests: ${snapshot.sourceCounts.passed}/${snapshot.sourceCounts.total} passed; ${snapshot.sourceCounts.failed} failed.`,
+    );
   if (snapshot.startedAt) lines.push(`Started: ${timestamp(snapshot.startedAt)}`);
   if (snapshot.sha) lines.push(`Tested commit: \`${snapshot.sha.slice(0, 7)}\``);
   lines.push(
@@ -192,7 +237,20 @@ function capture() {
   } catch {
     // Malformed CLI output must be published as an error rather than stale success.
   }
+  let selection, selectionError;
+  try {
+    selection = readSelection();
+  } catch {
+    selection = allSelection(
+      undefined,
+      "Selection manifest verification failed",
+      process.env.GITHUB_SHA ? { testedSha: process.env.GITHUB_SHA } : {},
+    );
+    selectionError = "Missing or invalid selection manifest; results are not verified";
+  }
   const snapshot = createSnapshot(report, {
+    selection,
+    selectionError,
     outcome: process.env.TEST_OUTCOME,
     startedAt: process.env.TEST_STARTED_AT,
     sha: process.env.TESTED_SHA,
@@ -201,6 +259,8 @@ function capture() {
       : undefined,
   });
   writeJSON("bundles/live-status/snapshot.json", snapshot);
+  if (Object.values(snapshot.sources).some((source) => source.status !== "pass"))
+    process.exitCode = 1;
   if (process.env.GITHUB_STEP_SUMMARY) {
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${renderStatus(snapshot, [snapshot])}\n`);
   }

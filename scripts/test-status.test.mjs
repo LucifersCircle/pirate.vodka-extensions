@@ -125,7 +125,7 @@ void test("a missing or failed Hijala suite cannot be hidden by healthy older so
 void test("renders the captured source set even after an extension is removed", () => {
   const snapshot = createSnapshot(undefined, { checkedAt });
   snapshot.sources.Retired = { ...snapshot.sources.Hijala };
-  const text = renderStatus(snapshot, updateHistory([], snapshot));
+  const text = renderStatus(snapshot, [snapshot]);
   assert.ok(text.includes("| Retired | ⚠️ Error"));
   assert.ok(text.includes(`| ${Object.keys(snapshot.sources).join(" | ")} | Run |`));
 });
