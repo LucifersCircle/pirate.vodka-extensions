@@ -8,7 +8,17 @@ import {
   type SourceManga,
 } from "@paperback/types";
 import * as cheerio from "cheerio";
-import { BASE_URL, GENRES, type CatalogPage, type SeriesMetadata } from "./models";
+import {
+  BASE_URL,
+  GENRES,
+  type CatalogPage,
+  type HomeCategory,
+  type SeriesMetadata,
+} from "./models";
+
+const BLOCKED_GENRES = new Set(["adult", "mature", "smut", "hentai", "erotica", "ecchi"]);
+const ADULT_MARKERS =
+  '.adult-content, .manga-adult, .adult-warning, [data-adult="1"], [data-adult="true"]';
 
 export const clean = (value: string): string => value.replace(/\s+/g, " ").trim();
 export const slug = (value: string): string => {
@@ -74,27 +84,62 @@ const querySignature = (url: string): string => {
     .filter(([key, value]) => value !== "" || key === "s");
   return JSON.stringify(pairs.sort((a, b) => `${a[0]}=${a[1]}`.localeCompare(`${b[0]}=${b[1]}`)));
 };
+const catalogRoute = (url: string): { route: string; page: number } => {
+  const match = url.match(
+    /^https:\/\/manhwanex\.com\/(manga-genre\/([a-zA-Z0-9_-]+)\/)?(?:page\/([1-9]\d*)\/)?(?:\?[^#\\\s]*)?$/,
+  );
+  const page = Number(match?.[3] ?? 1);
+  if (!match || !Number.isSafeInteger(page) || (match[2] && !GENRES.includes(match[2])))
+    throw new Error("ManhwaNex returned an invalid catalog route.");
+  return { route: match[1] ?? "", page };
+};
 export const validateCatalogUrl = (url: string, root: string, previousPage = 0): string => {
-  const match = url.match(/^https:\/\/manhwanex\.com\/(?:page\/([1-9]\d*)\/)?(?:\?[^#\\\s]*)?$/);
-  const page = Number(match?.[1] ?? 1);
+  const current = catalogRoute(url),
+    origin = catalogRoute(root);
   if (
-    !match ||
-    !Number.isSafeInteger(page) ||
-    page <= previousPage ||
+    current.route !== origin.route ||
+    current.page <= previousPage ||
     querySignature(url) !== querySignature(root)
   )
     throw new Error("ManhwaNex returned an invalid or non-advancing catalog page.");
   return url;
 };
+export const parseHomeCategories = (html: string): HomeCategory[] => {
+  const $ = cheerio.load(html),
+    categories: HomeCategory[] = [];
+  for (const node of $("li.menu-item-object-wp-manga-genre > a").toArray()) {
+    const anchor = $(node),
+      url = anchor.attr("href") ?? "",
+      title = clean(anchor.text());
+    const match = url.match(/^https:\/\/manhwanex\.com\/manga-genre\/([a-zA-Z0-9_-]+)\/$/);
+    if (!match || !GENRES.includes(match[1]) || !title)
+      throw new Error("ManhwaNex returned an invalid home category.");
+    if (!categories.some((category) => category.url === url))
+      categories.push({ id: `genre:${match[1]}`, title, url });
+  }
+  if (!categories.length) throw new Error("ManhwaNex home categories are unavailable.");
+  return categories;
+};
 export const catalogPageNumber = (url: string): number =>
   Number(url.match(/\/page\/(\d+)\//)?.[1] ?? 1);
 export const parseCatalog = (
   html: string,
-  kind: "search" | "popular" | "latest",
+  kind: "search" | "popular" | "latest" | "category",
   nativeSafe = false,
   current = `${BASE_URL}/`,
 ): CatalogPage => {
   const $ = cheerio.load(html);
+  if (kind === "category") {
+    const route = catalogRoute(current).route;
+    const genre = route.match(/^manga-genre\/([^/]+)\/$/)?.[1];
+    if (
+      !genre ||
+      $("link[rel=canonical]").attr("href") !== current ||
+      !$("body").hasClass("tax-wp-manga-genre") ||
+      !$("body").hasClass(`term-${genre}`)
+    )
+      throw new Error("ManhwaNex returned a different category archive.");
+  }
   const selector =
     kind === "search"
       ? ".c-tabs-item__content"
@@ -131,7 +176,10 @@ export const parseCatalog = (
       metadata.release = field("release");
       metadata.classified =
         metadata.genres.length > 0 && metadata.genres.every((genre) => GENRES.includes(genre.id));
-      metadata.adult = row.find(".adult-content, .manga-adult, .adult-warning").length > 0;
+      metadata.adult =
+        metadata.genres.some((genre) => BLOCKED_GENRES.has(genre.id.toLowerCase())) ||
+        row.is(ADULT_MARKERS) ||
+        row.find(ADULT_MARKERS).length > 0;
       metadata.nativeSafe = nativeSafe;
       const image = row.find("img").first();
       return {
@@ -149,12 +197,19 @@ export const parseCatalog = (
     !/No matches found|No results found/i.test($("body").text())
   )
     throw new Error("ManhwaNex catalog layout changed.");
+  const page = catalogPageNumber(current);
+  const shown = clean($(".wp-pagenavi .current").text());
+  if (kind !== "popular" && shown && Number(shown) !== page)
+    throw new Error("ManhwaNex returned a different catalog page.");
   const next =
     kind !== "popular" ? $(".wp-pagenavi .nextpostslink[rel=next]").attr("href") : undefined;
-  return {
-    items,
-    next: next ? validateCatalogUrl(next, current, catalogPageNumber(current)) : undefined,
-  };
+  if (next) {
+    // A saved cursor may resume later, but a native next link must not skip pages.
+    validateCatalogUrl(next, current, page);
+    if (catalogPageNumber(next) !== page + 1)
+      throw new Error("ManhwaNex returned a non-consecutive catalog page.");
+  }
+  return { items, next };
 };
 export const parseGenreOptions = (html: string): { id: string; title: string }[] => {
   const $ = cheerio.load(html);

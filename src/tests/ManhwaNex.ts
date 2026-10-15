@@ -9,18 +9,21 @@ import { ManhwaNex } from "../ManhwaNex/main.js";
 import { ManhwaNexSearchForm, ManhwaNexSettingsForm, preferences } from "../ManhwaNex/forms.js";
 import { BASE_URL, GENRES, SECTIONS, SORTS, STATUSES, type CatalogItem } from "../ManhwaNex/models.js";
 import { fetchText, searchUrl, ManhwaNexInterceptor } from "../ManhwaNex/network.js";
-import { chapterTitle, emptyMetadata, imageUrl, isAllowed, parseCatalog, parseChapters, parseGenreOptions, parseReader, seriesUrl, taxonomyId, validateCatalogUrl } from "../ManhwaNex/parsers.js";
+import { chapterTitle, emptyMetadata, imageUrl, isAllowed, parseCatalog, parseChapters, parseGenreOptions, parseHomeCategories, parseReader, seriesUrl, taxonomyId, validateCatalogUrl } from "../ManhwaNex/parsers.js";
 import { TestSuite } from "./suite.js";
 
 class RequestProbe extends PaperbackInterceptor {
   readonly requests: Request[] = [];
+  readonly responses = new Map<string, string>();
   gate?: (request: Request, data: ArrayBuffer) => Promise<ArrayBuffer>;
   override async interceptRequest(request: Request) {
     if (request.url.startsWith(`${BASE_URL}/`)) this.requests.push(request);
     return request;
   }
   override async interceptResponse(request: Request, _response: Response, data: ArrayBuffer) {
-    return this.gate ? this.gate(request, data) : data;
+    const result = this.gate ? await this.gate(request, data) : data;
+    if (request.url.startsWith(`${BASE_URL}/`)) this.responses.set(`${request.url}${typeof request.body === "string" ? request.body : ""}`, Application.arrayBufferToUTF8String(result));
+    return result;
   }
 }
 const rejects = async (operation: () => Promise<unknown>, pattern: RegExp) => {
@@ -57,7 +60,14 @@ export async function runTests(logger: TestLogger) {
   });
   suite.test("discovery: exact native section names and order", async () => {
     home = await fetchText(`${BASE_URL}/`);
-    expect((await ManhwaNex.getDiscoverSections()).map((section) => section.title)).to.deep.equal(["Popular Series", "Latest Updates"]);
+    await settings.setExcludeNSFW(true); probe.requests.length = 0;
+    const categories = parseHomeCategories(home), sections = await ManhwaNex.getDiscoverSections();
+    expect(categories.map((category) => category.title)).to.deep.equal(["Action", "Romance", "Fantasy", "Martial Arts", "Adventure", "Ghost", "Cultivation", "System"]);
+    expect(sections.map((section) => section.title)).to.deep.equal(["Popular Series", "Latest Updates", ...categories.map((category) => category.title)]);
+    expect(sections.slice(0, 2)).to.deep.equal(SECTIONS);
+    expect(sections.slice(2).map((section) => section.id)).to.deep.equal(categories.map((category) => category.id));
+    expect(probe.requests.map((request) => request.url)).to.deep.equal([`${BASE_URL}/`]);
+    await ManhwaNex.getDiscoverSections(); expect(probe.requests).to.have.length(1);
     expect(parseCatalog(home, "popular").items).not.to.be.empty;
     expect(parseCatalog(home, "latest").items).not.to.be.empty;
   });
@@ -85,6 +95,260 @@ export async function runTests(logger: TestLogger) {
     const next = await ManhwaNex.getDiscoverSectionItems(SECTIONS[1], initial.metadata);
     expect(ids(next.items)).to.deep.equal(ids(expected.items).filter((id) => !ids(initial.items).includes(id)));
     expect((await ManhwaNex.getDiscoverSectionItems(SECTIONS[0])).metadata).to.equal(undefined);
+  });
+  suite.test("categories: exact linked native archives, bounded lazy requests, distinct titles and terminal pagination", async () => {
+    const categories = parseHomeCategories(home), homeIds = new Set(ids([...parseCatalog(home, "popular").items, ...parseCatalog(home, "latest").items]));
+    for (const exclude of [true, false]) {
+      await settings.setExcludeNSFW(exclude); probe.requests.length = 0; probe.responses.clear();
+      const sections = await ManhwaNex.getDiscoverSections();
+      expect(probe.requests.map((request) => request.url)).to.deep.equal([`${BASE_URL}/`]);
+      for (const category of categories) {
+        const section = sections.find((entry) => entry.id === category.id)!;
+        let cursor: Parameters<typeof ManhwaNex.getDiscoverSectionItems>[1], url = category.url, pages = 0;
+        const seen: string[] = [], combined: string[] = [];
+        do {
+          const count = probe.requests.length;
+          const result = await ManhwaNex.getDiscoverSectionItems(section, cursor);
+          const requests = probe.requests.slice(count);
+          expect(requests.filter((request) => request.method === "GET").map((request) => request.url)).to.deep.equal([url]);
+          const batches = requests.filter((request) => request.method === "POST");
+          expect(batches.length).to.be.at.most(exclude ? 1 : 0);
+          const raw = parseCatalog(probe.responses.get(url)!, "category", false, url);
+          const classifications = new Map<string, ReturnType<typeof emptyMetadata>>();
+          for (const [key, response] of probe.responses) if (key.startsWith(`${BASE_URL}/wp-admin/admin-ajax.php`) && key.includes("manga_adult_content"))
+            for (const item of parseCatalog(response, "search", true).items) classifications.set(item.mangaId, item.metadata);
+          for (const request of batches) {
+            expect(request.url).to.equal(`${BASE_URL}/wp-admin/admin-ajax.php`);
+            if (typeof request.body !== "string") throw new Error("Expected a form-encoded native metadata batch.");
+            const form = new Map(request.body.split("&").map((pair) => {
+              const separator = pair.indexOf("=");
+              return [decodeURIComponent(pair.slice(0, separator)), decodeURIComponent(pair.slice(separator + 1))];
+            }));
+            const batchIds = [...form].filter(([key]) => /^vars\[post_name__in\]\[\d+\]$/.test(key)).map(([, value]) => value);
+            expect(batchIds).not.to.be.empty; expect(batchIds.length).to.be.at.most(raw.items.length);
+            expect(batchIds.every((id) => ids(raw.items).includes(id))).to.equal(true);
+            expect(Number(form.get("vars[posts_per_page]"))).to.equal(batchIds.length);
+            expect(request.body).to.include("manga_adult_content");
+          }
+          const expected = ids(raw.items).filter((id) => !seen.includes(id) && (!exclude || isAllowed(classifications.get(id) ?? emptyMetadata())));
+          expect(ids(result.items), `${section.title}, ${url}, exclude=${exclude}`).to.deep.equal(expected);
+          expect(result.metadata === undefined).to.equal(raw.next === undefined);
+          if (result.metadata) expect((result.metadata as { url: string }).url).to.equal(raw.next);
+          if (exclude) for (const item of result.items) {
+            const data = item.metadata as ReturnType<typeof emptyMetadata>;
+            expect(isAllowed(data)).to.equal(true);
+            expect(data.genres.some((genre) => `genre:${genre.id}` === section.id)).to.equal(true);
+          }
+          seen.push(...ids(raw.items)); combined.push(...ids(result.items)); pages++;
+          const warmCount = probe.requests.length;
+          expect(ids((await ManhwaNex.getDiscoverSectionItems(section, cursor)).items)).to.deep.equal(ids(result.items));
+          expect(probe.requests).to.have.length(warmCount);
+          cursor = result.metadata; url = raw.next ?? "";
+          expect(pages).to.be.at.most(20);
+        } while (cursor);
+        expect(new Set(combined).size).to.equal(combined.length);
+        expect(combined.some((id) => !homeIds.has(id)), `${section.title} adds titles beyond home`).to.equal(true);
+      }
+    }
+    await settings.reset();
+  });
+  suite.test("categories: observed adult conflicts revoke direct and in-flight access without losing metadata", async () => {
+    const category = parseHomeCategories(home).find((entry) => entry.id === "genre:action")!;
+    const scenarios = [
+      { id: category.id, url: category.url, kind: "category", evidence: "category", marker: "warning", modes: [true, false] },
+      { id: category.id, url: category.url, kind: "category", evidence: "category", marker: "data-adult", modes: [true, false] },
+      { id: category.id, url: category.url, kind: "category", evidence: "category", marker: "mature", modes: [true, false] },
+      { id: "popular", url: `${BASE_URL}/`, kind: "popular", evidence: "latest", marker: "warning", modes: [true] },
+      { id: "latest", url: `${BASE_URL}/`, kind: "latest", evidence: "popular", marker: "warning", modes: [true] },
+    ] as const;
+    for (const scenario of scenarios) for (const exclude of scenario.modes) {
+      await settings.setExcludeNSFW(true); probe.responses.clear();
+      const baselineSection = (await ManhwaNex.getDiscoverSections()).find((entry) => entry.id === scenario.id)!;
+      const baseline = await ManhwaNex.getDiscoverSectionItems(baselineSection);
+      const evidenceIds = ids(parseCatalog(probe.responses.get(scenario.url)!, scenario.evidence, false, scenario.url).items);
+      const searchableIds = ids((await ManhwaNex.getSearchResults({ title: "" })).items);
+      const candidates = baseline.items.flatMap((item) => {
+        if (!("mangaId" in item) || typeof item.mangaId !== "string" || !("title" in item) || typeof item.title !== "string") throw new Error("Expected a native title for the conflict probe.");
+        return evidenceIds.includes(item.mangaId) && searchableIds.includes(item.mangaId) ? [{ mangaId: item.mangaId, title: item.title }] : [];
+      });
+      expect(candidates.length, "Two current eligible archive/home/search titles are required for warm/cold conflict coverage").to.be.at.least(2);
+      const target = candidates[0], coldId = candidates[1].mangaId;
+      await settings.setExcludeNSFW(exclude); probe.responses.clear();
+      let issued: { chapter: Chapter; page: string } | undefined;
+      const source = await ManhwaNex.getMangaDetails(target.mangaId);
+      expect(source.mangaInfo.primaryTitle).to.equal(target.title);
+      if (exclude) {
+        const chapter = (await ManhwaNex.getChapters(source)).find((entry) => entry.additionalInfo?.locked !== "true");
+        if (!chapter) throw new Error("The current conflict-probe title has no unlocked native chapter.");
+        const reader = await ManhwaNex.getChapterDetails(chapter);
+        issued = { chapter, page: reader.pages[0] };
+      }
+      const batch = [...probe.responses].filter(([key]) => key.startsWith(`${BASE_URL}/wp-admin/admin-ajax.php`)).flatMap(([, html]) => parseCatalog(html, "search", exclude).items).find((item) => item.mangaId === target.mangaId)!;
+      expect(batch.metadata.adult).to.equal(false); expect(batch.metadata.genres).not.to.be.empty;
+      let releaseReader!: () => void, readyReader!: () => void, readerHeld = false;
+      let releaseBatch!: () => void, readyBatch!: () => void, batchHeld = false;
+      const heldReader = new Promise<void>((resolve) => { releaseReader = resolve; });
+      const arrivedReader = new Promise<void>((resolve) => { readyReader = resolve; });
+      const heldBatch = new Promise<void>((resolve) => { releaseBatch = resolve; });
+      const arrivedBatch = new Promise<void>((resolve) => { readyBatch = resolve; });
+      let readerPending: ReturnType<typeof ManhwaNex.getChapterDetails> | undefined;
+      let sectionPending: ReturnType<typeof ManhwaNex.getDiscoverSectionItems> | undefined;
+      probe.gate = async (request, data) => {
+        if (issued && request.url === seriesUrl(target.mangaId, issued.chapter.chapterId)) {
+          readerHeld = true; readyReader(); await heldReader; return data;
+        }
+        if (issued && request.url === `${BASE_URL}/wp-admin/admin-ajax.php` && !batchHeld) {
+          expect(typeof request.body).to.equal("string"); expect(request.body).to.include(coldId);
+          batchHeld = true; readyBatch(); await heldBatch; return data;
+        }
+        if (request.url !== scenario.url) return data;
+        const $ = cheerio.load(Application.arrayBufferToUTF8String(data));
+        const selector = scenario.evidence === "popular" ? ".widget-manga-popular-slider .slider__item" : ".page-item-detail.manga";
+        const cards = $(selector), warm = cards.filter((_index, node) => $(node).find(`.post-title a[href="${seriesUrl(target.mangaId)}"]`).length > 0);
+        const cold = cards.filter((_index, node) => $(node).find(`.post-title a[href="${seriesUrl(coldId)}"]`).length > 0);
+        expect(warm).to.have.length(1); expect(cold).to.have.length(1);
+        for (const card of [warm, cold]) {
+          if (scenario.marker === "warning") card.append('<span class="adult-warning">Adult content</span>');
+          else if (scenario.marker === "data-adult") card.attr("data-adult", "1");
+          else card.append(`<div class="mg_genres"><div class="summary-content"><a href="${BASE_URL}/manga-genre/mature/">Mature</a></div></div>`);
+        }
+        return new TextEncoder().encode($.html()).buffer;
+      };
+      try {
+        if (issued) {
+          readerPending = ManhwaNex.getChapterDetails(issued.chapter);
+          void readerPending.catch(() => undefined);
+          await Promise.race([arrivedReader, readerPending]); expect(readerHeld).to.equal(true);
+        }
+        const section = (await ManhwaNex.getDiscoverSections()).find((entry) => entry.id === scenario.id)!;
+        sectionPending = ManhwaNex.getDiscoverSectionItems(section);
+        void sectionPending.catch(() => undefined);
+        const cache = (ManhwaNex as unknown as { cache: Map<string, { data: ReturnType<typeof emptyMetadata>; expires: number }> }).cache;
+        let adultExpiry = 0, coldExpiry = 0;
+        if (issued) {
+          await Promise.race([arrivedBatch, sectionPending]); expect(batchHeld).to.equal(true);
+          expect(cache.get(target.mangaId)!.data.adult).to.equal(true); expect(cache.get(coldId)!.data.adult).to.equal(true);
+          adultExpiry = cache.get(target.mangaId)!.expires; coldExpiry = cache.get(coldId)!.expires;
+          releaseReader();
+          await rejects(() => readerPending!, /hidden by NSFW exclusion|lacks reliable/);
+          await rejects(() => ManhwaNex.getMangaDetails(coldId), /hidden by NSFW exclusion|lacks reliable/);
+          await rejects(() => Application.scheduleRequest({ url: issued!.page, method: "GET" }), /authorization is missing/);
+          releaseBatch();
+        }
+        const result = await sectionPending;
+        const raw = parseCatalog(probe.responses.get(scenario.url)!, scenario.kind, false, scenario.url);
+        const evidence = parseCatalog(probe.responses.get(scenario.url)!, scenario.evidence, false, scenario.url);
+        for (const id of [target.mangaId, coldId]) expect(evidence.items.find((item) => item.mangaId === id)!.metadata.adult).to.equal(true);
+        const classifications = new Map([...probe.responses].filter(([key]) => key.startsWith(`${BASE_URL}/wp-admin/admin-ajax.php`)).flatMap(([, html]) => parseCatalog(html, "search", exclude).items).map((item) => [item.mangaId, item.metadata]));
+        expect(ids(result.items)).to.deep.equal(ids(raw.items).filter((id) => !exclude || (![target.mangaId, coldId].includes(id) && isAllowed(classifications.get(id) ?? emptyMetadata()))));
+        expect((result.metadata as { url?: string } | undefined)?.url).to.equal(raw.next);
+        if (issued) {
+          const completedBatch = [...probe.responses].filter(([key]) => key.startsWith(`${BASE_URL}/wp-admin/admin-ajax.php`)).flatMap(([, html]) => parseCatalog(html, "search", true).items).find((item) => item.mangaId === coldId)!;
+          expect(completedBatch.metadata.genres).not.to.be.empty;
+          expect(cache.get(coldId)!.data).to.deep.equal({ ...completedBatch.metadata, adult: true });
+          expect(cache.get(coldId)!.expires).to.equal(coldExpiry);
+          expect(ids((await ManhwaNex.getDiscoverSectionItems(section)).items)).not.to.include(target.mangaId).and.not.to.include(coldId);
+          expect(cache.get(target.mangaId)!.expires).to.equal(adultExpiry);
+          await rejects(() => ManhwaNex.getMangaDetails(target.mangaId), /hidden by NSFW exclusion|lacks reliable/);
+          await rejects(() => ManhwaNex.getChapters(issued!.chapter.sourceManga), /hidden by NSFW exclusion|lacks reliable/);
+          await rejects(() => ManhwaNex.getChapterDetails(issued!.chapter), /hidden by NSFW exclusion|lacks reliable/);
+          await rejects(() => Application.scheduleRequest({ url: issued!.page, method: "GET" }), /authorization is missing/);
+          const fresh = new ManhwaNexInterceptor("ManhwaNex.conflict-restart");
+          await rejects(() => fresh.interceptRequest({ url: issued!.page, method: "GET" }), /authorization is missing/);
+          const refreshed = await ManhwaNex.getSearchResults({ title: "" });
+          const rawSearch = parseCatalog(probe.responses.get(searchUrl({ title: "" }, true))!, "search", true, searchUrl({ title: "" }, true));
+          for (const id of [target.mangaId, coldId]) expect(ids(rawSearch.items)).to.include(id);
+          expect(ids(refreshed.items)).not.to.include(target.mangaId).and.not.to.include(coldId);
+          expect(cache.get(target.mangaId)!.expires).to.equal(adultExpiry);
+          expect(cache.get(coldId)!.expires).to.equal(coldExpiry);
+          await rejects(() => ManhwaNex.getMangaDetails(target.mangaId), /hidden by NSFW exclusion|lacks reliable/);
+        } else {
+          const marked = result.items.find((item) => "mangaId" in item && item.mangaId === target.mangaId)!;
+          expect(marked.contentRating).to.equal(ContentRating.ADULT);
+          expect(marked.metadata).to.deep.equal({ ...batch.metadata, adult: true });
+        }
+      } finally {
+        releaseReader(); releaseBatch(); probe.gate = undefined;
+        await readerPending?.catch(() => undefined); await sectionPending?.catch(() => undefined);
+      }
+    }
+    await settings.reset();
+  });
+  suite.test("categories: malformed home anchors and foreign or non-advancing archive routes fail closed", async () => {
+    const category = parseHomeCategories(home)[0];
+    for (const change of [
+      (anchor: ReturnType<ReturnType<typeof cheerio.load>>) => anchor.text(""),
+      (anchor: ReturnType<ReturnType<typeof cheerio.load>>) => anchor.removeAttr("href"),
+      (anchor: ReturnType<ReturnType<typeof cheerio.load>>) => anchor.attr("href", "https://other.test/manga-genre/action/"),
+      (anchor: ReturnType<ReturnType<typeof cheerio.load>>) => anchor.attr("href", `${BASE_URL}/manga-tag/action/`),
+      (anchor: ReturnType<ReturnType<typeof cheerio.load>>) => anchor.attr("href", `${BASE_URL}/manga-genre/unknown/`),
+    ]) {
+      const $ = cheerio.load(home); change($("li.menu-item-object-wp-manga-genre > a").first());
+      expect(() => parseHomeCategories($.html())).to.throw(/home category/);
+    }
+    for (const url of [`${BASE_URL}/page/2/`, `${BASE_URL}/manga-genre/romance/page/2/`, `${category.url}page/1/`, `${category.url}page/2/?s=other`, `${BASE_URL}/manga-genre/%61ction/page/2/`, `https://other.test/manga-genre/action/page/2/`])
+      expect(() => validateCatalogUrl(url, category.url, 1)).to.throw(/invalid|non-advancing/);
+    expect(validateCatalogUrl(`${category.url}page/2/`, category.url, 1)).to.equal(`${category.url}page/2/`);
+    const html = await fetchText(category.url), $ = cheerio.load(html);
+    $("link[rel=canonical]").attr("href", `${BASE_URL}/manga-genre/romance/`);
+    expect(() => parseCatalog($.html(), "category", false, category.url)).to.throw(/different category/);
+    const badNext = cheerio.load(html); badNext(".nextpostslink").attr("href", `${BASE_URL}/page/2/`);
+    expect(() => parseCatalog(badNext.html(), "category", false, category.url)).to.throw(/invalid/);
+    const skipped = cheerio.load(html); skipped(".nextpostslink").attr("href", `${category.url}page/3/`);
+    expect(() => parseCatalog(skipped.html(), "category", false, category.url)).to.throw(/non-consecutive/);
+    const wrongPage = cheerio.load(html); wrongPage(".wp-pagenavi .current").text("2");
+    expect(() => parseCatalog(wrongPage.html(), "category", false, category.url)).to.throw(/different catalog page/);
+    expect(validateCatalogUrl(`${category.url}page/3/`, category.url, 1)).to.equal(`${category.url}page/3/`);
+  });
+  suite.test("pagination: canonical-ID overlaps are removed, duplicate-only advancing pages retain later titles", async () => {
+    const nextUrl = parseCatalog(home, "latest").next!, nextHtml = await fetchText(nextUrl);
+    const thirdUrl = parseCatalog(nextHtml, "latest", false, nextUrl).next!;
+    const thirdHtml = await fetchText(thirdUrl), firstIds = ids(parseCatalog(home, "latest").items);
+    const $home = cheerio.load(home), firstCards = $home(".page-item-detail.manga").toArray().map((node) => $home.html(node));
+    for (const duplicateOnly of [false, true]) {
+      await settings.setExcludeNSFW(false); probe.requests.length = 0;
+      const edited = cheerio.load(nextHtml), rows = edited(".page-item-detail.manga");
+      const overlappingCard = firstCards.find((_card, index) => !ids(parseCatalog(nextHtml, "latest", false, nextUrl).items).includes(firstIds[index]));
+      if (!overlappingCard) throw new Error("No distinct first-page card available for the overlap regression.");
+      const replacement = duplicateOnly ? firstCards.join("") : overlappingCard;
+      if (duplicateOnly) rows.slice(1).remove();
+      rows.first().replaceWith(replacement);
+      probe.gate = async (request, data) => request.url === nextUrl ? new TextEncoder().encode(edited.html()).buffer : data;
+      try {
+        const first = await ManhwaNex.getDiscoverSectionItems(SECTIONS[1]);
+        const next = await ManhwaNex.getDiscoverSectionItems(SECTIONS[1], first.metadata);
+        const expected = parseCatalog(duplicateOnly ? thirdHtml : edited.html(), "latest", false, duplicateOnly ? thirdUrl : nextUrl);
+        expect(ids(first.items)).to.deep.equal(firstIds);
+        expect(ids(next.items)).to.deep.equal(ids(expected.items).filter((id) => !firstIds.includes(id)));
+        expect(new Set([...ids(first.items), ...ids(next.items)]).size).to.equal(first.items.length + next.items.length);
+        if (duplicateOnly) expect(probe.requests.filter((request) => request.method === "GET").map((request) => request.url)).to.deep.equal([`${BASE_URL}/`, nextUrl, thirdUrl]);
+        expect(ids((await ManhwaNex.getDiscoverSectionItems(SECTIONS[1])).items)).to.deep.equal(firstIds);
+      } finally { probe.gate = undefined; }
+    }
+    await settings.setExcludeNSFW(false);
+    probe.gate = async (request, data) => {
+      if (request.url !== nextUrl) return data;
+      const $ = cheerio.load(nextHtml); $(".nextpostslink").attr("href", nextUrl);
+      return new TextEncoder().encode($.html()).buffer;
+    };
+    try {
+      const first = await ManhwaNex.getDiscoverSectionItems(SECTIONS[1]);
+      await rejects(() => ManhwaNex.getDiscoverSectionItems(SECTIONS[1], first.metadata), /non-advancing/);
+    } finally { probe.gate = undefined; await settings.reset(); }
+  });
+  suite.test("pagination: continuation is scoped to category, query, settings and refresh", async () => {
+    await settings.setExcludeNSFW(false);
+    const sections = await ManhwaNex.getDiscoverSections(), action = sections.find((section) => section.id === "genre:action")!, romance = sections.find((section) => section.id === "genre:romance")!;
+    const first = await ManhwaNex.getDiscoverSectionItems(action); expect(first.metadata).not.to.equal(undefined);
+    expect(ids((await ManhwaNex.getDiscoverSectionItems(romance, first.metadata)).items)).to.deep.equal(ids((await ManhwaNex.getDiscoverSectionItems(romance)).items));
+    const searchFirst = await ManhwaNex.getSearchResults({ title: "" });
+    const query = { title: "Logging 10,000" };
+    expect(ids((await ManhwaNex.getSearchResults(query, searchFirst.metadata)).items)).to.deep.equal(ids((await ManhwaNex.getSearchResults(query)).items));
+    await settings.setExcludeNSFW(true); probe.requests.length = 0;
+    const reset = await ManhwaNex.getDiscoverSectionItems(action, first.metadata);
+    expect(probe.requests.filter((request) => request.method === "GET").map((request) => request.url)).to.deep.equal([`${BASE_URL}/`, parseHomeCategories(home).find((category) => category.id === action.id)!.url]);
+    expect(ids(reset.items)).to.deep.equal(ids((await ManhwaNex.getDiscoverSectionItems(action)).items));
+    await settings.reset();
   });
   suite.test("search: only the actually advertised Relevance sort", async () => {
     expect(await ManhwaNex.getSortingOptions()).to.deep.equal(SORTS);
@@ -194,8 +458,22 @@ export async function runTests(logger: TestLogger) {
       const reader = await ManhwaNex.getChapterDetails(persisted);
       expect(reader.id).to.equal(chapter.chapterId); expect(reader.mangaId).to.equal(SAMPLE); expect(reader.pages.length).to.be.greaterThan(0);
       expect(new Set(reader.pages).size).to.equal(reader.pages.length);
+      expect(reader.pages).to.deep.equal(parseReader(await fetchText(seriesUrl(SAMPLE, persisted.chapterId)), persisted).pages);
       await imageBytes(reader.pages);
     }
+  });
+  suite.test("reader: explicit opt-out retains exact native chapter pages and actual image bytes", async () => {
+    await settings.setExcludeNSFW(false);
+    try {
+      const source = JSON.parse(JSON.stringify(await ManhwaNex.getMangaDetails(SAMPLE))) as SourceManga;
+      const list = await ManhwaNex.getChapters(source);
+      expect(list.map((chapter) => chapter.chapterId)).to.deep.equal(chapters.map((chapter) => chapter.chapterId));
+      for (const chapter of list) { expect(chapter.sourceManga).to.equal(source); expect(chapter.volume).to.equal(0); }
+      const chapter = JSON.parse(JSON.stringify(list[0])) as Chapter;
+      const expected = parseReader(await fetchText(seriesUrl(SAMPLE, chapter.chapterId)), chapter);
+      const reader = await ManhwaNex.getChapterDetails(chapter);
+      expect(reader.pages).to.deep.equal(expected.pages); await imageBytes(reader.pages);
+    } finally { await settings.reset(); }
   });
   suite.test("reader: cold persisted inputs for two other native titles", async () => {
     for (const item of sourceItems.filter((item) => isAllowed(item.metadata)).slice(0, 2)) {
@@ -255,6 +533,9 @@ export async function runTests(logger: TestLogger) {
       await settings.setExcludeNSFW(true);
       const latest = await ManhwaNex.getDiscoverSectionItems(SECTIONS[1]);
       expect(ids(latest.items)).not.to.include(SAMPLE);
+      await settings.setExcludeNSFW(true);
+      const action = (await ManhwaNex.getDiscoverSections()).find((section) => section.id === "genre:action")!;
+      expect(ids((await ManhwaNex.getDiscoverSectionItems(action)).items)).not.to.include(SAMPLE);
       await settings.setExcludeNSFW(false);
       expect((await ManhwaNex.getMangaDetails(SAMPLE)).mangaId).to.equal(SAMPLE);
     } finally { probe.gate = undefined; await settings.reset(); }

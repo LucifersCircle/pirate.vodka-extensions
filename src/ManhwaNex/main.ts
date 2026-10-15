@@ -3,6 +3,7 @@
 
 import {
   BasicRateLimiter,
+  DiscoverSectionType,
   CookieStorageInterceptor,
   type Chapter,
   type Cookie,
@@ -39,6 +40,7 @@ import {
   parseChapters,
   parseDetails,
   parseGenreOptions,
+  parseHomeCategories,
   parseReader,
   seriesUrl,
   slug,
@@ -105,16 +107,44 @@ class ManhwaNexExtension implements ExtensionImpl<typeof Config> {
   }
   private remember(items: CatalogItem[]) {
     for (const item of items) {
+      const entry = this.cache.get(item.mangaId);
+      const previous = entry && entry.expires > Date.now() ? entry : undefined;
       this.prune(this.cache, 256);
-      this.cache.set(item.mangaId, { data: item.metadata, expires: Date.now() + 5 * 60 * 1000 });
+      this.cache.set(item.mangaId, {
+        data: { ...item.metadata, adult: item.metadata.adult || previous?.data.adult === true },
+        expires: previous?.data.adult ? previous.expires : Date.now() + 5 * 60 * 1000,
+      });
     }
   }
   private cached(id: string): SeriesMetadata | undefined {
     const value = this.cache.get(id);
     return value && value.expires > Date.now() ? value.data : undefined;
   }
-  private async metadata(ids: string[], saved: Preferences): Promise<void> {
+  private ensureAllowed(saved: Preferences, id: string) {
+    if (saved.excludeNSFW && !isAllowed(this.cached(id) ?? emptyMetadata()))
+      throw new Error(
+        "This title is hidden by NSFW exclusion or lacks reliable website classification.",
+      );
+  }
+  private observeRaw(items: CatalogItem[], saved: Preferences, includeCold = false) {
+    this.ensureCurrent(saved);
+    for (const item of items) {
+      if (!item.metadata.adult) continue;
+      const cached = this.cached(item.mangaId);
+      if (cached || includeCold)
+        this.remember([{ ...item, metadata: { ...(cached ?? item.metadata), adult: true } }]);
+      if (saved.excludeNSFW) this.interceptor.revokePages(item.mangaId);
+    }
+  }
+  private async metadata(
+    ids: string[],
+    saved: Preferences,
+    observed: CatalogItem[] = [],
+  ): Promise<void> {
+    // Capture missing IDs before storing raw warnings, so cold evidence cannot
+    // suppress the complete bounded batch that is already required for these cards.
     const missing = [...new Set(ids)].filter((id) => !this.cached(id));
+    this.observeRaw(observed, saved, true);
     if (!missing.length) return;
     for (const id of missing) slug(id);
     if (missing.length > 100) throw new Error("ManhwaNex metadata batch exceeds its safe size.");
@@ -170,10 +200,15 @@ class ManhwaNexExtension implements ExtensionImpl<typeof Config> {
       await this.metadata(
         items.map((item) => item.mangaId),
         saved,
+        items,
       );
+    else this.observeRaw(items, saved);
     this.ensureCurrent(saved);
     return items.flatMap((item) => {
-      const metadata = this.cached(item.mangaId) ?? item.metadata;
+      const cached = this.cached(item.mangaId),
+        classified = cached ?? item.metadata;
+      // Retain complete bulk metadata, but never clear a native card warning.
+      const metadata = { ...classified, adult: classified.adult || item.metadata.adult };
       return !saved.excludeNSFW || isAllowed(metadata)
         ? [
             {
@@ -186,7 +221,17 @@ class ManhwaNexExtension implements ExtensionImpl<typeof Config> {
     });
   }
   async getDiscoverSections() {
-    return SECTIONS;
+    const saved = this.saved();
+    const categories = parseHomeCategories(await this.page(`${BASE_URL}/`, saved));
+    this.ensureCurrent(saved);
+    return [
+      ...SECTIONS,
+      ...categories.map(({ id, title }) => ({
+        id,
+        title,
+        type: DiscoverSectionType.simpleCarousel,
+      })),
+    ];
   }
   async getDiscoverSectionItems(
     section: DiscoverSection,
@@ -201,12 +246,25 @@ class ManhwaNexExtension implements ExtensionImpl<typeof Config> {
         await this.metadata(
           [...popular.items, ...latest.items].map((item) => item.mangaId),
           saved,
+          [...popular.items, ...latest.items],
         );
+      else this.observeRaw([...popular.items, ...latest.items], saved);
       const items = await this.visible(popular.items, saved);
       return { items: items.map((item) => ({ ...item, type: "simpleCarouselItem" as const })) };
     }
-    if (section.id !== "latest") throw new Error("Unknown ManhwaNex section.");
-    const result = await this.catalog(`${BASE_URL}/`, "latest", saved, metadata);
+    const category =
+      section.id === "latest"
+        ? undefined
+        : parseHomeCategories(await this.page(`${BASE_URL}/`, saved)).find(
+            (category) => category.id === section.id,
+          );
+    if (section.id !== "latest" && !category) throw new Error("Unknown ManhwaNex section.");
+    const result = await this.catalog(
+      category?.url ?? `${BASE_URL}/`,
+      category ? "category" : "latest",
+      saved,
+      metadata,
+    );
     return {
       ...result,
       items: result.items.map((item) => ({ ...item, type: "simpleCarouselItem" as const })),
@@ -214,7 +272,7 @@ class ManhwaNexExtension implements ExtensionImpl<typeof Config> {
   }
   private async catalog(
     root: string,
-    kind: "latest" | "search",
+    kind: "latest" | "search" | "category",
     saved: Preferences,
     metadata?: Metadata,
   ): Promise<PagedResults<CatalogItem>> {
@@ -225,27 +283,28 @@ class ManhwaNexExtension implements ExtensionImpl<typeof Config> {
     for (let attempt = 0; attempt < 20; attempt++) {
       const html = await this.page(url, saved);
       const result = parseCatalog(html, kind, saved.excludeNSFW && kind === "search", url);
-      if (result.items.length && result.items.every((item) => seen.includes(item.mangaId)))
-        throw new Error("ManhwaNex repeated a catalog page.");
       if (kind === "search") this.remember(result.items);
-      else if (saved.excludeNSFW && catalogPageNumber(url) === 1) {
+      else if (kind === "latest" && saved.excludeNSFW && catalogPageNumber(url) === 1) {
         const popular = parseCatalog(html, "popular");
         await this.metadata(
           [...popular.items, ...result.items].map((item) => item.mangaId),
           saved,
+          [...popular.items, ...result.items],
         );
       }
+      // Update archives can overlap. Only strictly advancing native URLs may
+      // continue through duplicate-only or filtered pages to later new titles.
       const items = (await this.visible(result.items, saved)).filter(
         (item) => !seen.includes(item.mangaId),
       );
-      seen = [...seen, ...result.items.map((item) => item.mangaId)];
+      seen = [...new Set([...seen, ...result.items.map((item) => item.mangaId)])];
       this.ensureCurrent(saved);
       if (items.length || !result.next)
         return { items, metadata: result.next ? { context, url: result.next, seen } : undefined };
       url = result.next;
     }
     throw new Error(
-      "No visible titles in twenty source pages. Unknown website classifications are hidden by NSFW exclusion.",
+      "No new visible titles in twenty source pages. Unknown website classifications are hidden by NSFW exclusion.",
     );
   }
   async getSortingOptions() {
@@ -320,6 +379,7 @@ class ManhwaNexExtension implements ExtensionImpl<typeof Config> {
     if (new Set(chapters.map((chapter) => chapter.chapterId)).size !== chapters.length)
       throw new Error("ManhwaNex repeated a chapter page.");
     this.ensureCurrent(saved);
+    this.ensureAllowed(saved, sourceManga.mangaId);
     return chapters.map((chapter, index) => ({
       ...chapter,
       sortingIndex: chapters.length - index,
@@ -335,6 +395,7 @@ class ManhwaNexExtension implements ExtensionImpl<typeof Config> {
       chapter,
     );
     this.ensureCurrent(saved);
+    this.ensureAllowed(saved, chapter.sourceManga.mangaId);
     this.interceptor.issuePages(result.pages, chapter.sourceManga.mangaId);
     return result;
   }
