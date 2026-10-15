@@ -22,7 +22,7 @@ import { mapChapterUpdateItem, mapFeaturedDiscoverItem, mapSimpleDiscoverItem } 
 
 const DISCOVER_SECTIONS: DiscoverSection[] = [
   { id: "popular", title: "Popular", type: DiscoverSectionType.featured },
-  { id: "trending", title: "Trending", type: DiscoverSectionType.genres },
+  { id: "trending", title: "Popularity", type: DiscoverSectionType.genres },
   { id: "latest", title: "Latest Updates", type: DiscoverSectionType.chapterUpdates },
   { id: "recently-added", title: "Recently Added", type: DiscoverSectionType.simpleCarousel },
   { id: "genres", title: "Genres", type: DiscoverSectionType.genres },
