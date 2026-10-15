@@ -323,8 +323,10 @@ docker compose down
 
 ## ManhwaNex
 
-ManhwaNex `0.0.1-alpha.3` preserves the public website's Popular Series and Latest
+ManhwaNex `0.0.1-alpha.4` preserves the public website's Popular Series and Latest
 Updates sections, canonical releases, native search filters, and reader pages.
+Website five-star scores are converted to Paperback's normalized 0–1 rating scale;
+unrated or invalid scores are omitted.
 Popular and Latest share one bounded homepage metadata batch, without fetching
 details for every card.
 
