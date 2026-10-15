@@ -248,6 +248,16 @@ export const parseDate = (text: string, now: Date): Date | undefined => {
     throw new Error(`Mangasushi returned an unknown chapter date: ${value}`);
   return new Date(timestamp);
 };
+export const chapterTitle = (label: string, chapNum: number): string => {
+  const prefix = label.match(/^(?:(?:chapter|ch\.?)\s*)?(\d+(?:\.\d+)?)(.*)$/i);
+  if (!prefix || Number(prefix[1]) !== chapNum) return label;
+  const remainder = prefix[2];
+  // Only remove a complete matching number, never a range, part number or
+  // a nonleading mention. Paperback already displays the parsed chapNum.
+  if ((remainder && !/^[\s:–—-]/.test(remainder)) || /^\s*(?:[-–—/]|to\b)\s*\d/i.test(remainder))
+    return label;
+  return remainder.replace(/^\s*[-:–—]?\s*/, "").trim();
+};
 export const parseChapters = (html: string, sourceManga: SourceManga, now: Date): Chapter[] => {
   const $ = cheerio.load(html);
   const nodes = $("li.wp-manga-chapter").toArray();
@@ -263,13 +273,14 @@ export const parseChapters = (html: string, sourceManga: SourceManga, now: Date)
     const number = title.match(/(?:chapter|ch\.?)\s*(\d+(?:\.\d+)?)/i);
     const volume = title.match(/\b(?:volume|vol\.?)\s*(\d+(?:\.\d+)?)/i);
     if (!title) throw new Error("Mangasushi returned an untitled chapter.");
+    const chapNum = number ? Number(number[1]) : 0;
     const locked =
       row.is(".premium, .locked, .chapter-locked") || row.find(".fa-lock, .ion-md-lock").length > 0;
     return {
       chapterId,
       sourceManga,
-      title,
-      chapNum: number ? Number(number[1]) : 0,
+      title: chapterTitle(title, chapNum),
+      chapNum,
       volume: volume ? Number(volume[1]) : 0,
       langCode: "en",
       publishDate: parseDate(row.find(".chapter-release-date").text(), now),
