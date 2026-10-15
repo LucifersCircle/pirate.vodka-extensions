@@ -10,6 +10,8 @@ import {
   type Response,
   type SourceManga,
   type TestLogger,
+  type Metadata,
+  type PagedResults,
 } from "@paperback/types";
 import { expect } from "chai";
 import { Hijala, HijalaExtension } from "../Hijala/main.js";
@@ -86,6 +88,55 @@ const bytes = async (pages: string[]) => {
     evidence.push({ page: pages.indexOf(url) + 1, status: response.status, bytes: value.length });
   }
   return evidence;
+};
+
+const pageIds = (items: unknown[]): string[] =>
+  items.map((item) => {
+    if (
+      !item ||
+      typeof item !== "object" ||
+      !("mangaId" in item) ||
+      typeof item.mangaId !== "string"
+    )
+      throw new Error("Expected a native series item");
+    return item.mangaId;
+  });
+const walkPages = async (
+  load: (metadata?: Metadata) => Promise<PagedResults<unknown>>,
+  limit: number,
+  requests: Request[],
+) => {
+  const all: string[] = [],
+    seen = new Set<string>();
+  let cursor: Metadata | undefined;
+  for (let page = 1; page <= limit; page++) {
+    const before = JSON.stringify(cursor),
+      result = await load(cursor),
+      ids = pageIds(result.items);
+    expect(new Set(ids).size).to.equal(ids.length);
+    for (const id of ids) {
+      expect(seen.has(id), `Duplicate native ID across accumulated pages: ${id}`).to.equal(false);
+      seen.add(id);
+      all.push(id);
+    }
+    const count = requests.length,
+      repeated = await load(cursor);
+    expect(pageIds(repeated.items)).to.deep.equal(ids);
+    expect(repeated.metadata).to.deep.equal(result.metadata);
+    expect(
+      requests.length,
+      "Repeated native cursor should reuse cached physical responses",
+    ).to.equal(count);
+    expect(JSON.stringify(cursor), "Caller cursor must remain immutable").to.equal(before);
+    expect(new Set(all).size).to.equal(all.length);
+    if (!result.metadata) return { ids: all, pages: page };
+    expect(
+      ids.length,
+      "Duplicate-only physical pages must be advanced internally, not returned as premature end",
+    ).to.be.greaterThan(0);
+    cursor = result.metadata;
+  }
+  throw new Error("Native pagination never reached a terminal result within its evidence bound");
 };
 
 export async function runTests(logger: TestLogger) {
@@ -276,7 +327,10 @@ export async function runTests(logger: TestLogger) {
     expect(
       ids((await Hijala.getDiscoverSectionItems(SECTIONS[2], first.metadata)).items),
     ).to.deep.equal(ids(second.items));
-    expect(ids(second.items).some((id) => !ids(first.items).includes(id))).to.equal(true);
+    expect(ids(second.items).every((id) => !ids(first.items).includes(id))).to.equal(true);
+    expect(new Set([...ids(first.items), ...ids(second.items)]).size).to.equal(
+      first.items.length + second.items.length,
+    );
   });
   suite.test("discover: Latest uses verified pinned feed and actual page 2", async () => {
     const pinned = pageProperty<boolean>(home, "hasPinnedSeriesSection");
@@ -303,6 +357,302 @@ export async function runTests(logger: TestLogger) {
     );
     expect(ids(second.items).every((id) => !ids(first.items).includes(id))).to.equal(true);
   });
+  suite.test(
+    "pagination: complete live New and catalog have globally unique accumulated IDs",
+    async () => {
+      const expected = [...fullCatalog.values()]
+        .filter((post) => matchesPreferences(searchItem(post), preferences()))
+        .map((post) => slugToId(post.slug))
+        .sort();
+      const evidence = [];
+      for (const kind of ["new", "catalog"]) {
+        const source = new HijalaExtension(),
+          probe = new Probe(`Hijala.pagination-live-${kind}`);
+        probe.registerInterceptor();
+        try {
+          const result = await walkPages(
+            (cursor) =>
+              kind === "new"
+                ? source.getDiscoverSectionItems(SECTIONS[2], cursor)
+                : source.getSearchResults({ title: "" }, cursor),
+            20,
+            probe.requests,
+          );
+          expect([...result.ids].sort()).to.deep.equal(expected);
+          expect(
+            probe.requests.some((request) =>
+              new globalThis.URL(request.url).pathname.startsWith("/series/"),
+            ),
+          ).to.equal(false);
+          evidence.push({
+            kind,
+            pages: result.pages,
+            delivered: result.ids.length,
+            unique: new Set(result.ids).size,
+          });
+        } finally {
+          probe.unregisterInterceptor();
+        }
+      }
+      logger.log("paginationLive", evidence);
+    },
+  );
+  suite.test(
+    "pagination: partial overlap and duplicate-only physical pages lose no live-derived IDs",
+    async () => {
+      const posts = [...fullCatalog.values()];
+      expect(posts.length).to.be.greaterThan(60);
+      const physical = [
+        posts.slice(0, 20),
+        [...posts.slice(15, 20), ...posts.slice(20, 35)],
+        posts.slice(15, 35),
+      ];
+      for (let start = 35; start < posts.length; start += 20)
+        physical.push(posts.slice(start, start + 20));
+      expect(new Set(physical.flat().map((post) => post.slug)).size).to.equal(posts.length);
+      const expected = posts
+        .filter((post) => matchesPreferences(searchItem(post), preferences()))
+        .map((post) => slugToId(post.slug));
+      const evidence = [];
+      for (const kind of ["new", "catalog"]) {
+        const source = new HijalaExtension(),
+          probe = new Probe(`Hijala.pagination-overlap-${kind}`);
+        const target = (url: string) => {
+          const value = new globalThis.URL(url);
+          return (
+            value.hostname === "api.en-hijala.com" &&
+            (kind === "new"
+              ? value.pathname === "/api/posts" && value.searchParams.get("tag") === "new"
+              : value.pathname === "/api/query")
+          );
+        };
+        probe.gate = async (request, data) => {
+          if (!target(request.url)) return data;
+          const value = JSON.parse(Application.arrayBufferToUTF8String(data));
+          expect(Array.isArray(value.posts)).to.equal(true);
+          const page = Number(new globalThis.URL(request.url).searchParams.get("page"));
+          value.posts = physical[page - 1] ?? [];
+          // totalCount counts unique source identities, not repeated physical rows.
+          value.totalCount = posts.length;
+          return new TextEncoder().encode(JSON.stringify(value)).buffer as ArrayBuffer;
+        };
+        probe.registerInterceptor();
+        try {
+          const result = await walkPages(
+            (cursor) =>
+              kind === "new"
+                ? source.getDiscoverSectionItems(SECTIONS[2], cursor)
+                : source.getSearchResults({ title: "" }, cursor),
+            physical.length + 1,
+            probe.requests,
+          );
+          expect(result.ids).to.deep.equal(expected);
+          const requests = probe.requests.filter((request) => target(request.url));
+          expect(
+            requests.map((request) =>
+              Number(new globalThis.URL(request.url).searchParams.get("page")),
+            ),
+          ).to.deep.equal(physical.map((_page, index) => index + 1));
+          expect(physical.length).to.be.greaterThan(Math.ceil(posts.length / 20));
+          expect(
+            probe.requests.some((request) =>
+              new globalThis.URL(request.url).pathname.startsWith("/series/"),
+            ),
+          ).to.equal(false);
+          evidence.push({
+            kind,
+            physicalPages: physical.length,
+            logicalPages: result.pages,
+            sourceUnique: posts.length,
+            delivered: result.ids.length,
+            unique: new Set(result.ids).size,
+          });
+        } finally {
+          probe.unregisterInterceptor();
+        }
+      }
+      logger.log("paginationOverlap", evidence);
+    },
+  );
+  suite.test(
+    "pagination: query filter sort section and settings changes reset old cursors",
+    async () => {
+      const source = new HijalaExtension(),
+        probe = new Probe("Hijala.pagination-context");
+      probe.registerInterceptor();
+      try {
+        const first = await source.getSearchResults({ title: "" });
+        expect(first.metadata).not.to.equal(undefined);
+        const cursor = first.metadata!,
+          snapshot = JSON.stringify(cursor);
+        const second = await source.getSearchResults({ title: "" }, cursor);
+        const recreated = await new HijalaExtension().getSearchResults({ title: "" }, cursor);
+        expect(recreated.items.map((item) => item.mangaId)).to.deep.equal(
+          second.items.map((item) => item.mangaId),
+        );
+        expect(
+          second.items.every(
+            (item) => !first.items.some((prior) => prior.mangaId === item.mangaId),
+          ),
+        ).to.equal(true);
+        expect(JSON.stringify(cursor)).to.equal(snapshot);
+        for (const [query, sort] of [
+          [{ title: "Mimosa" }, undefined],
+          [{ title: "", metadata: { genres: { "1": "included" } } }, undefined],
+          [{ title: "" }, SORTS[1]],
+        ] as const) {
+          const start = probe.requests.length;
+          const reset = await source.getSearchResults(query, cursor, sort);
+          const sent = probe.requests
+            .slice(start)
+            .filter((request) => new globalThis.URL(request.url).pathname === "/api/query");
+          expect(sent.length).to.equal(1);
+          expect(new globalThis.URL(sent[0].url).searchParams.get("page")).to.equal("1");
+          const expected = await source.getSearchResults(query, undefined, sort);
+          expect(reset.items.map((item) => item.mangaId)).to.deep.equal(
+            expected.items.map((item) => item.mangaId),
+          );
+        }
+        const freshNew = await source.getDiscoverSectionItems(SECTIONS[2]);
+        expect(
+          ids((await source.getDiscoverSectionItems(SECTIONS[2], cursor)).items),
+        ).to.deep.equal(ids(freshNew.items));
+        expect(
+          (await source.getSearchResults({ title: "" }, freshNew.metadata)).items.map(
+            (item) => item.mangaId,
+          ),
+        ).to.deep.equal(first.items.map((item) => item.mangaId));
+        await settings.setExcludeNSFW(false);
+        const optOut = await source.getSearchResults({ title: "" }, cursor);
+        expect(optOut.items.map((item) => item.mangaId)).to.deep.equal(
+          (await source.getSearchResults({ title: "" })).items.map((item) => item.mangaId),
+        );
+        await settings.setExcludeNSFW(true);
+        // Same preference values after toggle-off/on still invalidate a prior revision's cursor.
+        const reset = await source.getSearchResults({ title: "" }, cursor);
+        expect(reset.items.map((item) => item.mangaId)).to.deep.equal(
+          first.items.map((item) => item.mangaId),
+        );
+        expect((reset.metadata as { context: string }).context).not.to.equal(
+          (cursor as { context: string }).context,
+        );
+        await settings.setExcludedGenres(["1"]);
+        const excluded = await source.getSearchResults({ title: "" }, cursor);
+        expect(excluded.items.every((item) => !item.metadata.genres.includes("1"))).to.equal(true);
+        expect(excluded.items.map((item) => item.mangaId)).to.deep.equal(
+          (await source.getSearchResults({ title: "" })).items.map((item) => item.mangaId),
+        );
+        expect(JSON.stringify(cursor)).to.equal(snapshot);
+      } finally {
+        probe.unregisterInterceptor();
+        await settings.setExcludedGenres([]);
+        await settings.setExcludeNSFW(true);
+      }
+    },
+  );
+  suite.test(
+    "pagination: malformed bounded cursor metadata harmlessly resets to page one",
+    async () => {
+      const source = new HijalaExtension(),
+        probe = new Probe("Hijala.pagination-malformed");
+      probe.registerInterceptor();
+      try {
+        const first = await source.getSearchResults({ title: "" });
+        const cursor = first.metadata as {
+          context: string;
+          page: number;
+          ids: string;
+          seen: string[];
+          total: number;
+        };
+        expect(cursor.seen.length).to.be.greaterThan(0);
+        const count = probe.requests.length,
+          firstId = cursor.seen[0];
+        const malformed = [
+          { ...cursor, page: 0 },
+          { ...cursor, page: 1001 },
+          { ...cursor, page: NaN },
+          { ...cursor, total: -1 },
+          { ...cursor, total: 10001 },
+          { ...cursor, total: cursor.seen.length },
+          { ...cursor, seen: [] },
+          { ...cursor, seen: [firstId, firstId] },
+          { ...cursor, seen: ["%"] },
+          { ...cursor, seen: ["x".repeat(2049)] },
+          { ...cursor, seen: Array(10001).fill(firstId) },
+          { ...cursor, seen: "not-an-array" },
+          { ...cursor, ids: "x".repeat(40981) },
+          { context: cursor.context, page: cursor.page, ids: cursor.ids },
+          { ...cursor, context: "another-query" },
+        ];
+        for (const metadata of malformed) {
+          const result = await source.getSearchResults({ title: "" }, metadata);
+          expect(result.items.map((item) => item.mangaId)).to.deep.equal(
+            first.items.map((item) => item.mangaId),
+          );
+          expect(result.metadata).to.deep.equal(first.metadata);
+        }
+        expect(probe.requests.length).to.equal(count);
+        logger.log("paginationMalformedCases", malformed.length);
+      } finally {
+        probe.unregisterInterceptor();
+      }
+    },
+  );
+  suite.test(
+    "pagination: changing totals missing records and duplicate loops require refresh",
+    async () => {
+      const posts = [...fullCatalog.values()],
+        evidence = [];
+      for (const mode of ["increase", "decrease", "missing", "duplicate-loop", "oversized"]) {
+        const source = new HijalaExtension(),
+          probe = new Probe(`Hijala.pagination-incomplete-${mode}`);
+        probe.gate = async (request, data) => {
+          const url = new globalThis.URL(request.url);
+          if (url.hostname !== "api.en-hijala.com" || url.pathname !== "/api/query") return data;
+          const value = JSON.parse(Application.arrayBufferToUTF8String(data));
+          const page = Number(url.searchParams.get("page"));
+          value.posts =
+            page === 1 || mode === "duplicate-loop"
+              ? posts.slice(0, 20)
+              : mode === "missing"
+                ? []
+                : posts.slice(20, 40);
+          value.totalCount =
+            mode === "oversized"
+              ? 10001
+              : posts.length +
+                (page > 1 ? (mode === "increase" ? 1 : mode === "decrease" ? -1 : 0) : 0);
+          return new TextEncoder().encode(JSON.stringify(value)).buffer as ArrayBuffer;
+        };
+        probe.registerInterceptor();
+        try {
+          if (mode === "oversized")
+            await rejects(() => source.getSearchResults({ title: "" }), /oversized.*refresh/i);
+          else {
+            const first = await source.getSearchResults({ title: "" });
+            expect(first.metadata).not.to.equal(undefined);
+            await rejects(
+              () => source.getSearchResults({ title: "" }, first.metadata),
+              mode === "increase" || mode === "decrease"
+                ? /changed during pagination.*refresh/i
+                : mode === "missing"
+                  ? /empty page.*refresh/i
+                  : /ten catalog pages.*refresh/i,
+            );
+          }
+          const physical = probe.requests.filter(
+            (request) => new globalThis.URL(request.url).pathname === "/api/query",
+          ).length;
+          expect(physical).to.equal(mode === "duplicate-loop" ? 11 : mode === "oversized" ? 1 : 2);
+          evidence.push({ mode, physicalRequests: physical, outcome: "explicit-refresh-error" });
+        } finally {
+          probe.unregisterInterceptor();
+        }
+      }
+      logger.log("paginationIncomplete", evidence);
+    },
+  );
   suite.test(
     "discover: stale hidden sections and disabled site tabs stay bounded empty",
     async () => {

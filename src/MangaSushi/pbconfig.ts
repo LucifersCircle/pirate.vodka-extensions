@@ -7,7 +7,7 @@ export default {
   name: "Mangasushi",
   description:
     "Native Mangasushi catalog, search and reader. NSFW exclusion is on by default; unclassified titles are hidden.",
-  version: "0.0.1-alpha.5",
+  version: "0.0.1-alpha.6",
   icon: "icon.png",
   language: "en",
   contentRating: ContentRating.ADULT,
@@ -21,7 +21,7 @@ export default {
   badges: [],
   developers: [
     {
-      name: "LucifersCircle",
+      name: "Lucifers Circle",
       website: "https://pirate.vodka",
       github: "https://github.com/LucifersCircle",
     },

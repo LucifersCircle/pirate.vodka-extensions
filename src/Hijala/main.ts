@@ -50,36 +50,48 @@ import {
   slugToId,
   parseDate,
   chapterTitle,
+  idToSlug,
   seriesUrl,
 } from "./parsers";
 import Config from "./pbconfig";
 
-const continuation = <T>(
-  result: PagedResults<T>,
-  page: number,
-  context: string,
-  previous?: Metadata,
-): PagedResults<T> => {
-  const { total, count, ids } = result.metadata as { total: number; count: number; ids: string };
-  if (!count && (page - 1) * PAGE_SIZE < total)
-    throw new Error("Hijala returned an empty page before the end of its catalog.");
-  if (
-    ids &&
-    (previous as { context?: string })?.context === context &&
-    (previous as { ids?: string }).ids === ids
-  )
-    throw new Error("Hijala repeated a catalog page.");
-  return {
-    items: result.items,
-    metadata: page * PAGE_SIZE < total ? { page: page + 1, context, ids } : undefined,
-  };
+const MAX_CATALOG_ITEMS = 10_000;
+const MAX_CATALOG_PAGES = 1_000;
+const catalogId = (value: unknown): value is string => {
+  if (typeof value !== "string" || !value || value.length > 2_048) return false;
+  try {
+    return slugToId(idToSlug(value)) === value;
+  } catch {
+    return false;
+  }
 };
+type CatalogCursor = { context: string; page: number; ids: string; seen: string[]; total: number };
 
-const pageNumber = (metadata: Metadata | undefined, context: string): number => {
-  const data = metadata as { context?: string; page?: number } | undefined;
-  return data?.context === context && Number.isSafeInteger(data.page) && Number(data.page) > 0
-    ? Number(data.page)
-    : 1;
+const catalogCursor = (
+  metadata: Metadata | undefined,
+  context: string,
+): CatalogCursor | undefined => {
+  const cursor = metadata as Partial<CatalogCursor> | undefined;
+  return cursor?.context === context &&
+    Number.isSafeInteger(cursor.page) &&
+    Number(cursor.page) > 1 &&
+    Number(cursor.page) <= MAX_CATALOG_PAGES &&
+    Number.isSafeInteger(cursor.total) &&
+    Number(cursor.total) > 0 &&
+    Number(cursor.total) <= MAX_CATALOG_ITEMS &&
+    typeof cursor.ids === "string" &&
+    cursor.ids.length <= PAGE_SIZE * 2_049 &&
+    cursor.ids.split("|").length <= PAGE_SIZE &&
+    cursor.ids.split("|").every(catalogId) &&
+    Array.isArray(cursor.seen) &&
+    cursor.seen.length > 0 &&
+    cursor.seen.length < Number(cursor.total) &&
+    cursor.seen.length <= MAX_CATALOG_ITEMS &&
+    cursor.seen.every(catalogId) &&
+    new Set(cursor.seen).size === cursor.seen.length &&
+    cursor.ids.split("|").every((id) => cursor.seen!.includes(id))
+    ? (cursor as CatalogCursor)
+    : undefined;
 };
 
 const loadCatalog = async <T extends { metadata?: unknown }>(
@@ -89,16 +101,51 @@ const loadCatalog = async <T extends { metadata?: unknown }>(
   fetch: (url: string) => Promise<string>,
   metadata?: Metadata,
 ): Promise<PagedResults<T>> => {
-  const context = JSON.stringify([url(1), saved]);
-  let cursor = metadata;
-  let page = pageNumber(cursor, context);
+  const context = JSON.stringify([url(1), saved, preferenceRevision()]);
+  const cursor = catalogCursor(metadata, context);
+  const seen = new Set<string>(cursor?.seen ?? []);
+  let page = cursor?.page ?? 1;
+  let expectedTotal = cursor?.total;
   for (let attempt = 0; attempt < 10; attempt++, page++) {
-    const result = continuation(parse(await fetch(url(page))), page, context, cursor);
-    const items = result.items.filter((item) => matchesPreferences(item, saved));
-    if (items.length || !result.metadata) return { items, metadata: result.metadata };
-    cursor = result.metadata;
+    if (page > MAX_CATALOG_PAGES)
+      throw new Error("Hijala catalog traversal exceeded its bound; refresh to continue.");
+    const result = parse(await fetch(url(page)));
+    const { total, count, ids } = result.metadata as { total: number; count: number; ids: string };
+    const entries = result.items.map((item) => ({
+      item,
+      id: (item as { mangaId?: unknown }).mangaId,
+    }));
+    if (
+      total > MAX_CATALOG_ITEMS ||
+      count > PAGE_SIZE ||
+      count !== result.items.length ||
+      !entries.every((entry) => catalogId(entry.id))
+    )
+      throw new Error("Hijala returned an invalid or oversized catalog; refresh to continue.");
+    expectedTotal ??= total;
+    if (expectedTotal !== total)
+      throw new Error("Hijala catalog changed during pagination; refresh to continue.");
+    if (!count && seen.size < total)
+      throw new Error(
+        "Hijala returned an empty page before the end of its catalog; refresh to continue.",
+      );
+    // A changing catalog can overlap physical pages, including an entirely repeated page.
+    // Keep the cursor immutable and count every raw identity, even titles hidden by settings.
+    const items = entries
+      .filter(({ item, id }) => !seen.has(id as string) && matchesPreferences(item, saved))
+      .map(({ item }) => item);
+    for (const { id } of entries) seen.add(id as string);
+    if (seen.size > total)
+      throw new Error("Hijala returned an inconsistent catalog count; refresh to continue.");
+    const next: CatalogCursor | undefined =
+      seen.size < total ? { page: page + 1, context, ids, seen: [...seen], total } : undefined;
+    if (next && page >= MAX_CATALOG_PAGES)
+      throw new Error("Hijala catalog traversal exceeded its bound; refresh to continue.");
+    if (items.length || !next) return { items, metadata: next };
   }
-  throw new Error("No visible titles in ten catalog pages. Adjust your source filters.");
+  throw new Error(
+    "No new visible titles in ten catalog pages. Refresh or adjust your source filters.",
+  );
 };
 
 export class HijalaExtension implements ExtensionImpl<typeof Config> {
