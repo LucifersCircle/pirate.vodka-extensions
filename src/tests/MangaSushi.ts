@@ -2,7 +2,14 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright © 2026 Lucifers Circle */
 
-import { type Chapter, type SourceManga, type TestLogger } from "@paperback/types";
+import {
+  PaperbackInterceptor,
+  type Chapter,
+  type Request,
+  type Response,
+  type SourceManga,
+  type TestLogger,
+} from "@paperback/types";
 import { expect } from "chai";
 import { MangaSushi } from "../MangaSushi/main.js";
 import { MangaSushiSearchForm, MangaSushiSettingsForm, preferences } from "../MangaSushi/forms.js";
@@ -23,6 +30,33 @@ import {
   seriesUrl,
 } from "../MangaSushi/parsers.js";
 import { TestSuite } from "./suite.js";
+
+// Observe the real host requests and optionally hold a live response in flight.
+// No saved HTML, alternate parser, or replacement source implementation is used.
+class DiscoveryProbe extends PaperbackInterceptor {
+  readonly requests: Request[] = [];
+  gate?: (request: Request, data: ArrayBuffer) => Promise<ArrayBuffer>;
+  override async interceptRequest(request: Request): Promise<Request> {
+    if (request.url.startsWith(`${BASE_URL}/`)) this.requests.push(request);
+    return request;
+  }
+  override async interceptResponse(
+    request: Request,
+    _response: Response,
+    data: ArrayBuffer,
+  ): Promise<ArrayBuffer> {
+    return this.gate ? this.gate(request, data) : data;
+  }
+}
+
+const requestParameters = (body: string): Map<string, string> =>
+  new Map(
+    body.split("&").map((pair) => {
+      const separator = pair.indexOf("=");
+      const decode = (value: string) => decodeURIComponent(value.replace(/\+/g, " "));
+      return [decode(pair.slice(0, separator)), decode(pair.slice(separator + 1))];
+    }),
+  );
 
 const SAMPLE = "welcome-to-the-cheap-restaurant-of-outcasts";
 const rejects = async (operation: () => Promise<unknown>, pattern: RegExp) => {
@@ -126,35 +160,67 @@ export async function runTests(logger: TestLogger) {
     expect(reader.pages.length).to.be.greaterThan(1);
     await checkReaderImages(reader.pages);
   });
-  suite.test("getChapters and reader: cold-cache persisted records across three safe titles", async () => {
-    const titles = sourceSearch.items.filter((item) => isAllowed(item.metadata)).slice(0, 3);
-    expect(titles).to.have.length(3);
-    for (const item of titles) {
-      // Reload from persisted IDs rather than relying on a warm discovery cache.
-      await settings.setExcludeNSFW(true);
-      const source = await MangaSushi.getMangaDetails(item.mangaId);
-      const storedSource = JSON.parse(JSON.stringify(source)) as SourceManga;
-      const chapters = await MangaSushi.getChapters(storedSource);
-      expect(chapters.length, item.mangaId).to.be.greaterThan(0);
-      expect(new Set(chapters.map((chapter) => chapter.chapterId)).size).to.equal(
-        chapters.length,
+  suite.test(
+    "getChapters and reader: cold-cache persisted records across three safe titles",
+    async () => {
+      const titles = sourceSearch.items.filter((item) => isAllowed(item.metadata)).slice(0, 3);
+      expect(titles).to.have.length(3);
+      for (const item of titles) {
+        // Reload from persisted IDs rather than relying on a warm discovery cache.
+        await settings.setExcludeNSFW(true);
+        const source = await MangaSushi.getMangaDetails(item.mangaId);
+        const storedSource = JSON.parse(JSON.stringify(source)) as SourceManga;
+        const chapters = await MangaSushi.getChapters(storedSource);
+        expect(chapters.length, item.mangaId).to.be.greaterThan(0);
+        expect(new Set(chapters.map((chapter) => chapter.chapterId)).size).to.equal(
+          chapters.length,
+        );
+        for (const chapter of chapters) {
+          expect(chapter.sourceManga).to.equal(storedSource);
+          expect(chapter.sourceManga.mangaId).to.equal(item.mangaId);
+          expect(chapter.chapNum).to.be.a("number").and.not.to.be.NaN;
+          if (chapter.publishDate)
+            expect(chapter.publishDate.getTime()).to.be.a("number").and.not.to.be.NaN;
+        }
+        for (const chapter of new Set([chapters[0], chapters[chapters.length - 1]])) {
+          const storedChapter = JSON.parse(JSON.stringify(chapter)) as Chapter;
+          const reader = await MangaSushi.getChapterDetails(storedChapter);
+          if (!("pages" in reader)) throw new Error("Expected manga reader pages.");
+          expect(reader.id).to.equal(chapter.chapterId);
+          expect(reader.mangaId).to.equal(item.mangaId);
+          expect(reader.pages.length).to.be.greaterThan(0);
+          expect(new Set(reader.pages).size).to.equal(reader.pages.length);
+        }
+      }
+    },
+  );
+  suite.test("getChapters and reader: Lonely Attack canonical underscore chapter IDs", async () => {
+    for (const invalid of [
+      "../chapter-143_1",
+      "chapter-143_1/extra",
+      "chapter-143_1?x=1",
+      "chapter-143_1#page",
+      "chapter-%2f143",
+      "chapter-%5c143",
+      "chapter-%00143",
+    ])
+      expect(() => seriesUrl("lonely-attack-on-the-different-world", invalid)).to.throw(
+        /Invalid Mangasushi identity/,
       );
-      for (const chapter of chapters) {
-        expect(chapter.sourceManga).to.equal(storedSource);
-        expect(chapter.sourceManga.mangaId).to.equal(item.mangaId);
-        expect(chapter.chapNum).to.be.a("number").and.not.to.be.NaN;
-        if (chapter.publishDate)
-          expect(chapter.publishDate.getTime()).to.be.a("number").and.not.to.be.NaN;
-      }
-      for (const chapter of new Set([chapters[0], chapters[chapters.length - 1]])) {
-        const storedChapter = JSON.parse(JSON.stringify(chapter)) as Chapter;
-        const reader = await MangaSushi.getChapterDetails(storedChapter);
-        if (!("pages" in reader)) throw new Error("Expected manga reader pages.");
-        expect(reader.id).to.equal(chapter.chapterId);
-        expect(reader.mangaId).to.equal(item.mangaId);
-        expect(reader.pages.length).to.be.greaterThan(0);
-        expect(new Set(reader.pages).size).to.equal(reader.pages.length);
-      }
+    const source = await MangaSushi.getMangaDetails("lonely-attack-on-the-different-world");
+    const chapters = await MangaSushi.getChapters(source);
+    expect(chapters.length).to.be.greaterThan(330);
+    for (const chapter of chapters) expect(chapter.sourceManga).to.equal(source);
+    for (const number of [143, 127]) {
+      const chapter = chapters.find((item) => item.chapterId === `chapter-${number}_1`);
+      expect(chapter, `Canonical chapter-${number}_1 must not be omitted`).not.to.equal(undefined);
+      expect(chapter!.chapNum).to.equal(number);
+      const reader = await MangaSushi.getChapterDetails(chapter!);
+      if (!("pages" in reader)) throw new Error("Expected manga reader pages.");
+      expect(reader.id).to.equal(chapter!.chapterId);
+      expect(reader.mangaId).to.equal(source.mangaId);
+      expect(reader.pages.length).to.be.greaterThan(1);
+      await checkReaderImages(reader.pages);
     }
   });
   suite.test("getSearchResults: every native sort executes", async () => {
@@ -237,21 +303,101 @@ export async function runTests(logger: TestLogger) {
       await settings.setExcludeNSFW(false);
       await settings.setExcludeNSFW(true);
       const homepage = await fetchText(`${BASE_URL}/`);
-      for (const section of SECTIONS) {
-        const native = parseCatalog(homepage, section.id === "popular" ? "popular" : "latest");
-        const expectedIds = native.items
-          .filter((item) => safeIds.has(item.mangaId))
-          .map((item) => item.mangaId);
-        const result = await MangaSushi.getDiscoverSectionItems(section);
-        expect(result.items.map((item) => ("mangaId" in item ? item.mangaId : ""))).to.deep.equal(
-          expectedIds,
+      const probe = new DiscoveryProbe("MangaSushi.discovery-count-test");
+      probe.registerInterceptor();
+      try {
+        const started = Date.now();
+        const rows = await Promise.all(
+          SECTIONS.map((section) => MangaSushi.getDiscoverSectionItems(section)),
         );
-        for (const item of result.items)
-          expect(isAllowed(item.metadata as Parameters<typeof isAllowed>[0])).to.equal(true);
-        if (section.id === "popular") expect(result.metadata).to.equal(undefined);
+        expect(probe.requests.length, "One shared homepage plus one metadata batch").to.equal(2);
+        const batch = probe.requests.find((request) =>
+          request.url.endsWith("/wp-admin/admin-ajax.php"),
+        );
+        expect(batch).not.to.equal(undefined);
+        if (typeof batch?.body !== "string")
+          throw new Error("Expected an encoded metadata batch body.");
+        const body = requestParameters(batch.body);
+        expect(body.get("template")).to.equal("madara-core/content/content-search");
+        expect(body.get("page")).to.equal("0");
+        const adult = [...body.entries()].find(
+          ([key, value]) =>
+            /^vars\[meta_query\].*\[key\]$/.test(key) && value === "manga_adult_content",
+        );
+        expect(adult, "Native adult filter must remain present").not.to.equal(undefined);
+        expect(body.get(adult![0].replace(/\[key\]$/, "[value]"))).to.equal("");
+        logger.log("discoveryCold", {
+          requests: probe.requests.length,
+          durationMs: Date.now() - started,
+        });
+        const warmStarted = Date.now();
+        const warmRows = await Promise.all(
+          SECTIONS.map((section) => MangaSushi.getDiscoverSectionItems(section)),
+        );
+        expect(probe.requests.length, "Warm discovery must not refetch either response").to.equal(
+          2,
+        );
+        logger.log("discoveryWarm", { requests: 0, durationMs: Date.now() - warmStarted });
+        for (const [index, section] of SECTIONS.entries()) {
+          const native = parseCatalog(homepage, section.id === "popular" ? "popular" : "latest");
+          const expectedIds = native.items
+            .filter((item) => safeIds.has(item.mangaId))
+            .map((item) => item.mangaId);
+          const result = rows[index];
+          expect(result.items.map((item) => ("mangaId" in item ? item.mangaId : ""))).to.deep.equal(
+            expectedIds,
+          );
+          expect(
+            warmRows[index].items.map((item) => ("mangaId" in item ? item.mangaId : "")),
+          ).to.deep.equal(expectedIds);
+          for (const item of result.items)
+            expect(isAllowed(item.metadata as Parameters<typeof isAllowed>[0])).to.equal(true);
+          if (section.id === "popular") expect(result.metadata).to.equal(undefined);
+        }
+      } finally {
+        probe.unregisterInterceptor();
       }
     },
   );
+  suite.test("settings: pending native discovery batch is invalidated", async () => {
+    await settings.setExcludeNSFW(false);
+    await settings.setExcludeNSFW(true);
+    const probe = new DiscoveryProbe("MangaSushi.discovery-settings-test");
+    let started!: () => void, release!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    probe.gate = async (request, data) => {
+      if (
+        typeof request.body === "string" &&
+        requestParameters(request.body).get("template") === "madara-core/content/content-search"
+      ) {
+        started();
+        await gate;
+      }
+      return data;
+    };
+    probe.registerInterceptor();
+    const pending = MangaSushi.getDiscoverSectionItems(SECTIONS[1]);
+    try {
+      await Promise.race([
+        ready,
+        pending.then(() => {
+          throw new Error("Discovery completed without the native metadata gate.");
+        }),
+      ]);
+      await settings.setExcludeNSFW(false);
+      release();
+      await rejects(() => pending, /settings changed/);
+    } finally {
+      release();
+      probe.unregisterInterceptor();
+      await settings.setExcludeNSFW(true);
+    }
+  });
   suite.test("settings: explicit opt-out and finite Popular fidelity", async () => {
     await settings.setExcludeNSFW(false);
     expect(preferences().excludeNSFW).to.equal(false);

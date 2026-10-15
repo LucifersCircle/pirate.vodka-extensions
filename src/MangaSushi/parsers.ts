@@ -20,7 +20,7 @@ import {
 
 const clean = (value: string): string => value.replace(/\s+/g, " ").trim();
 export const slug = (value: string): string => {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9%-]*$/.test(value) || /%2f|%5c|%00/i.test(value))
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9%_-]*$/.test(value) || /%2f|%5c|%00/i.test(value))
     throw new Error("Invalid Mangasushi identity.");
   return value;
 };
