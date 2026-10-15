@@ -3,6 +3,7 @@
 - Hijala
 - VortexScans
 - Kagane
+- Mangasushi
 
 ## Extension health
 
@@ -123,9 +124,32 @@ To test a single extension:
 npm run test:extensions -- VortexScans
 npm run test:extensions -- Kagane
 npm run test:extensions -- Hijala
+npm run test:extensions -- MangaSushi
 ```
 
-Returned cover/page URLs are checked for structure, but images are not downloaded.
+Mangasushi uses the website's Popular Series slider and What's New feed, including
+native load-more pagination. Its search mirrors the seven website sorts and the
+actual genre OR/AND, author, artist, release year, adult-content and status filters.
+The two verified donation/recruitment announcement posts are not treated as manga.
+
+NSFW exclusion is enabled by default in Mangasushi's source settings. It applies
+the site's non-adult filter plus Adult, Mature, Smut, Hentai, Erotica and Ecchi genre
+exclusions across discovery, search, details, chapters and reading. Titles without
+reliable genre metadata are hidden; BL/Yuri or demographic tags alone are not
+classified as adult. Website classification is incomplete and cannot guarantee
+content safety. At the 2026-10-15 check, 37 of 46 manga titles were visible with the
+default filter: five lacked genre metadata and four were adult-flagged or carried
+excluded tags. All five Popular Series and 17 of the first 20 What's New entries
+remained visible. These are a dated audit, not fixed catalog limits. Turning the
+setting off restores unclassified titles such as Welcome to the Cheap Restaurant
+of Outcasts! Settings changes invalidate source caches, but cannot revoke pages
+already downloaded by Paperback. Login, paid access and security gates are not
+bypassed.
+
+Mangasushi's maintained live suite also checks native continuation, strict NSFW
+handling, exact metadata, decimal chapter labels, complete asynchronous chapter
+lists, multiple readers and settings/cache transitions. Returned cover/page URLs
+are checked for structure; the automated suite does not download image bytes.
 
 Use the included FlareSolverr test image. Set `FLARESOLVERR_URL` to connect to
 another instance of that image; the default is `http://127.0.0.1:8191`.
