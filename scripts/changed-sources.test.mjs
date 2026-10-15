@@ -97,6 +97,7 @@ void test("shared, unknown, tooling, transport and docs-only paths conservativel
     "scripts/mangasushi-live-tests.mjs",
     "src/tests/suite.ts",
     "src/shared/util.ts",
+    "src/ContentRatingPolicy.ts",
     "scripts/unknown-live-tests.mjs",
     "assets/Unknown.png",
     "compose.yaml",
@@ -432,6 +433,106 @@ void test("cross-source, path-alias and dynamic dependencies invalidate source-o
       }).mode,
       "all",
     );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+void test("shared production modules are owner-safe only through fully inspectable local dependencies", () => {
+  const dir = mkdtempSync(join(tmpdir(), "shared-source-dependencies-"));
+  const put = (path, content) => {
+    mkdirSync(dirname(join(dir, path)), { recursive: true });
+    writeFileSync(join(dir, path), content);
+  };
+  const shared = `${SOURCE_ROOT}/shared`,
+    consumer = `${SOURCE_ROOT}/Alpha/consumer.ts`;
+  try {
+    put("tsconfig.json", "{}");
+    for (const name of sources)
+      put(`${SOURCE_ROOT}/${name}/${SOURCE_MARKER}`, "export const value = 1;");
+    put(`${shared}/policy.ts`, "export const policy = 1;");
+    put(`${shared}/bridge.ts`, 'export { policy } from "./policy";');
+    put(consumer, 'import { policy } from "../shared/bridge";');
+    put(`${SOURCE_ROOT}/Zebra/consumer.ts`, 'import { policy } from "../shared/bridge";');
+    assert.equal(
+      isolatedSourceLayout(sources, dir),
+      true,
+      "multiple sources may reach the same pure policy without depending on one another",
+    );
+    assert.deepEqual(classify(`M\0${consumer}\0`).selectedSources, ["Alpha"]);
+    assert.equal(classify(`M\0${shared}/policy.ts\0`).mode, "all");
+    for (const dependency of [
+      'import Policy = require("../shared/bridge"); export const value = Policy.policy;',
+      'export const value = require("../shared/bridge").policy;',
+      'export type Policy = typeof import("../shared/bridge");',
+    ]) {
+      put(consumer, dependency);
+      assert.equal(isolatedSourceLayout(sources, dir), true, dependency);
+    }
+    put(consumer, 'import { policy } from "../shared/bridge";');
+    put(`${SOURCE_ROOT}/Zebra/helper.ts`, "export const policy = 1;");
+    for (const dependency of [
+      'export { policy } from "../Zebra/helper";',
+      'import Peer = require("../Zebra/helper"); export const policy = Peer.policy;',
+      'export type Policy = typeof import("../Zebra/helper");',
+      'const target = "./missing"; import(target);',
+      'const target = "./missing"; require(target);',
+      'export { policy } from "./missing";',
+      "export const policy = ;",
+    ]) {
+      put(`${shared}/policy.ts`, dependency);
+      assert.equal(
+        isolatedSourceLayout(sources, dir),
+        false,
+        `a transitive shared dependency cannot conceal unsafe ownership: ${dependency}`,
+      );
+    }
+    put(`${shared}/policy.js`, 'export { policy } from "../Zebra/helper";');
+    put(`${shared}/policy.d.ts`, "export declare const policy: number;");
+    rmSync(join(dir, shared, "policy.ts"));
+    assert.equal(
+      isolatedSourceLayout(sources, dir),
+      false,
+      "a declaration file cannot hide a separate runtime dependency graph",
+    );
+    rmSync(join(dir, shared, "policy.js"));
+    rmSync(join(dir, shared, "policy.d.ts"));
+    put(`${shared}/policy.ts`, "export const policy = 1;");
+    put(
+      "tsconfig.json",
+      JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@policy": [`${shared}/bridge`] } },
+      }),
+    );
+    put(consumer, 'import { policy } from "@policy";');
+    assert.equal(
+      isolatedSourceLayout(sources, dir),
+      true,
+      "resolved shared aliases stay inspectable",
+    );
+    put(`${shared}/policy.ts`, 'export { policy } from "../Zebra/helper";');
+    assert.equal(isolatedSourceLayout(sources, dir), false, "aliases retain transitive peer edges");
+    put(`${shared}/policy.ts`, "export const policy = 1;");
+    symlinkSync(join(dir, shared), join(dir, SOURCE_ROOT, "shared-alias"), "dir");
+    put(`${shared}/bridge.ts`, 'export { policy } from "../shared-alias/policy";');
+    assert.equal(
+      isolatedSourceLayout(sources, dir),
+      false,
+      "even an ownerless directory symlink leaves shared resolution uncertain",
+    );
+    put(`${shared}/bridge.ts`, 'export { policy } from "./policy";');
+    const outside = `${dir}-outside.ts`;
+    try {
+      writeFileSync(outside, "export const policy = 1;");
+      put(`${shared}/policy.ts`, `export { policy } from ${JSON.stringify(outside)};`);
+      assert.equal(
+        isolatedSourceLayout(sources, dir),
+        false,
+        "shared traversal stays inside the repo",
+      );
+    } finally {
+      rmSync(outside, { force: true });
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
