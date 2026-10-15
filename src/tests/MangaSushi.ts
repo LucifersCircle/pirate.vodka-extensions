@@ -29,6 +29,7 @@ import {
   parseReader,
   seriesUrl,
 } from "../MangaSushi/parsers.js";
+import { englishTitle, searchTitle } from "../MangaSushi/titles.js";
 import { TestSuite } from "./suite.js";
 
 // Observe the real host requests and optionally hold a live response in flight.
@@ -223,6 +224,118 @@ export async function runTests(logger: TestLogger) {
       await checkReaderImages(reader.pages);
     }
   });
+  suite.test(
+    "English titles: exact source aliases keep original titles, full alternatives and IDs",
+    async () => {
+      for (const [id, query, expected] of [
+        [
+          "botsuraku-yotei-nanode-kajishokunin-wo-mezasu",
+          "Botsuraku Yotei Nanode",
+          "Expecting to Fall into Ruin, I Aim to Become a Blacksmith",
+        ],
+        [
+          "tensei-akuma-no-saikyou-yuusha-ikusei-keikaku",
+          "Tensei Akuma",
+          "Reincarnated Devil’s Plan for Raising the Strongest Hero",
+        ],
+        [
+          "academy-saikyou-no-mob-healer-shinigee-sekai-no-mob-ni-tensei-shita-ore-wa-hazure-job-healer-to-gensaku-chishiki-de-musou-suru",
+          "Academy Saikyou no Mob Healer",
+          "The Academy's Strongest Mob Healer: Reincarnated as a Mob in a Deadly Game World, I Dominate with the Useless Job [Healer] and My Original Knowledge",
+        ],
+      ]) {
+        const raw = parseCatalog(
+          await fetchText(searchUrl({ title: query }, true)),
+          "search",
+          true,
+        ).items.find((item) => item.mangaId === id)!;
+        expect(raw).not.to.equal(undefined);
+        expect(raw.title).not.to.equal(expected);
+        for (const title of [
+          raw.title,
+          expected,
+          expected
+            .replace(/[‘’]/g, "'")
+            .replace(/'/g, "’")
+            .toUpperCase(),
+          expected.replace(/[‘’]/g, "'"),
+        ]) {
+          const result = await MangaSushi.getSearchResults({ title });
+          expect(result.items.find((item) => item.mangaId === id)?.title).to.equal(expected);
+        }
+        const details = await MangaSushi.getMangaDetails(id);
+        expect(details.mangaId).to.equal(id);
+        expect(details.mangaInfo.primaryTitle).to.equal(expected);
+        expect(details.mangaInfo.secondaryTitles).to.include(raw.title);
+        expect(details.mangaInfo.secondaryTitles).to.include(raw.metadata.alternative);
+        expect(
+          englishTitle(id, raw.title, [raw.metadata.alternative.replace(expected, "")]),
+        ).to.equal(raw.title);
+        expect(englishTitle(id, raw.title, [`Unrelated ${expected} sequel`])).to.equal(raw.title);
+        expect(englishTitle("unregistered-id", raw.title, [expected])).to.equal(raw.title);
+        expect(searchTitle(`${expected} extra`)).to.equal(`${expected} extra`);
+      }
+    },
+  );
+  suite.test("English titles: Japanese-only alternatives retain the source title", async () => {
+    const raw = parseCatalog(
+      await fetchText(searchUrl({ title: "Ken yo" }, true)),
+      "search",
+      true,
+    ).items.find((item) => item.mangaId === "ken-yo-kaku-katariki")!;
+    expect(raw.metadata.alternative).to.match(/[\u3040-\u9fff]/);
+    const result = await MangaSushi.getSearchResults({ title: raw.title });
+    expect(result.items.find((item) => item.mangaId === raw.mangaId)?.title).to.equal(raw.title);
+    expect((await MangaSushi.getMangaDetails(raw.mangaId)).mangaInfo.primaryTitle).to.equal(
+      raw.title,
+    );
+  });
+  suite.test(
+    "English titles: cold classification still queries the original source title",
+    async () => {
+      const id = "botsuraku-yotei-nanode-kajishokunin-wo-mezasu";
+      await settings.setExcludeNSFW(true);
+      const probe = new DiscoveryProbe("MangaSushi.original-title-test");
+      probe.registerInterceptor();
+      try {
+        const details = await MangaSushi.getMangaDetails(id);
+        expect(details.mangaInfo.primaryTitle).to.equal(
+          "Expecting to Fall into Ruin, I Aim to Become a Blacksmith",
+        );
+        const queries = probe.requests
+          .filter((request) => request.url.startsWith(`${BASE_URL}/?`))
+          .map((request) => requestParameters(request.url.split("?")[1]).get("s"));
+        expect(queries[0]).to.equal("Botsuraku Yotei Nanode, Kajishokunin wo Mezasu");
+      } finally {
+        probe.unregisterInterceptor();
+      }
+    },
+  );
+  suite.test(
+    "English titles: removing an alias from live metadata restores original display",
+    async () => {
+      const id = "botsuraku-yotei-nanode-kajishokunin-wo-mezasu";
+      const original = "Botsuraku Yotei Nanode, Kajishokunin wo Mezasu";
+      const alias = "Expecting to Fall into Ruin, I Aim to Become a Blacksmith";
+      await settings.setExcludeNSFW(true);
+      const probe = new DiscoveryProbe("MangaSushi.removed-alias-test");
+      probe.gate = async (request, data) =>
+        request.url.startsWith(`${BASE_URL}/?`)
+          ? (new TextEncoder().encode(
+              Application.arrayBufferToUTF8String(data).replaceAll(alias, ""),
+            ).buffer as ArrayBuffer)
+          : data;
+      probe.registerInterceptor();
+      try {
+        const result = await MangaSushi.getSearchResults({ title: original });
+        expect(result.items.find((item) => item.mangaId === id)?.title).to.equal(original);
+        expect((await MangaSushi.getMangaDetails(id)).mangaInfo.primaryTitle).to.equal(original);
+      } finally {
+        probe.unregisterInterceptor();
+        await settings.setExcludeNSFW(true);
+      }
+    },
+  );
   suite.test("getSearchResults: every native sort executes", async () => {
     for (const sort of SORTS) {
       const result = await MangaSushi.getSearchResults({ title: "" }, undefined, sort);
@@ -338,6 +451,13 @@ export async function runTests(logger: TestLogger) {
           2,
         );
         logger.log("discoveryWarm", { requests: 0, durationMs: Date.now() - warmStarted });
+        for (const row of [rows[0], warmRows[0]])
+          expect(
+            row.items.find(
+              (item) =>
+                "mangaId" in item && item.mangaId === "yondome-wa-iya-na-shizokusei-majutsushi",
+            ),
+          ).to.include({ title: "Death Attribute Magician" });
         for (const [index, section] of SECTIONS.entries()) {
           const native = parseCatalog(homepage, section.id === "popular" ? "popular" : "latest");
           const expectedIds = native.items
@@ -350,8 +470,16 @@ export async function runTests(logger: TestLogger) {
           expect(
             warmRows[index].items.map((item) => ("mangaId" in item ? item.mangaId : "")),
           ).to.deep.equal(expectedIds);
-          for (const item of result.items)
+          for (const item of result.items) {
+            if (!("mangaId" in item)) throw new Error("Expected a manga discovery item.");
             expect(isAllowed(item.metadata as Parameters<typeof isAllowed>[0])).to.equal(true);
+            const original = native.items.find((entry) => entry.mangaId === item.mangaId)!;
+            expect(item.title).to.equal(
+              englishTitle(item.mangaId, original.title, [
+                (item.metadata as Parameters<typeof isAllowed>[0]).alternative,
+              ]),
+            );
+          }
           if (section.id === "popular") expect(result.metadata).to.equal(undefined);
         }
       } finally {
@@ -403,11 +531,60 @@ export async function runTests(logger: TestLogger) {
     expect(preferences().excludeNSFW).to.equal(false);
     home = await fetchText(`${BASE_URL}/`);
     const native = parseCatalog(home, "popular");
-    const result = await MangaSushi.getDiscoverSectionItems(SECTIONS[0]);
-    expect(result.items.map((item) => ("mangaId" in item ? item.mangaId : ""))).to.deep.equal(
-      native.items.map((item) => item.mangaId),
-    );
-    expect(result.metadata).to.equal(undefined);
+    const probe = new DiscoveryProbe("MangaSushi.unfiltered-discovery-test");
+    probe.registerInterceptor();
+    try {
+      const started = Date.now();
+      const rows = await Promise.all(
+        SECTIONS.map((section) => MangaSushi.getDiscoverSectionItems(section)),
+      );
+      expect(
+        probe.requests.length,
+        "Unfiltered discovery shares one home and one metadata batch",
+      ).to.equal(2);
+      logger.log("unfilteredDiscoveryCold", {
+        requests: probe.requests.length,
+        durationMs: Date.now() - started,
+      });
+      const batch = probe.requests.find((request) => typeof request.body === "string");
+      expect(batch).not.to.equal(undefined);
+      if (typeof batch?.body !== "string") throw new Error("Expected metadata batch body.");
+      expect(batch.body).not.to.include("manga_adult_content");
+      const warmStarted = Date.now();
+      const warmRows = await Promise.all(
+        SECTIONS.map((section) => MangaSushi.getDiscoverSectionItems(section)),
+      );
+      expect(probe.requests.length, "Unfiltered warm discovery must make zero requests").to.equal(
+        2,
+      );
+      logger.log("unfilteredDiscoveryWarm", { requests: 0, durationMs: Date.now() - warmStarted });
+      for (const row of [rows[0], warmRows[0]])
+        expect(
+          row.items.find(
+            (item) =>
+              "mangaId" in item && item.mangaId === "yondome-wa-iya-na-shizokusei-majutsushi",
+          ),
+        ).to.include({ title: "Death Attribute Magician" });
+      const result = rows[0];
+      expect(result.items.map((item) => ("mangaId" in item ? item.mangaId : ""))).to.deep.equal(
+        native.items.map((item) => item.mangaId),
+      );
+      expect(result.metadata).to.equal(undefined);
+      for (const [index, section] of SECTIONS.entries()) {
+        const originals = parseCatalog(home, section.id === "popular" ? "popular" : "latest").items;
+        for (const item of rows[index].items) {
+          if (!("mangaId" in item)) throw new Error("Expected manga discovery item.");
+          const original = originals.find((entry) => entry.mangaId === item.mangaId)!;
+          expect(item.title).to.equal(
+            englishTitle(item.mangaId, original.title, [
+              (item.metadata as Parameters<typeof isAllowed>[0]).alternative,
+            ]),
+          );
+        }
+      }
+    } finally {
+      probe.unregisterInterceptor();
+    }
   });
   suite.test("getDiscoverSectionItems: What's New native load more", async () => {
     const first = await MangaSushi.getDiscoverSectionItems(SECTIONS[1]);
@@ -441,7 +618,10 @@ export async function runTests(logger: TestLogger) {
   suite.test("getChapters: asynchronous full list and decimal labels", async () => {
     sampleChapters = await MangaSushi.getChapters(sample);
     expect(sampleChapters.length).to.be.greaterThan(60);
-    for (const chapter of sampleChapters) expect(chapter.sourceManga).to.equal(sample);
+    for (const chapter of sampleChapters) {
+      expect(chapter.sourceManga).to.equal(sample);
+      expect(chapter.volume, "The source does not report a volume for these chapters").to.equal(0);
+    }
     expect(new Set(sampleChapters.map((chapter) => chapter.chapterId)).size).to.equal(
       sampleChapters.length,
     );
@@ -449,6 +629,28 @@ export async function runTests(logger: TestLogger) {
     expect(chapter?.chapNum).to.equal(66.1);
     expect(chapter?.title).to.equal("Chapter 66.1");
     expect(chapter?.publishDate?.toISOString().slice(0, 10)).to.equal("2026-10-08");
+    const probe = new DiscoveryProbe("MangaSushi.reported-volume-test");
+    probe.gate = async (request, data) =>
+      request.url.endsWith("/ajax/chapters/")
+        ? (new TextEncoder().encode(
+            Application.arrayBufferToUTF8String(data).replace(
+              "Chapter 66.1",
+              "Volume 2 Chapter 66.1",
+            ),
+          ).buffer as ArrayBuffer)
+        : data;
+    probe.registerInterceptor();
+    try {
+      // Mutate only the explicit label of a fresh live row, not its identity or
+      // chapter number: a source-reported volume must not become the fallback 0.
+      const reported = await MangaSushi.getChapters(sample);
+      expect(reported.find((item) => item.chapterId === "chapter-66-1")).to.include({
+        volume: 2,
+        chapNum: 66.1,
+      });
+    } finally {
+      probe.unregisterInterceptor();
+    }
     for (const item of sampleChapters)
       expect(item.publishDate?.getTime()).to.be.a("number").and.not.to.be.NaN;
   });
@@ -483,7 +685,34 @@ export async function runTests(logger: TestLogger) {
     for (const page of result.pages) expect(page).to.match(/^https:\/\/\S+$/);
   });
   suite.test("settings: stale library and cached metadata cannot bypass exclusion", async () => {
+    await settings.setExcludeNSFW(false);
+    const query = { title: "Logout shita no wa VRMMO" };
+    const knownBlocked = parseCatalog(
+      await fetchText(searchUrl(query, false)),
+      "search",
+    ).items.find((item) => item.metadata.genres.some((genre) => genre.id === "mature"));
+    expect(
+      knownBlocked,
+      "Need an actual live Mature-tagged source title, not the app's conservative badge",
+    ).not.to.equal(undefined);
+    const permitted = await MangaSushi.getMangaDetails(knownBlocked!.mangaId);
+    expect(permitted.mangaInfo.tagGroups?.[0].tags.some((tag) => tag.id === "mature")).to.equal(
+      true,
+    );
     await settings.setExcludeNSFW(true);
+    expect(
+      (await MangaSushi.getSearchResults(query)).items.some(
+        (item) => item.mangaId === knownBlocked!.mangaId,
+      ),
+    ).to.equal(false);
+    await rejects(
+      () => MangaSushi.getMangaDetails(permitted.mangaId),
+      /hidden by NSFW exclusion|lacks reliable/,
+    );
+    await rejects(
+      () => MangaSushi.getChapters(permitted),
+      /hidden by NSFW exclusion|lacks reliable/,
+    );
     await rejects(
       () => MangaSushi.getMangaDetails(SAMPLE),
       /hidden by NSFW exclusion|lacks reliable/,

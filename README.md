@@ -184,6 +184,14 @@ of Outcasts! Settings changes invalidate source caches, but cannot revoke pages
 already downloaded by Paperback. Login, paid access and security gates are not
 bypassed.
 
+Mangasushi prefers audited English aliases only while the exact complete alias is
+still present in current source metadata. Original titles and full alternative text
+remain available, and canonical IDs do not change. Unverified or removed aliases
+fall back to the original title; no translations or language guesses are generated.
+Discovery reuses the native metadata batch for this in both content-setting modes,
+without one request per title. Exact punctuation-sensitive full-title searches use
+verified source-title fallbacks; ordinary partial searches are unchanged.
+
 Mangasushi's maintained live suite also checks native continuation, strict NSFW
 handling, exact metadata, decimal chapter labels, complete asynchronous chapter
 lists, multiple readers and settings/cache transitions. Chapter lists must retain

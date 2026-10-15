@@ -46,7 +46,7 @@ export class MangaSushiSettingsForm extends Form {
           id: "content",
           header: "Mangasushi",
           footer:
-            "Uses the site's non-adult filter and hides Adult, Mature, Smut, Hentai, Erotica and Ecchi genres. Titles without reliable genre metadata are hidden too, including saved titles. Website tags can be incomplete, so this is not a content guarantee. Changes apply to future requests; pages already downloaded by Paperback cannot be revoked.",
+            "Uses the site's non-adult filter and hides Adult, Mature, Smut, Hentai, Erotica and Ecchi genres. Titles without reliable genre metadata are hidden too, including saved titles. Paperback's Mature badge is a conservative app rating, not the site's Mature genre, which is excluded. Website tags can be incomplete, so this is not a content guarantee. Changes apply to future requests; pages already downloaded by Paperback cannot be revoked.",
         },
         [
           ToggleRow("excludeNSFW", {
