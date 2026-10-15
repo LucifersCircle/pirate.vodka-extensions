@@ -12,7 +12,7 @@ import {
   type Metadata,
   type SearchQuery,
 } from "@paperback/types";
-import { STATUSES, type Preferences, type SearchFilters } from "./models";
+import { GENRE_ROUTE_KEY, STATUSES, type Preferences, type SearchFilters } from "./models";
 
 export const preferences = (): Preferences => {
   const saved = Application.getState("MangaSushi.preferences") as Partial<Preferences> | undefined;
@@ -205,5 +205,34 @@ export class MangaSushiSearchForm extends AdvancedSearchForm {
   }
   override getSearchQueryMetadata(): Metadata {
     return { ...this.draft, genres: [...this.draft.genres], statuses: [...this.draft.statuses] };
+  }
+}
+
+export const readGenreRoute = (metadata?: Metadata): string | undefined => {
+  if (
+    !metadata ||
+    typeof metadata !== "object" ||
+    !Object.prototype.hasOwnProperty.call(metadata, GENRE_ROUTE_KEY)
+  )
+    return undefined;
+  if (Array.isArray(metadata)) throw new Error("Invalid Mangasushi genre archive selection.");
+  const value = metadata[GENRE_ROUTE_KEY];
+  if (
+    typeof value !== "string" ||
+    !/^[a-z][a-z0-9-]*$/.test(value) ||
+    Object.keys(metadata).length !== 1
+  )
+    throw new Error("Invalid Mangasushi genre archive selection.");
+  return value;
+};
+export class MangaSushiGenreForm extends AdvancedSearchForm {
+  constructor(private readonly id: string) {
+    super();
+  }
+  override getSections() {
+    return [];
+  }
+  override getSearchQueryMetadata(): Metadata {
+    return { [GENRE_ROUTE_KEY]: this.id };
   }
 }

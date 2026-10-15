@@ -253,16 +253,22 @@ npm run test:extensions -- Hijala
 npm run test:extensions -- MangaSushi
 ```
 
-Mangasushi uses the website's Popular Series slider and What's New feed, including
-native load-more pagination. Its search mirrors the seven website sorts and the
+Mangasushi `0.0.1-alpha.7` uses the website's Popular Series slider and What's New
+feed, including native load-more pagination. A lightweight Genres chip row follows
+the homepage menu; each selected genre lazily opens its exact native archive,
+preserving source order and AJAX continuation without loading all archives. Its search mirrors the seven website sorts and the
 actual genre OR/AND, author, artist, release year, adult-content and status filters.
 The two verified donation/recruitment announcement posts are not treated as manga.
+If the website ignores a selected search genre, the extension reports an error
+rather than returning unrelated titles. A verified empty archive remains empty.
 
 Discovery shares the homepage response and a page-sized native AJAX metadata
 request across concurrent sections instead of searching once per title. Short-lived,
 setting-keyed caches also avoid repeat requests on warm loads. Exact homepage order,
 upstream continuation, explicit-tag exclusions and unknown-title blocking remain
-unchanged; titles missing from a batch retain the canonical-ID search fallback.
+unchanged. Homepage titles missing from a batch retain the canonical-ID search
+fallback; genre archives use only their bounded page metadata and hide unknown
+classifications, without per-title requests.
 
 NSFW exclusion is enabled by default in Mangasushi's source settings. It applies
 the site's non-adult filter plus Adult, Mature, Smut, Hentai, Erotica and Ecchi genre

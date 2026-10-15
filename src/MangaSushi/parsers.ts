@@ -16,6 +16,8 @@ import {
   type CatalogPage,
   type Pagination,
   type SeriesMetadata,
+  type SearchFilters,
+  type HomeGenre,
 } from "./models";
 
 const clean = (value: string): string => value.replace(/\s+/g, " ").trim();
@@ -57,6 +59,7 @@ export const parseCatalog = (
   previous?: Pagination,
 ): CatalogPage => {
   const $ = cheerio.load(html);
+  const query = parseQueryVars(html) ?? previous?.vars;
   const selector =
     kind === "search"
       ? ".c-tabs-item__content"
@@ -81,7 +84,7 @@ export const parseCatalog = (
         .map((node) => {
           const match = $(node)
             .attr("href")
-            ?.match(/\/manga-genre\/([^/?#]+)\/?$/);
+            ?.match(/^https:\/\/mangasushi\.org\/manga-genre\/([^/?#]+)\/?$/);
           if (!match) throw new Error("Mangasushi returned an invalid genre.");
           return { id: slug(match[1]), title: clean($(node).text()) };
         });
@@ -94,7 +97,12 @@ export const parseCatalog = (
       metadata.nativeSafe = nativeSafe;
       metadata.adult =
         metadata.genres.some((genre) => BLOCKED_GENRES.includes(genre.id)) ||
-        row.find(".adult-content, .manga-adult, [data-adult='1']").length > 0;
+        row.is(
+          ".adult-content, .manga-adult, .adult-warning, [data-adult='1'], [data-adult='true']",
+        ) ||
+        row.find(
+          ".adult-content, .manga-adult, .adult-warning, [data-adult='1'], [data-adult='true']",
+        ).length > 0;
       return {
         mangaId,
         title,
@@ -115,6 +123,7 @@ export const parseCatalog = (
       throw new Error("Mangasushi returned an unrecognized continuation page.");
     return {
       items,
+      query,
       next:
         items.length && !$(".no-posts").length
           ? { ...previous, page: previous.page + 1 }
@@ -124,7 +133,7 @@ export const parseCatalog = (
   const navigation = $("#navigation-ajax");
   if (!items.length && !$(".no-posts, .no-results.not-found").length)
     throw new Error("Mangasushi catalog layout changed.");
-  if (!navigation.length) return { items };
+  if (!navigation.length) return { items, query };
   const template = navigation.attr("data-template");
   if (
     template !==
@@ -133,17 +142,7 @@ export const parseCatalog = (
       : "madara-core/content/content-archive")
   )
     throw new Error("Mangasushi pagination template changed.");
-  const assignments = $("script")
-    .toArray()
-    .map((script) =>
-      $(script)
-        .text()
-        .match(/^\s*var __madara_query_vars = (\{.*\});?\s*$/s),
-    )
-    .filter((match) => match !== null);
-  if (assignments.length !== 1)
-    throw new Error("Mangasushi pagination data is missing or ambiguous.");
-  const vars = JSON.parse(assignments[0]![1]) as JSONObject;
+  const vars = query;
   if (
     !vars ||
     vars.post_type !== "wp-manga" ||
@@ -151,7 +150,299 @@ export const parseCatalog = (
     Number(vars.paged) < 1
   )
     throw new Error("Mangasushi pagination data changed.");
-  return { items, next: { page: Number(vars.paged), template, vars } };
+  return { items, query, next: { page: Number(vars.paged), template, vars } };
+};
+// Only parse the site's explicit JSON assignment; never evaluate provider scripts.
+export const parseQueryVars = (
+  html: string,
+  name: "__madara_query_vars" | "manga_args" = "__madara_query_vars",
+): JSONObject | undefined => {
+  const $ = cheerio.load(html);
+  const scripts = $("script")
+    .toArray()
+    .map((node) => $(node).text())
+    .filter((text) => new RegExp(`\\b${name}\\b`).test(text));
+  if (!scripts.length) return undefined;
+  const match =
+    scripts.length === 1
+      ? scripts[0].match(new RegExp(`^\\s*var ${name} = (\\{.*\\});?\\s*$`, "s"))
+      : undefined;
+  if (!match) throw new Error("Mangasushi pagination data is missing or ambiguous.");
+  let vars: unknown;
+  try {
+    vars = JSON.parse(match[1]);
+  } catch {
+    throw new Error("Mangasushi pagination data is malformed.");
+  }
+  // JSON.parse keeps the last duplicate key. A provider query must instead
+  // have one unambiguous meaning, including inside nested taxonomy clauses.
+  const stack: { keys?: Set<string>; key: boolean }[] = [];
+  for (const token of match[1].match(/"(?:\\.|[^"\\])*"|[{}[\],:]/g) ?? []) {
+    const current = stack[stack.length - 1];
+    if (token === "{") stack.push({ keys: new Set(), key: true });
+    else if (token === "[") stack.push({ key: false });
+    else if (token === "}" || token === "]") stack.pop();
+    else if (token === "," && current?.keys) current.key = true;
+    else if (token.startsWith('"') && current?.keys && current.key) {
+      const key = JSON.parse(token) as string;
+      if (current.keys.has(key))
+        throw new Error("Mangasushi pagination data contains duplicate keys.");
+      current.keys.add(key);
+      current.key = false;
+    }
+  }
+  if (!vars || typeof vars !== "object" || Array.isArray(vars))
+    throw new Error("Mangasushi pagination data changed.");
+  return vars as JSONObject;
+};
+export const parseHomeGenres = (html: string): HomeGenre[] => {
+  const $ = cheerio.load(html),
+    genres: HomeGenre[] = [];
+  for (const node of $("li.menu-item-object-wp-manga-genre > a").toArray()) {
+    const anchor = $(node),
+      url = anchor.attr("href") ?? "",
+      title = clean(anchor.text());
+    const match = url.match(/^https:\/\/mangasushi\.org\/manga-genre\/([a-z][a-z0-9-]*)\/$/);
+    if (!match || !title) throw new Error("Mangasushi returned an invalid home genre.");
+    const previous = genres.find((genre) => genre.id === match[1]);
+    if (previous && previous.title !== title)
+      throw new Error("Mangasushi returned an ambiguous home genre.");
+    if (!previous) genres.push({ id: match[1], title, url });
+  }
+  if (!genres.length || genres.length > 100)
+    throw new Error("Mangasushi home genres are unavailable.");
+  return genres;
+};
+export const validateGenreQuery = (vars: JSONObject | undefined, genre: HomeGenre): void => {
+  if (
+    !vars ||
+    vars["wp-manga-genre"] !== genre.id ||
+    vars.taxonomy !== "wp-manga-genre" ||
+    vars.term !== genre.id ||
+    vars.post_type !== "wp-manga" ||
+    Number(vars.paged) !== 1 ||
+    Number(vars.posts_per_page) !== 12 ||
+    vars.meta_key !== "_latest_update" ||
+    vars.orderby !== "meta_value_num" ||
+    (vars.order !== "desc" && vars.order !== "DESC") ||
+    vars.s !== "" ||
+    vars.template !== "archive" ||
+    Object.keys(vars).some(
+      (key) =>
+        [
+          "offset",
+          "tax_query",
+          "post_name__in",
+          "post__in",
+          "post__not_in",
+          "category__in",
+          "category__not_in",
+          "category__and",
+          "tag__in",
+          "tag__not_in",
+          "tag__and",
+          "tag_slug__in",
+          "tag_slug__and",
+          "post_parent__in",
+          "post_parent__not_in",
+          "author__in",
+          "author__not_in",
+        ].includes(key) &&
+        (Array.isArray(vars[key])
+          ? vars[key].length > 0
+          : vars[key] !== undefined && vars[key] !== ""),
+    )
+  )
+    throw new Error("Mangasushi returned a different genre archive query.");
+};
+export const parseGenreArchive = (
+  html: string,
+  genre: HomeGenre,
+  previous?: Pagination,
+): CatalogPage => {
+  const $ = cheerio.load(html);
+  if (
+    !previous &&
+    (!$("body").hasClass("tax-wp-manga-genre") ||
+      !$("body").hasClass(`term-${genre.id}`) ||
+      clean($("h1.item-title").text()) !== genre.title)
+  )
+    throw new Error("Mangasushi returned a different genre archive.");
+  const parsed = parseCatalog(html, "latest", false, previous);
+  const result = {
+    ...parsed,
+    query:
+      parsed.query ??
+      (parsed.items.length && !parsed.next ? parseQueryVars(html, "manga_args") : undefined),
+  };
+  if (result.query || result.items.length || result.next) validateGenreQuery(result.query, genre);
+  if (
+    !result.items.length &&
+    !result.next &&
+    !previous &&
+    (!$(".no-results.not-found").length ||
+      $("#navigation-ajax").length ||
+      !clean($(".no-results.not-found").text()).includes(
+        `There is no Manga in this ${genre.title} - Manga Genres`,
+      ))
+  )
+    throw new Error("Mangasushi returned an unrecognized empty genre archive.");
+  return result;
+};
+export const validateGenreFilter = (
+  html: string,
+  result: CatalogPage,
+  filters: SearchFilters,
+  continuation = false,
+): void => {
+  const requested = [...new Set(filters.genres)];
+  if (!requested.length) return;
+  const fail = (): never => {
+    throw new Error(
+      "Mangasushi ignored or changed the selected genre filter. Try the genre archive or change your search.",
+    );
+  };
+  if (!result.items.length) {
+    const $ = cheerio.load(html);
+    if (
+      result.next ||
+      $("#navigation-ajax").length ||
+      (!continuation &&
+        ($(".no-results.not-found").length !== 1 ||
+          clean($(".no-results.not-found").text()) !==
+            "No matches found. Try a different search..." ||
+          $(".no-results.not-found .not-found-content p").length !== 1)) ||
+      (continuation && html.trim() && !$(".no-posts").length)
+    )
+      fail();
+    if (!continuation && !result.query) parseQueryVars(html, "manga_args");
+    return;
+  }
+  if (!continuation) {
+    const $ = cheerio.load(html);
+    const selected = $('input[name="genre[]"]:checked')
+      .toArray()
+      .map((node) => $(node).attr("value") ?? "");
+    const available = $('input[name="genre[]"]')
+      .toArray()
+      .map((node) => $(node).attr("value") ?? "");
+    const conditions = $('select[name="op"] option[selected]');
+    if (
+      new Set(available).size !== available.length ||
+      requested.some((id) => !available.includes(id)) ||
+      conditions.length !== 1 ||
+      conditions.attr("value") !== filters.condition ||
+      selected.length !== requested.length ||
+      new Set(selected).size !== selected.length ||
+      selected.some((id) => !requested.includes(id))
+    )
+      fail();
+  }
+  // Finite native searches omit the AJAX state, but still expose the same
+  // explicit search query as manga_args. Do not mistake that for ignored taxa.
+  const query = (
+    result.query ?? (!result.next && !continuation ? parseQueryVars(html, "manga_args") : undefined)
+  )?.tax_query;
+  if (!query || typeof query !== "object" || Array.isArray(query)) return fail();
+  const relation = filters.condition === "1" ? "AND" : "OR";
+  const nativeEntries = Object.entries(query).filter(([key]) => key !== "relation");
+  if (
+    query.relation !== "OR" ||
+    !nativeEntries.length ||
+    nativeEntries.some(([key], index) => key !== String(index))
+  )
+    fail();
+  const otherTaxa: Record<string, string> = {
+    "wp-manga-author": filters.author,
+    "wp-manga-artist": filters.artist,
+    "wp-manga-release": filters.release,
+  };
+  const observed = new Set<string>();
+  for (const [, value] of nativeEntries.slice(1)) {
+    if (
+      !value ||
+      typeof value !== "object" ||
+      Array.isArray(value) ||
+      typeof value.taxonomy !== "string" ||
+      !Object.prototype.hasOwnProperty.call(otherTaxa, value.taxonomy) ||
+      !otherTaxa[value.taxonomy] ||
+      observed.has(value.taxonomy) ||
+      value.field !== "term_id" ||
+      Object.keys(value).some((key) => !["taxonomy", "field", "terms"].includes(key)) ||
+      !Array.isArray(value.terms) ||
+      value.terms.length !== 1 ||
+      typeof value.terms[0] !== "number" ||
+      !Number.isSafeInteger(value.terms[0]) ||
+      value.terms[0] < 1
+    )
+      return fail();
+    observed.add(value.taxonomy);
+  }
+  // Madara emits one IN clause with all terms for OR. Its AND form is an
+  // OR wrapper containing one array-wrapped AND group of singleton clauses.
+  // Accept those observed contracts, not arbitrary nested taxonomy expressions.
+  let clauses: JSONObject[];
+  if (relation === "AND") {
+    const wrapper = query["0"];
+    if (!Array.isArray(wrapper) || wrapper.length !== 1) return fail();
+    const group = wrapper[0];
+    if (!group || typeof group !== "object" || Array.isArray(group) || group.relation !== "AND")
+      return fail();
+    const entries = Object.entries(group).filter(([key]) => key !== "relation");
+    if (
+      entries.length !== requested.length ||
+      entries.some(([key], index) => key !== String(index))
+    )
+      fail();
+    clauses = entries.map(([, value]) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return fail();
+      return value;
+    });
+  } else {
+    const clause = query["0"];
+    if (!clause || typeof clause !== "object" || Array.isArray(clause)) return fail();
+    clauses = [clause];
+  }
+  const terms: string[] = [],
+    fields: string[] = [];
+  for (const entry of clauses) {
+    if (
+      entry.taxonomy !== "wp-manga-genre" ||
+      (entry.field !== "term_id" && entry.field !== "slug") ||
+      (entry.operator !== undefined && entry.operator !== "IN") ||
+      Object.keys(entry).some((key) => !["taxonomy", "field", "terms", "operator"].includes(key)) ||
+      !Array.isArray(entry.terms) ||
+      entry.terms.length !== (relation === "AND" ? 1 : requested.length)
+    )
+      return fail();
+    for (const term of entry.terms) {
+      if (
+        entry.field === "term_id"
+          ? (typeof term !== "number" && (typeof term !== "string" || !/^[1-9]\d*$/.test(term))) ||
+            !Number.isSafeInteger(Number(term)) ||
+            Number(term) < 1
+          : typeof term !== "string" || !requested.includes(term)
+      )
+        fail();
+      terms.push(JSON.stringify([entry.field, entry.field === "term_id" ? Number(term) : term]));
+    }
+    fields.push(entry.field);
+  }
+  if (
+    terms.length !== requested.length ||
+    new Set(terms).size !== terms.length ||
+    new Set(fields).size !== 1
+  )
+    fail();
+  for (const item of result.items) {
+    const ids = item.metadata.genres.map((genre) => genre.id);
+    if (
+      relation === "AND"
+        ? !requested.every((id) => ids.includes(id))
+        : !requested.some((id) => ids.includes(id))
+    )
+      fail();
+  }
 };
 export const parseGenreOptions = (html: string): { id: string; title: string }[] => {
   const $ = cheerio.load(html);

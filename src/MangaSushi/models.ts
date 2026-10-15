@@ -12,9 +12,16 @@ export const BASE_URL = "https://mangasushi.org";
 // Verified site announcements, not manga. Keep their rows in pagination accounting.
 export const EDITORIAL_IDS = ["mangasushi-donations", "we-need-more-translators"];
 export const BLOCKED_GENRES = ["adult", "mature", "smut", "hentai", "erotica", "ecchi"];
+export const GENRE_ROUTE_KEY = "mangasushiGenreArchive";
+export interface HomeGenre {
+  id: string;
+  title: string;
+  url: string;
+}
 export const SECTIONS: DiscoverSection[] = [
   { id: "popular", title: "Popular Series", type: DiscoverSectionType.simpleCarousel },
   { id: "latest", title: "What's New", type: DiscoverSectionType.simpleCarousel },
+  { id: "genres", title: "Genres", type: DiscoverSectionType.genres },
 ];
 export const SORTS = [
   { id: "", label: "Relevance" },
@@ -65,8 +72,10 @@ export interface Pagination {
 export interface CatalogPage {
   items: CatalogItem[];
   next?: Pagination;
+  query?: JSONObject;
 }
 export interface Cursor extends Pagination {
   context: string;
   ids: string;
+  seen?: string[];
 }
