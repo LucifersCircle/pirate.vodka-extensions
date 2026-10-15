@@ -1,22 +1,24 @@
 import type { DiscoverSection, DiscoverSectionItem, PagedResults } from "@paperback/types";
 import { DiscoverSectionType, URL } from "@paperback/types";
-import { fetchJSON, fetchText } from "../../services/network";
+import { fetchJSON } from "../../services/network";
 import {
-  DOMAIN,
   DOMAIN_API,
   HOME_SECTION_METADATA_ID,
-  PAGE_SIZE,
   type Metadata,
   type VortexCollectionsResponse,
   type VortexGenre,
   type VortexQueryResponse,
 } from "../shared/models";
-import { getVortexGenres } from "../shared/utils";
-import { parsePopularTodayItems, parseSimpleDiscoverItems } from "./parsers";
+import { contentSettings, withContentSettings } from "../shared/content";
+import { buildMangaId, getVortexGenres } from "../shared/utils";
+import { parseHomepageItems, parsePopularTodayItems } from "./parsers";
+import { HOME_PAGE_SIZE, homeHTML, parseHome, type HomePost } from "./home";
 
 const DISCOVER_SECTIONS: DiscoverSection[] = [
+  { id: "featured", title: "Featured", type: DiscoverSectionType.prominentCarousel },
   { id: "popular-today", title: "Popular Today", type: DiscoverSectionType.prominentCarousel },
-  { id: "latest-releases", title: "Latest Releases", type: DiscoverSectionType.genres },
+  { id: "latest-releases", title: "Latest Releases", type: DiscoverSectionType.simpleCarousel },
+  { id: "release-filters", title: "Browse releases", type: DiscoverSectionType.genres },
   { id: "collections", title: "Collections", type: DiscoverSectionType.genres },
   { id: "most-popular", title: "Most Popular", type: DiscoverSectionType.simpleCarousel },
   { id: "genres", title: "Genres", type: DiscoverSectionType.genres },
@@ -64,15 +66,27 @@ export class DiscoverProvider {
     section: DiscoverSection,
     metadata?: Metadata,
   ): Promise<PagedResults<DiscoverSectionItem>> {
+    return withContentSettings(() => this.fetchDiscoverSectionItems(section, metadata));
+  }
+  private async fetchDiscoverSectionItems(
+    section: DiscoverSection,
+    metadata?: Metadata,
+  ): Promise<PagedResults<DiscoverSectionItem>> {
     switch (section.id) {
+      case "featured":
+        return {
+          items: metadata ? [] : parseHomepageItems(parseHome(await homeHTML()).featured, true),
+        };
       case "popular-today":
         return this.getPopularTodayItems();
       case "latest-releases":
+        return this.getLatestItems(metadata);
+      case "release-filters":
         return getLatestReleaseItems();
       case "collections":
         return this.getCollectionItems();
       case "most-popular":
-        return this.getMostPopularItems(metadata?.page ?? 1);
+        return { items: metadata ? [] : parseHomepageItems(parseHome(await homeHTML()).popular) };
       case "genres":
         return this.getGenreItems();
       default:
@@ -81,8 +95,8 @@ export class DiscoverProvider {
   }
 
   private async getPopularTodayItems(): Promise<PagedResults<DiscoverSectionItem>> {
-    const html = await fetchText({ url: DOMAIN, method: "GET" });
-    return { items: parsePopularTodayItems(html), metadata: undefined };
+    const html = await homeHTML();
+    return { items: parsePopularTodayItems(html, parseHome(html).today), metadata: undefined };
   }
 
   private async getCollectionItems(): Promise<PagedResults<DiscoverSectionItem>> {
@@ -115,22 +129,79 @@ export class DiscoverProvider {
     return { items, metadata: undefined };
   }
 
-  private async getMostPopularItems(page: number): Promise<PagedResults<DiscoverSectionItem>> {
-    const url = new URL(DOMAIN_API)
-      .addPathComponent("query")
-      .setQueryItem("page", page.toString())
-      .setQueryItem("perPage", PAGE_SIZE.toString())
-      .setQueryItem("view", "archive")
-      .setQueryItem("orderBy", "totalViews")
-      .setQueryItem("orderDirection", "desc")
-      .setQueryItem("isNovel", "false")
-      .toString();
-    const data = await fetchJSON<VortexQueryResponse>({ url, method: "GET" });
-
-    return {
-      items: parseSimpleDiscoverItems(data),
-      metadata: page * PAGE_SIZE < (data.totalCount ?? 0) ? { page: page + 1 } : undefined,
-    };
+  private async getLatestItems(metadata?: Metadata): Promise<PagedResults<DiscoverSectionItem>> {
+    type Cursor = { home: "latest"; page: number; seen: string[]; contentContext: string };
+    const contentContext = JSON.stringify(contentSettings());
+    const cursor = metadata as Partial<Cursor> | undefined;
+    if (!cursor) {
+      const posts = parseHome(await homeHTML()).latest;
+      const items = parseHomepageItems(posts);
+      if (!items.length && posts.length === HOME_PAGE_SIZE)
+        return this.getLatestItems({
+          home: "latest",
+          page: 2,
+          seen: posts.map((post) => buildMangaId(post.id, post.slug)),
+          contentContext,
+        } as Metadata);
+      return {
+        items,
+        metadata:
+          posts.length === HOME_PAGE_SIZE
+            ? {
+                home: "latest",
+                contentContext,
+                page: 2,
+                seen: posts.map((post) => buildMangaId(post.id, post.slug)),
+              }
+            : undefined,
+      };
+    }
+    if (
+      cursor.home !== "latest" ||
+      cursor.contentContext !== contentContext ||
+      !Number.isSafeInteger(cursor.page) ||
+      cursor.page! < 2 ||
+      cursor.page! > 100 ||
+      !Array.isArray(cursor.seen) ||
+      cursor.seen.some((id) => typeof id !== "string" || id.length > 1024) ||
+      cursor.seen.length > 10000 ||
+      new Set(cursor.seen).size !== cursor.seen.length
+    )
+      throw new Error("Invalid VortexScans homepage cursor. Refresh to continue.");
+    const seen = new Set(cursor.seen);
+    for (let page = cursor.page!, attempt = 0; page <= 100 && attempt < 10; page++, attempt++) {
+      const data = await fetchJSON<VortexQueryResponse>({
+        url: new URL(DOMAIN_API)
+          .addPathComponent("posts")
+          .setQueryItem("page", String(page))
+          .setQueryItem("perPage", String(HOME_PAGE_SIZE))
+          .setQueryItem("searchTerm", "")
+          .setQueryItem("isNovel", "false")
+          .setQueryItem("tag", "latestUpdatePinned")
+          .toString(),
+        method: "GET",
+      });
+      if (!Array.isArray(data.posts) || data.posts.length > HOME_PAGE_SIZE)
+        throw new Error("VortexScans returned an invalid homepage continuation.");
+      const next: HomePost[] = [];
+      for (const post of data.posts) {
+        const id = buildMangaId(post.id, post.slug);
+        if (!seen.has(id)) next.push(post);
+        seen.add(id);
+      }
+      const continues = data.posts.length === HOME_PAGE_SIZE;
+      if (seen.size > 10000 || (continues && page === 100))
+        throw new Error("VortexScans homepage traversal exceeded its bound. Refresh to continue.");
+      const items = parseHomepageItems(next);
+      if (items.length || !continues)
+        return {
+          items,
+          metadata: continues
+            ? { home: "latest", contentContext, page: page + 1, seen: [...seen] }
+            : undefined,
+        };
+    }
+    throw new Error("No new titles in ten VortexScans homepage pages. Refresh to continue.");
   }
 
   private async getGenreItems(): Promise<PagedResults<DiscoverSectionItem>> {

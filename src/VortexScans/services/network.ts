@@ -1,5 +1,6 @@
 import type { CookieStorageInterceptor, Request, Response } from "@paperback/types";
 import { CloudflareError, PaperbackInterceptor } from "@paperback/types";
+import { assertReaderAllowed } from "../implementations/shared/content";
 import { DOMAIN, DOMAIN_API } from "../implementations/shared/models";
 
 // non-standard constructor and handleRedirect are required for vShield PoW challenge handling
@@ -12,6 +13,7 @@ export class VortexScansInterceptor extends PaperbackInterceptor {
   }
 
   async interceptRequest(request: Request): Promise<Request> {
+    assertReaderAllowed(request.url);
     return {
       ...request,
       headers: {
@@ -27,6 +29,7 @@ export class VortexScansInterceptor extends PaperbackInterceptor {
     response: Response,
     data: ArrayBuffer,
   ): Promise<ArrayBuffer> {
+    assertReaderAllowed(request.url);
     if (response.headers?.["cf-mitigated"] === "challenge") {
       throw new CloudflareError({
         url: request.url,

@@ -25,6 +25,7 @@ import type {
   VortexQueryResponse,
 } from "../shared/models";
 import { fetchJSON } from "../../services/network";
+import { contentSettings, withContentSettings } from "../shared/content";
 import { getVortexGenres } from "../shared/utils";
 import {
   buildSearchFilters,
@@ -42,7 +43,18 @@ export class SearchProvider {
     metadata?: Metadata,
     sortingOption?: SortingOption,
   ): Promise<PagedResults<SearchResultItem>> {
-    const page = metadata?.page ?? 1;
+    return withContentSettings(() => this.fetchSearchResults(query, metadata, sortingOption));
+  }
+  private async fetchSearchResults(
+    query: SearchQuery<SearchFilterValue[]>,
+    metadata?: Metadata,
+    sortingOption?: SortingOption,
+  ): Promise<PagedResults<SearchResultItem>> {
+    const contentContext = JSON.stringify(contentSettings());
+    let page =
+      metadata?.contentContext && metadata.contentContext !== contentContext
+        ? 1
+        : (metadata?.page ?? 1);
     const filters = query.metadata ?? [];
     const homeSection = readHomeSectionFilter(filters);
 
@@ -95,27 +107,32 @@ export class SearchProvider {
       url.setQueryItem("excludedGenreIds", excludedGenres.join(","));
     }
 
-    const request: Request = { url: url.toString(), method: "GET" };
-    let data = await fetchJSON<VortexQueryResponse>(request);
-    let results = parseSearchResults(data);
+    for (let attempt = 0; attempt < 10; attempt++, page++) {
+      url.setQueryItem("page", String(page));
+      const request: Request = { url: url.toString(), method: "GET" };
+      let data = await fetchJSON<VortexQueryResponse>(request);
+      let results = parseSearchResults(data);
 
-    // retry with curly apostrophe if straight quote search returns nothing
-    if (results.length === 0 && searchTerm.includes("'")) {
-      url.setQueryItem("searchTerm", searchTerm.replace(/'/g, "\u2019"));
-      const retryRequest: Request = { url: url.toString(), method: "GET" };
-      data = await fetchJSON<VortexQueryResponse>(retryRequest);
-      results = parseSearchResults(data);
+      // retry with curly apostrophe if straight quote search returns nothing
+      if (!data.posts?.length && searchTerm.includes("'")) {
+        url.setQueryItem("searchTerm", searchTerm.replace(/'/g, "\u2019"));
+        const retryRequest: Request = { url: url.toString(), method: "GET" };
+        data = await fetchJSON<VortexQueryResponse>(retryRequest);
+        results = parseSearchResults(data);
+      }
+
+      // use raw post count for pagination to avoid early termination from novel filtering
+      const hasNext = data.totalCount
+        ? page * PAGE_SIZE < data.totalCount
+        : (data.posts?.length ?? 0) >= PAGE_SIZE;
+
+      if (results.length || !hasNext)
+        return {
+          items: results,
+          metadata: hasNext ? { page: page + 1, contentContext } : undefined,
+        };
     }
-
-    // use raw post count for pagination to avoid early termination from novel filtering
-    const hasNext = data.totalCount
-      ? page * PAGE_SIZE < data.totalCount
-      : (data.posts?.length ?? 0) >= PAGE_SIZE;
-
-    return {
-      items: results,
-      metadata: hasNext ? { page: page + 1 } : undefined,
-    };
+    throw new Error("No visible titles in ten VortexScans pages. Refine your search.");
   }
 
   async getSearchFilters(): Promise<SearchFilter[]> {
@@ -138,22 +155,28 @@ export class SearchProvider {
     page: number,
     tag: "latestUpdatePinned" | "new",
   ): Promise<PagedResults<SearchResultItem>> {
-    const url = new URL(DOMAIN_API)
-      .addPathComponent("posts")
-      .setQueryItem("page", page.toString())
-      .setQueryItem("perPage", PAGE_SIZE.toString())
-      .setQueryItem("searchTerm", "")
-      .setQueryItem("isNovel", "false")
-      .setQueryItem("tag", tag)
-      .toString();
+    const contentContext = JSON.stringify(contentSettings());
+    for (let attempt = 0; attempt < 10; attempt++, page++) {
+      const url = new URL(DOMAIN_API)
+        .addPathComponent("posts")
+        .setQueryItem("page", page.toString())
+        .setQueryItem("perPage", PAGE_SIZE.toString())
+        .setQueryItem("searchTerm", "")
+        .setQueryItem("isNovel", "false")
+        .setQueryItem("tag", tag)
+        .toString();
 
-    const data = await fetchJSON<VortexQueryResponse>({ url, method: "GET" });
-    const items = parseSearchResults(data);
+      const data = await fetchJSON<VortexQueryResponse>({ url, method: "GET" });
+      const items = parseSearchResults(data);
 
-    return {
-      items,
-      metadata: (data.posts?.length ?? 0) >= PAGE_SIZE ? { page: page + 1 } : undefined,
-    };
+      const hasNext = (data.posts?.length ?? 0) >= PAGE_SIZE;
+      if (items.length || !hasNext)
+        return {
+          items,
+          metadata: hasNext ? { page: page + 1, contentContext } : undefined,
+        };
+    }
+    throw new Error("No visible titles in ten VortexScans pages. Refine your search.");
   }
 
   private async getCollectionResults(slug: string): Promise<PagedResults<SearchResultItem>> {

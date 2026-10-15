@@ -2,13 +2,14 @@ import type { Cookie, Extension, MangaProviding, Request } from "@paperback/type
 import { BasicRateLimiter, CookieStorageInterceptor } from "@paperback/types";
 import { ChapterProvider } from "./implementations/chapter-providing/main";
 import { DiscoverProvider } from "./implementations/discover-section/main";
+import { SettingsProvider } from "./implementations/settings-form/main";
 import { MangaProvider } from "./implementations/manga/main";
 import { SearchProvider } from "./implementations/search-results/main";
 import { applyMixins } from "./implementations/shared/utils";
 import { VortexScansInterceptor } from "./services/network";
 
 export interface VortexScansImplementation
-  extends SearchProvider, MangaProvider, ChapterProvider, DiscoverProvider {}
+  extends SearchProvider, MangaProvider, ChapterProvider, DiscoverProvider, SettingsProvider {}
 
 export class VortexScansExtension implements Omit<Extension, keyof MangaProviding> {
   cookieStorageInterceptor = new CookieStorageInterceptor({
@@ -54,6 +55,7 @@ applyMixins(VortexScansExtension, [
   MangaProvider,
   ChapterProvider,
   DiscoverProvider,
+  SettingsProvider,
 ]);
 
 export const VortexScans = new VortexScansExtension();
