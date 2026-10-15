@@ -1211,37 +1211,39 @@ export async function runTests(logger: TestLogger) {
     async () => {
       const query = { title: "", metadata: { genres: ["action"] } };
       for (const continuation of [false, true]) {
+        const scenario = continuation ? "continuation" : "first page";
         await settings.setExcludeNSFW(true);
-        const first = await MangaSushi.getSearchResults(query);
-        const cursor = continuation ? first.metadata : undefined;
-        const warm = continuation ? await MangaSushi.getSearchResults(query, cursor) : first;
-        expect(warm.items).not.to.be.empty;
-        const target = warm.items[0].mangaId;
         const probe = new DiscoveryProbe(`MangaSushi.ignored-warning-${continuation}-test`);
-        let changed = false;
-        probe.gate = async (request, data) => {
-          if (
-            continuation
-              ? typeof request.body !== "string" ||
-                requestParameters(request.body).get("page") !== "1"
-              : request.url !== searchUrl(query, true)
-          )
-            return data;
-          const $ = cheerio.load(Application.arrayBufferToUTF8String(data));
+        probe.registerInterceptor();
+        try {
+          const first = await MangaSushi.getSearchResults(query);
+          const cursor = continuation ? first.metadata : undefined;
+          if (continuation)
+            expect(cursor, `${scenario}: a native continuation cursor is required`).not.to.equal(
+              undefined,
+            );
+          const warm = continuation ? await MangaSushi.getSearchResults(query, cursor) : first;
+          expect(warm.items, `${scenario}: warm native page has visible titles`).not.to.be.empty;
+          const target = warm.items[0].mangaId;
+          // Mutate the exact response that warmed this title, not a later rotating page.
+          const captured = probe.responses.at(-1)!;
+          const $ = cheerio.load(captured.html);
           const row = $(".c-tabs-item__content").filter(
             (_index, node) => $(node).find(`.post-title a[href="${seriesUrl(target)}"]`).length > 0,
           );
-          expect(row).to.have.length(1);
+          expect(row.length, `${scenario}: exactly one warm row for ${target}`).to.equal(1);
           row.append('<span class="adult-content">Adult content</span>');
           if (continuation) {
             const action = row.find(`.mg_genres a[href="${BASE_URL}/manga-genre/action/"]`);
-            expect(action).to.have.length(1);
+            expect(action.length, `${scenario}: warm target has exactly one Action link`).to.equal(
+              1,
+            );
             action.attr("href", `${BASE_URL}/manga-genre/cooking/`).text("Cooking");
           } else {
             const script = $("script").filter((_index, node) =>
               /^\s*var __madara_query_vars = /.test($(node).text()),
             );
-            expect(script).to.have.length(1);
+            expect(script.length, `${scenario}: exactly one native query script`).to.equal(1);
             const state = JSON.parse(script.text().match(/= (\{.*\});?\s*$/s)![1]) as Record<
               string,
               unknown
@@ -1249,18 +1251,36 @@ export async function runTests(logger: TestLogger) {
             delete state.tax_query;
             script.text(`var __madara_query_vars = ${JSON.stringify(state)};`);
           }
-          changed = true;
-          return encodeHTML($.html());
-        };
-        probe.registerInterceptor();
-        try {
+          const invalid = $.html();
+          let changed = false;
+          probe.gate = async (request, data) => {
+            if (
+              request.url !== captured.request.url ||
+              request.method !== captured.request.method ||
+              request.body !== captured.request.body
+            )
+              return data;
+            changed = true;
+            return encodeHTML(invalid);
+          };
+          const count = probe.requests.length;
           await rejects(
             () => MangaSushi.getSearchResults(query, cursor),
             /genre.*filter|filter.*genre/i,
           );
-          expect(changed).to.equal(true);
-          expect(probe.requests).to.have.length(1);
-          probe.gate = undefined;
+          expect(changed, `${scenario}: mutated response matched the exact warm request`).to.equal(
+            true,
+          );
+          expect(probe.requests.length - count, `${scenario}: rejected filter cannot scan`).to.equal(
+            1,
+          );
+          // A subsequent clean response for the same IDs must not erase the warning.
+          probe.gate = async (request, data) =>
+            request.url === captured.request.url &&
+            request.method === captured.request.method &&
+            request.body === captured.request.body
+              ? encodeHTML(captured.html)
+              : data;
           await rejects(
             () => MangaSushi.getMangaDetails(target),
             /hidden by NSFW exclusion|lacks reliable/i,
