@@ -7,7 +7,7 @@ export default {
   name: "Mangasushi",
   description:
     "Native Mangasushi catalog, search and reader. NSFW exclusion is on by default; unclassified titles are hidden.",
-  version: "0.0.1-alpha.3",
+  version: "0.0.1-alpha.4",
   icon: "icon.png",
   language: "en",
   contentRating: ContentRating.ADULT,

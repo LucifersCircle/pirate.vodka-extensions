@@ -261,6 +261,7 @@ export const parseChapters = (html: string, sourceManga: SourceManga, now: Date)
     const chapterId = slug(href.slice(seriesUrl(sourceManga.mangaId).length).replace(/\/$/, ""));
     const title = clean(anchor.text());
     const number = title.match(/(?:chapter|ch\.?)\s*(\d+(?:\.\d+)?)/i);
+    const volume = title.match(/\b(?:volume|vol\.?)\s*(\d+(?:\.\d+)?)/i);
     if (!title) throw new Error("Mangasushi returned an untitled chapter.");
     const locked =
       row.is(".premium, .locked, .chapter-locked") || row.find(".fa-lock, .ion-md-lock").length > 0;
@@ -269,6 +270,7 @@ export const parseChapters = (html: string, sourceManga: SourceManga, now: Date)
       sourceManga,
       title,
       chapNum: number ? Number(number[1]) : 0,
+      volume: volume ? Number(volume[1]) : 0,
       langCode: "en",
       publishDate: parseDate(row.find(".chapter-release-date").text(), now),
       sortingIndex: nodes.length - index,

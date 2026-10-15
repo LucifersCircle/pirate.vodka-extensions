@@ -42,6 +42,7 @@ import {
   seriesUrl,
 } from "./parsers";
 import Config from "./pbconfig";
+import { englishTitle, searchTitle } from "./titles";
 
 class MangaSushiExtension implements ExtensionImpl<typeof Config> {
   private cookies = new CookieStorageInterceptor({ storage: "stateManager" });
@@ -126,11 +127,13 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
         manga_archives_item_layout: "default",
         // This is the site's adult=0 clause. Explicit tags (including Ecchi)
         // and missing genres are still excluded after the native filter.
-        meta_query: {
-          relation: "AND",
-          0: original.meta_query ?? { relation: "AND" },
-          1: { key: "manga_adult_content", value: "" },
-        },
+        meta_query: saved.excludeNSFW
+          ? {
+              relation: "AND",
+              0: original.meta_query ?? { relation: "AND" },
+              1: { key: "manga_adult_content", value: "" },
+            }
+          : (original.meta_query ?? { relation: "AND" }),
       },
     };
     const key = JSON.stringify([saved, metadataCursor]);
@@ -215,7 +218,6 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
   ): Promise<CatalogItem[]> {
     if (
       kind !== "search" &&
-      saved.excludeNSFW &&
       discovery &&
       items.some((item) => {
         const cached = this.cache.get(item.mangaId);
@@ -226,12 +228,15 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
     const output: CatalogItem[] = [];
     for (const item of items) {
       if (EDITORIAL_IDS.includes(item.mangaId)) continue;
+      const cached = this.cache.get(item.mangaId);
       const metadata =
         kind === "search"
           ? item.metadata
           : saved.excludeNSFW
             ? await this.classify(item.mangaId, item.title, saved)
-            : item.metadata;
+            : cached && cached.expires > Date.now()
+              ? cached.data
+              : item.metadata;
       if (kind === "search") this.remember(item);
       if (!saved.excludeNSFW || (metadata && isAllowed(metadata)))
         output.push(metadata ? { ...item, metadata } : item);
@@ -269,12 +274,19 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
         kind,
         saved,
         discovery ? { ...discovery, page: cursor?.page ?? 0 } : undefined,
-        kind === "latest" && saved.excludeNSFW && discovery && !cursor
+        kind === "latest" && discovery && !cursor
           ? result.items.length + parseCatalog(await this.home(saved), "popular").items.length
           : undefined,
       );
       const next = result.next ? { ...result.next, context, ids } : undefined;
-      if (items.length || !next) return { items, metadata: next };
+      if (items.length || !next)
+        return {
+          items: items.map((item) => ({
+            ...item,
+            title: englishTitle(item.mangaId, item.title, [item.metadata.alternative]),
+          })),
+          metadata: next,
+        };
       cursor = next;
       previousIds = ids;
     }
@@ -293,7 +305,7 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
     if (section.id === "popular") {
       const html = await this.home(saved);
       const result = parseCatalog(html, "popular");
-      const latest = saved.excludeNSFW ? parseCatalog(html, "latest") : undefined;
+      const latest = parseCatalog(html, "latest");
       const items = await this.visible(
         result.items,
         "popular",
@@ -301,7 +313,13 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
         latest?.next ? { ...latest.next, page: 0 } : undefined,
         latest ? latest.items.length + result.items.length : undefined,
       );
-      return { items: items.map((item) => ({ ...item, type: "simpleCarouselItem" as const })) };
+      return {
+        items: items.map((item) => ({
+          ...item,
+          title: englishTitle(item.mangaId, item.title, [item.metadata.alternative]),
+          type: "simpleCarouselItem" as const,
+        })),
+      };
     }
     if (section.id !== "latest") throw new Error("Unknown Mangasushi section.");
     const result = await this.catalog(`${BASE_URL}/`, "latest", saved, metadata);
@@ -320,7 +338,7 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
   ) {
     const saved = this.saved();
     return this.catalog(
-      searchUrl(query, saved.excludeNSFW, sortingOption),
+      searchUrl({ ...query, title: searchTitle(query.title) }, saved.excludeNSFW, sortingOption),
       "search",
       saved,
       metadata,
@@ -346,7 +364,24 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
       throw new Error(
         "This title is hidden by NSFW exclusion or lacks reliable website classification. Change source settings to access it.",
       );
-    return enrichDetails(source, metadata);
+    const result = enrichDetails(source, metadata);
+    const original = result.mangaInfo.primaryTitle;
+    const alternatives = result.mangaInfo.secondaryTitles ?? [];
+    const title = englishTitle(mangaId, original, metadata ? [metadata.alternative] : alternatives);
+    return {
+      ...result,
+      mangaInfo: {
+        ...result.mangaInfo,
+        primaryTitle: title,
+        secondaryTitles: [
+          ...new Set([
+            ...(title !== original ? [original] : []),
+            ...(source.mangaInfo.secondaryTitles ?? []),
+            ...alternatives,
+          ]),
+        ],
+      },
+    };
   }
   async getChapters(sourceManga: SourceManga) {
     const saved = this.saved();
