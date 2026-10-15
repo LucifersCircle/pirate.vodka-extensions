@@ -161,6 +161,12 @@ native load-more pagination. Its search mirrors the seven website sorts and the
 actual genre OR/AND, author, artist, release year, adult-content and status filters.
 The two verified donation/recruitment announcement posts are not treated as manga.
 
+Discovery shares the homepage response and a page-sized native AJAX metadata
+request across concurrent sections instead of searching once per title. Short-lived,
+setting-keyed caches also avoid repeat requests on warm loads. Exact homepage order,
+upstream continuation, explicit-tag exclusions and unknown-title blocking remain
+unchanged; titles missing from a batch retain the canonical-ID search fallback.
+
 NSFW exclusion is enabled by default in Mangasushi's source settings. It applies
 the site's non-adult filter plus Adult, Mature, Smut, Hentai, Erotica and Ecchi genre
 exclusions across discovery, search, details, chapters and reading. Titles without
@@ -179,7 +185,9 @@ Mangasushi's maintained live suite also checks native continuation, strict NSFW
 handling, exact metadata, decimal chapter labels, complete asynchronous chapter
 lists, multiple readers and settings/cache transitions. Chapter lists must retain
 the exact SourceManga object supplied by Paperback, including when loading saved
-titles with cold caches. Reader tests fetch the first and last images of sampled
+titles with cold caches. Valid underscore chapter IDs are retained, including the
+named Lonely Attack on the Different World chapter-list and reader regression.
+Reader tests fetch the first and last images of sampled
 safe and decimal chapters and verify successful responses, image MIME types and
 image signatures. This does not replace testing the physical iOS app.
 
