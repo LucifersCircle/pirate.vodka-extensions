@@ -35,7 +35,8 @@ void test("requires every shipped extension and accepts Hijala individually", ()
   assert.deepEqual(selectSources(["Hijala"]), ["Hijala"]);
   assert.throws(() => selectSources(["HijalaTest"]), /Usage:/);
   assert.throws(() => selectSources(["Unknown"]), /Usage:/);
-  assert.throws(() => selectSources(["Hijala", "Kagane"]), /Usage:/);
+  assert.deepEqual(selectSources(["Kagane", "Hijala"]), ["Hijala", "Kagane"]);
+  assert.throws(() => selectSources(["Hijala", "Hijala"]), /Usage:/);
   const report = Object.fromEntries(sources.map((name) => [name, suite()]));
   assert.deepEqual(failedSources(report, sources), []);
   delete report.Hijala;
