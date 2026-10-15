@@ -13,92 +13,92 @@ logs and downloadable results.
 
 <!-- LIVE_TEST_STATUS:START -->
 
-Last checked: **2026-10-15 03:27:14 UTC** · [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38676207727)
-Started: 2026-10-15 03:25:43 UTC
-Tested commit: `f83328c`
+Last checked: **2026-10-15 04:40:33 UTC** · [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38682553981)
+Started: 2026-10-15 04:38:53 UTC
+Tested commit: `4ad931d`
 
 | Extension   | Result  | Passed | Failed | Duration |
 | ----------- | ------- | -----: | -----: | -------: |
-| Hijala      | ✅ Pass |  14/14 |      0 |    5.50s |
-| Kagane      | ✅ Pass |  12/12 |      0 |   13.38s |
-| MangaSushi  | ✅ Pass |  32/32 |      0 |   55.55s |
-| VortexScans | ✅ Pass |  12/12 |      0 |    8.81s |
+| Hijala      | ✅ Pass |  14/14 |      0 |    6.94s |
+| Kagane      | ✅ Pass |  12/12 |      0 |   15.55s |
+| MangaSushi  | ✅ Pass |  32/32 |      0 |   64.45s |
+| VortexScans | ✅ Pass |  12/12 |      0 |   10.76s |
 
 <details>
 <summary>Test output</summary>
 
 | Extension   | Test                                                                                 | Result  | Duration | Failure |
 | ----------- | ------------------------------------------------------------------------------------ | ------- | -------: | ------- |
-| Hijala      | initialisation                                                                       | ✅ Pass |    0.06s | —       |
+| Hijala      | initialisation                                                                       | ✅ Pass |    0.07s | —       |
 | Hijala      | getDiscoverSections                                                                  | ✅ Pass |    0.01s | —       |
 | Hijala      | getSortingOptions                                                                    | ✅ Pass |    0.00s | —       |
-| Hijala      | getSearchResults                                                                     | ✅ Pass |    0.70s | —       |
-| Hijala      | getMangaDetails                                                                      | ✅ Pass |    0.79s | —       |
-| Hijala      | getChapters                                                                          | ✅ Pass |    0.83s | —       |
-| Hijala      | getChapterDetails                                                                    | ✅ Pass |    0.38s | —       |
-| Hijala      | getDiscoverSectionItems: featured                                                    | ✅ Pass |    0.44s | —       |
-| Hijala      | getDiscoverSectionItems: latest                                                      | ✅ Pass |    0.44s | —       |
-| Hijala      | getDiscoverSectionItems: hot                                                         | ✅ Pass |    0.29s | —       |
-| Hijala      | getDiscoverSectionItems: new                                                         | ✅ Pass |    0.21s | —       |
-| Hijala      | getDiscoverSectionItems: popular                                                     | ✅ Pass |    0.18s | —       |
-| Hijala      | getDiscoverSectionItems: updates                                                     | ✅ Pass |    0.16s | —       |
-| Hijala      | getDiscoverSectionItems: genres                                                      | ✅ Pass |    1.02s | —       |
+| Hijala      | getSearchResults                                                                     | ✅ Pass |    0.92s | —       |
+| Hijala      | getMangaDetails                                                                      | ✅ Pass |    1.13s | —       |
+| Hijala      | getChapters                                                                          | ✅ Pass |    1.12s | —       |
+| Hijala      | getChapterDetails                                                                    | ✅ Pass |    0.55s | —       |
+| Hijala      | getDiscoverSectionItems: featured                                                    | ✅ Pass |    0.60s | —       |
+| Hijala      | getDiscoverSectionItems: latest                                                      | ✅ Pass |    0.62s | —       |
+| Hijala      | getDiscoverSectionItems: hot                                                         | ✅ Pass |    0.33s | —       |
+| Hijala      | getDiscoverSectionItems: new                                                         | ✅ Pass |    0.29s | —       |
+| Hijala      | getDiscoverSectionItems: popular                                                     | ✅ Pass |    0.31s | —       |
+| Hijala      | getDiscoverSectionItems: updates                                                     | ✅ Pass |    0.23s | —       |
+| Hijala      | getDiscoverSectionItems: genres                                                      | ✅ Pass |    0.77s | —       |
 | Kagane      | initialisation                                                                       | ✅ Pass |    0.05s | —       |
 | Kagane      | getDiscoverSections                                                                  | ✅ Pass |    0.01s | —       |
 | Kagane      | getSortingOptions                                                                    | ✅ Pass |    0.00s | —       |
-| Kagane      | getSearchResults                                                                     | ✅ Pass |   10.30s | —       |
-| Kagane      | getMangaDetails                                                                      | ✅ Pass |    0.20s | —       |
-| Kagane      | getChapters                                                                          | ✅ Pass |    0.62s | —       |
-| Kagane      | getChapterDetails                                                                    | ✅ Pass |    0.38s | —       |
-| Kagane      | getDiscoverSectionItems: popular                                                     | ✅ Pass |    1.21s | —       |
+| Kagane      | getSearchResults                                                                     | ✅ Pass |   11.28s | —       |
+| Kagane      | getMangaDetails                                                                      | ✅ Pass |    0.28s | —       |
+| Kagane      | getChapters                                                                          | ✅ Pass |    0.91s | —       |
+| Kagane      | getChapterDetails                                                                    | ✅ Pass |    0.51s | —       |
+| Kagane      | getDiscoverSectionItems: popular                                                     | ✅ Pass |    1.62s | —       |
 | Kagane      | getDiscoverSectionItems: trending                                                    | ✅ Pass |    0.00s | —       |
-| Kagane      | getDiscoverSectionItems: latest                                                      | ✅ Pass |    0.28s | —       |
-| Kagane      | getDiscoverSectionItems: recently-added                                              | ✅ Pass |    0.33s | —       |
+| Kagane      | getDiscoverSectionItems: latest                                                      | ✅ Pass |    0.40s | —       |
+| Kagane      | getDiscoverSectionItems: recently-added                                              | ✅ Pass |    0.50s | —       |
 | Kagane      | getDiscoverSectionItems: genres                                                      | ✅ Pass |    0.00s | —       |
-| MangaSushi  | initialisation                                                                       | ✅ Pass |    0.02s | —       |
+| MangaSushi  | initialisation                                                                       | ✅ Pass |    0.03s | —       |
 | MangaSushi  | getDiscoverSections: native section order                                            | ✅ Pass |    0.01s | —       |
-| MangaSushi  | getSortingOptions: all seven site sorts                                              | ✅ Pass |    1.29s | —       |
-| MangaSushi  | getSearchResults: native adult filter plus genre safety                              | ✅ Pass |    1.06s | —       |
-| MangaSushi  | getSearchResults: displayed smart punctuation resolves by exact ID                   | ✅ Pass |    0.50s | —       |
+| MangaSushi  | getSortingOptions: all seven site sorts                                              | ✅ Pass |    1.73s | —       |
+| MangaSushi  | getSearchResults: native adult filter plus genre safety                              | ✅ Pass |    1.83s | —       |
+| MangaSushi  | getSearchResults: displayed smart punctuation resolves by exact ID                   | ✅ Pass |    0.94s | —       |
 | MangaSushi  | getMangaDetails: full canonical metadata                                             | ✅ Pass |    0.00s | —       |
-| MangaSushi  | getMangaDetails: unknown classification is blocked by default                        | ✅ Pass |    0.94s | —       |
-| MangaSushi  | getChapters and reader: accessible with default exclusion                            | ✅ Pass |    1.24s | —       |
-| MangaSushi  | getChapters and reader: cold-cache persisted records across three safe titles        | ✅ Pass |    6.81s | —       |
-| MangaSushi  | getChapters and reader: Lonely Attack canonical underscore chapter IDs               | ✅ Pass |    5.28s | —       |
-| MangaSushi  | English titles: exact source aliases keep original titles, full alternatives and IDs | ✅ Pass |    9.05s | —       |
-| MangaSushi  | English titles: Japanese-only alternatives retain the source title                   | ✅ Pass |    1.18s | —       |
-| MangaSushi  | English titles: cold classification still queries the original source title          | ✅ Pass |    0.68s | —       |
-| MangaSushi  | English titles: removing an alias from live metadata restores original display       | ✅ Pass |    1.00s | —       |
-| MangaSushi  | getSearchResults: every native sort executes                                         | ✅ Pass |    6.05s | —       |
-| MangaSushi  | getSearchResults: native continuation                                                | ✅ Pass |    0.99s | —       |
-| MangaSushi  | getSearchResults: genuine empty query terminates                                     | ✅ Pass |    0.68s | —       |
-| MangaSushi  | advanced search: actual taxonomy and native options                                  | ✅ Pass |    1.33s | —       |
-| MangaSushi  | getDiscoverSectionItems: cold-cache default exactly mirrors eligible site rows       | ✅ Pass |    2.77s | —       |
-| MangaSushi  | settings: pending native discovery batch is invalidated                              | ✅ Pass |    0.64s | —       |
-| MangaSushi  | settings: explicit opt-out and finite Popular fidelity                               | ✅ Pass |    1.57s | —       |
-| MangaSushi  | getDiscoverSectionItems: What's New native load more                                 | ✅ Pass |    2.36s | —       |
+| MangaSushi  | getMangaDetails: unknown classification is blocked by default                        | ✅ Pass |    1.66s | —       |
+| MangaSushi  | getChapters and reader: accessible with default exclusion                            | ✅ Pass |    1.75s | —       |
+| MangaSushi  | getChapters and reader: cold-cache persisted records across three safe titles        | ✅ Pass |    8.38s | —       |
+| MangaSushi  | getChapters and reader: Lonely Attack canonical underscore chapter IDs               | ✅ Pass |    5.34s | —       |
+| MangaSushi  | English titles: exact source aliases keep original titles, full alternatives and IDs | ✅ Pass |    9.58s | —       |
+| MangaSushi  | English titles: Japanese-only alternatives retain the source title                   | ✅ Pass |    1.73s | —       |
+| MangaSushi  | English titles: cold classification still queries the original source title          | ✅ Pass |    1.00s | —       |
+| MangaSushi  | English titles: removing an alias from live metadata restores original display       | ✅ Pass |    2.56s | —       |
+| MangaSushi  | getSearchResults: every native sort executes                                         | ✅ Pass |    5.17s | —       |
+| MangaSushi  | getSearchResults: native continuation                                                | ✅ Pass |    1.54s | —       |
+| MangaSushi  | getSearchResults: genuine empty query terminates                                     | ✅ Pass |    0.72s | —       |
+| MangaSushi  | advanced search: actual taxonomy and native options                                  | ✅ Pass |    1.52s | —       |
+| MangaSushi  | getDiscoverSectionItems: cold-cache default exactly mirrors eligible site rows       | ✅ Pass |    2.78s | —       |
+| MangaSushi  | settings: pending native discovery batch is invalidated                              | ✅ Pass |    0.97s | —       |
+| MangaSushi  | settings: explicit opt-out and finite Popular fidelity                               | ✅ Pass |    1.41s | —       |
+| MangaSushi  | getDiscoverSectionItems: What's New native load more                                 | ✅ Pass |    2.11s | —       |
 | MangaSushi  | catalog: editorial posts are not manga even with exclusions off                      | ✅ Pass |    1.57s | —       |
-| MangaSushi  | getMangaDetails: original title and alternatives                                     | ✅ Pass |    0.15s | —       |
-| MangaSushi  | getChapters: asynchronous full list and decimal labels                               | ✅ Pass |    1.05s | —       |
-| MangaSushi  | getChapterDetails: exact ordered lazy pages                                          | ✅ Pass |    0.71s | —       |
-| MangaSushi  | reader: duplicate pages and page-order gaps fail closed                              | ✅ Pass |    0.14s | —       |
-| MangaSushi  | getChapterDetails: second chapter pages                                              | ✅ Pass |    0.28s | —       |
-| MangaSushi  | settings: stale library and cached metadata cannot bypass exclusion                  | ✅ Pass |    3.79s | —       |
-| MangaSushi  | settings: pending permissive response cannot survive exclusion switch                | ✅ Pass |    1.85s | —       |
-| MangaSushi  | getSearchResults: all-filtered native pages reach real end                           | ✅ Pass |    0.55s | —       |
+| MangaSushi  | getMangaDetails: original title and alternatives                                     | ✅ Pass |    0.32s | —       |
+| MangaSushi  | getChapters: asynchronous full list and decimal labels                               | ✅ Pass |    1.64s | —       |
+| MangaSushi  | getChapterDetails: exact ordered lazy pages                                          | ✅ Pass |    0.52s | —       |
+| MangaSushi  | reader: duplicate pages and page-order gaps fail closed                              | ✅ Pass |    0.23s | —       |
+| MangaSushi  | getChapterDetails: second chapter pages                                              | ✅ Pass |    1.28s | —       |
+| MangaSushi  | settings: stale library and cached metadata cannot bypass exclusion                  | ✅ Pass |    3.97s | —       |
+| MangaSushi  | settings: pending permissive response cannot survive exclusion switch                | ✅ Pass |    1.49s | —       |
+| MangaSushi  | getSearchResults: all-filtered native pages reach real end                           | ✅ Pass |    0.68s | —       |
 | MangaSushi  | catalog: malformed response fails closed                                             | ✅ Pass |    0.00s | —       |
 | VortexScans | initialisation                                                                       | ✅ Pass |    0.00s | —       |
 | VortexScans | getDiscoverSections                                                                  | ✅ Pass |    0.01s | —       |
 | VortexScans | getSortingOptions                                                                    | ✅ Pass |    0.00s | —       |
-| VortexScans | getSearchResults                                                                     | ✅ Pass |    3.70s | —       |
-| VortexScans | getMangaDetails                                                                      | ✅ Pass |    3.62s | —       |
-| VortexScans | getChapters                                                                          | ✅ Pass |    0.18s | —       |
-| VortexScans | getChapterDetails                                                                    | ✅ Pass |    0.28s | —       |
-| VortexScans | getDiscoverSectionItems: popular-today                                               | ✅ Pass |    0.57s | —       |
+| VortexScans | getSearchResults                                                                     | ✅ Pass |    4.65s | —       |
+| VortexScans | getMangaDetails                                                                      | ✅ Pass |    3.73s | —       |
+| VortexScans | getChapters                                                                          | ✅ Pass |    0.26s | —       |
+| VortexScans | getChapterDetails                                                                    | ✅ Pass |    0.70s | —       |
+| VortexScans | getDiscoverSectionItems: popular-today                                               | ✅ Pass |    0.73s | —       |
 | VortexScans | getDiscoverSectionItems: latest-releases                                             | ✅ Pass |    0.00s | —       |
-| VortexScans | getDiscoverSectionItems: collections                                                 | ✅ Pass |    0.13s | —       |
-| VortexScans | getDiscoverSectionItems: most-popular                                                | ✅ Pass |    0.18s | —       |
-| VortexScans | getDiscoverSectionItems: genres                                                      | ✅ Pass |    0.14s | —       |
+| VortexScans | getDiscoverSectionItems: collections                                                 | ✅ Pass |    0.20s | —       |
+| VortexScans | getDiscoverSectionItems: most-popular                                                | ✅ Pass |    0.28s | —       |
+| VortexScans | getDiscoverSectionItems: genres                                                      | ✅ Pass |    0.21s | —       |
 
 </details>
 
@@ -107,6 +107,7 @@ Tested commit: `f83328c`
 
 | Checked (UTC)           | Hijala       | Kagane  | MangaSushi   | VortexScans | Run                                                                                       |
 | ----------------------- | ------------ | ------- | ------------ | ----------- | ----------------------------------------------------------------------------------------- |
+| 2026-10-15 04:40:33 UTC | ✅ Pass      | ✅ Pass | ✅ Pass      | ✅ Pass     | [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38682553981) |
 | 2026-10-15 03:27:14 UTC | ✅ Pass      | ✅ Pass | ✅ Pass      | ✅ Pass     | [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38676207727) |
 | 2026-10-15 02:51:40 UTC | ✅ Pass      | ✅ Pass | ✅ Pass      | ✅ Pass     | [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38673070170) |
 | 2026-10-15 02:31:45 UTC | ✅ Pass      | ✅ Pass | ✅ Pass      | ✅ Pass     | [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38671316621) |
