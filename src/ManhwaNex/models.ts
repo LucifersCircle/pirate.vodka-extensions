@@ -18,6 +18,11 @@ export const SECTIONS: DiscoverSection[] = [
   { id: "popular", title: "Popular Series", type: DiscoverSectionType.simpleCarousel },
   { id: "latest", title: "Latest Updates", type: DiscoverSectionType.simpleCarousel },
 ];
+export interface HomeCategory {
+  id: string;
+  title: string;
+  url: string;
+}
 export const SORTS = [{ id: "", label: "Relevance" }];
 export const STATUSES = [
   { id: "on-going", title: "OnGoing" },

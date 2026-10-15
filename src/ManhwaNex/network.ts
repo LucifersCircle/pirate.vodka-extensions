@@ -54,6 +54,16 @@ export class ManhwaNexInterceptor extends PaperbackInterceptor {
     }
     Application.setState([...issued], "ManhwaNex.readerPages");
   }
+  revokePages(seriesId: string) {
+    const issued = this.issued();
+    let changed = false;
+    for (const [url, value] of issued)
+      if (value.seriesId === seriesId) {
+        issued.delete(url);
+        changed = true;
+      }
+    if (changed) Application.setState([...issued], "ManhwaNex.readerPages");
+  }
   override async interceptRequest(request: Request): Promise<Request> {
     const issued = this.issued().get(request.url);
     if (

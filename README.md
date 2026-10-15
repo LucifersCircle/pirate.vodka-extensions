@@ -316,10 +316,17 @@ docker compose down
 
 ## ManhwaNex
 
-ManhwaNex uses the public website's Popular Series and Latest Updates sections,
-canonical releases, native search filters, and reader pages. Homepage metadata is
-fetched in one bounded batch, shared by both sections; it does not fetch details
-for every card.
+ManhwaNex `0.0.1-alpha.3` preserves the public website's Popular Series and Latest
+Updates sections, canonical releases, native search filters, and reader pages.
+Popular and Latest share one bounded homepage metadata batch, without fetching
+details for every card.
+
+The eight genre archives linked from the homepage are separate Discover sections,
+in the site's order. Each archive loads only when requested and uses bounded,
+page-sized metadata batches when classification is needed. Native archive order
+and next-page links are preserved. Repeated canonical IDs are omitted across a
+pagination chain, including duplicate-only intermediate pages; distinct source
+entries remain separate even when they share titles or artwork.
 
 NSFW exclusion is on by default and applies to discovery, search, saved-title
 details, chapters, and reader entry. It requires the website's non-adult flag and
