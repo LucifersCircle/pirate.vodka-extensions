@@ -8,6 +8,7 @@ import {
   type DiscoverSectionItem,
   type Request,
   type Response,
+  type SearchResultItem,
   type SourceManga,
   type TestLogger,
 } from "@paperback/types";
@@ -18,6 +19,7 @@ import { VortexScans, type VortexScansImplementation } from "../VortexScans/main
 import {
   DOMAIN,
   DOMAIN_API,
+  PAGE_SIZE,
   type VortexPost,
   type VortexQueryResponse,
 } from "../VortexScans/implementations/shared/models.js";
@@ -57,7 +59,7 @@ class Probe extends PaperbackInterceptor {
 // Preserve the established saved-ID ASCII escaping, including a literal period.
 const canonical = (post: Pick<VortexPost, "id" | "slug">): string =>
   `${post.id}:${post.slug.replace(/[^A-Za-z0-9_-]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)}`;
-const cards = (items: DiscoverSectionItem[]) =>
+const cards = (items: (DiscoverSectionItem | SearchResultItem)[]) =>
   items.map((item) => {
     if (!("mangaId" in item)) throw new Error("Expected a native series card");
     return { mangaId: item.mangaId, title: item.title, imageUrl: item.imageUrl };
@@ -192,11 +194,11 @@ export async function runTests(logger: TestLogger) {
     await (await extension.getSettingsForm()).setExcludeNSFW(false);
     const sections = await extension.getDiscoverSections();
     expect(sections.map((section) => section.id)).to.deep.equal([
-      "featured", "popular-today", "latest-releases", "release-filters", "collections",
+      "featured", "popular-today", "release-filters", "collections",
       "most-popular", "genres",
     ]);
     const selected = sections.filter((section) =>
-      ["featured", "popular-today", "latest-releases", "most-popular"].includes(section.id),
+      ["featured", "popular-today", "most-popular"].includes(section.id),
     );
     const before = probe.requests.length;
     const cold = await Promise.all(selected.map((section) => extension.getDiscoverSectionItems(section)));
@@ -220,13 +222,11 @@ export async function runTests(logger: TestLogger) {
     logger.log("homeRequests", { cold: 1, warm: 0, perTitle: 0 });
   });
 
-  suite.test("home: exact current 6/20/36/9 rows, original covers and terminal editorial rows", async () => {
+  suite.test("home: exact current 6/20/9 rows, original covers and terminal editorial rows", async () => {
     const featured = field<VortexPost[]>(home, "combinedSliderPosts");
-    const latest = field<VortexPost[]>(home, "latestMangaPosts");
     const monthly = field<VortexPost[]>(home, "monthlyPosts");
     const ranking = field<{ id: number; slug: string; title: string; coverImage: string }[]>(home, "transformedTopSeries").slice(0, 9);
     expect(featured).to.have.length(6);
-    expect(latest).to.have.length(36);
     expect(buildMangaId(42, "v.2")).to.equal("42:v%2E2");
     const popular = ranking.map((rank) => {
       const post = monthly.find((entry) => entry.slug === rank.slug)!;
@@ -238,7 +238,7 @@ export async function runTests(logger: TestLogger) {
     const changedRank = home.replace(/(transformedTopSeries:\$R\[\d+\]=\[\$R\[\d+\]=\{id:)\d+/, (_, prefix: string) => `${prefix}999999`);
     expect(changedRank).not.to.equal(home);
     expect(parseHome(changedRank).popular.map(canonical)).to.deep.equal(popular.map(canonical));
-    for (const [id, posts] of [["featured", featured], ["latest-releases", latest], ["most-popular", popular]] as const)
+    for (const [id, posts] of [["featured", featured], ["most-popular", popular]] as const)
       expect(cards(rows.get(id)!.items), id).to.deep.equal(expectedCards(posts));
     const $ = cheerio.load(home);
     const section = $("h1,h2,h3,h4,p").filter((_, element) => $(element).text().trim() === "Popular Today").first().closest("section");
@@ -264,33 +264,40 @@ export async function runTests(logger: TestLogger) {
     expect(probe.requests.length).to.equal(before);
   });
 
-  suite.test("latest: two genuine 36-post continuations preserve order and unique IDs", async () => {
-    const section = (await extension.getDiscoverSections()).find((item) => item.id === "latest-releases")!;
-    let cursor = rows.get(section.id)!.metadata;
-    const seen = new Set(cards(rows.get(section.id)!.items).map((item) => item.mangaId));
-    for (const page of [2, 3]) {
-      expect(cursor).not.to.equal(undefined);
-      const before = probe.responses.length, snapshot = JSON.stringify(cursor);
-      const result = await extension.getDiscoverSectionItems(section, cursor as Parameters<typeof extension.getDiscoverSectionItems>[1]);
-      expect(JSON.stringify(cursor)).to.equal(snapshot);
+  suite.test("latest: Browse chip preserves native query, exact source order and page-two continuation", async () => {
+    const sections = await extension.getDiscoverSections();
+    expect(sections.some((section) => section.id === "latest-releases")).to.equal(false);
+    const browse = sections.find((section) => section.id === "release-filters")!;
+    const chips = await extension.getDiscoverSectionItems(browse);
+    const chip = chips.items.find((item) => "name" in item && item.name === "Latest");
+    if (!chip || !("searchQuery" in chip)) throw new Error("Expected the native Latest chip");
+    const query = chip.searchQuery as Parameters<typeof extension.getSearchResults>[0];
+    expect(query).to.deep.equal({ title: "", metadata: [{ id: "vortex-home-section", value: "latest" }] });
+    const snapshot = JSON.stringify(query);
+    expect(await extension.getSortingOptions(query)).to.deep.equal([]);
+    expect(extension.getAdvancedSearchForm(query).getSearchQueryMetadata()).to.deep.equal(query.metadata);
+    let cursor: Parameters<typeof extension.getSearchResults>[1];
+    const pages: string[][] = [];
+    for (const page of [1, 2]) {
+      const before = probe.responses.length, cursorSnapshot = JSON.stringify(cursor);
+      const result = await extension.getSearchResults(query, cursor);
+      expect(JSON.stringify(query)).to.equal(snapshot);
+      expect(JSON.stringify(cursor)).to.equal(cursorSnapshot);
       const responses = probe.responses.slice(before);
       expect(responses).to.have.length(1);
       const url = new globalThis.URL(responses[0].request.url);
       expect(url.origin + url.pathname).to.equal(`${DOMAIN_API}/posts`);
-      for (const [key, value] of Object.entries({ page: String(page), perPage: "36", searchTerm: "", isNovel: "false", tag: "latestUpdatePinned" }))
+      for (const [key, value] of Object.entries({ page: String(page), perPage: String(PAGE_SIZE), searchTerm: "", isNovel: "false", tag: "latestUpdatePinned" }))
         expect(url.searchParams.get(key), key).to.equal(value);
       const data = JSON.parse(responses[0].body) as VortexQueryResponse;
-      expect(data.posts).to.have.length(36);
-      const expected = expectedCards(data.posts).filter((item) => !seen.has(item.mangaId));
-      expect(cards(result.items)).to.deep.equal(expected);
-      expect(result.items).not.to.be.empty;
-      for (const item of cards(result.items)) {
-        expect(seen.has(item.mangaId)).to.equal(false);
-        seen.add(item.mangaId);
-      }
-      cursor = result.metadata;
+      expect(data.posts).to.have.length(PAGE_SIZE);
+      expect(cards(result.items)).to.deep.equal(expectedCards(data.posts));
+      pages.push(result.items.map((item) => item.mangaId));
+      cursor = result.metadata as Parameters<typeof extension.getSearchResults>[1];
+      expect(cursor?.page).to.equal(page + 1);
     }
-    logger.log("latestContinuations", { pages: [2, 3], unique: seen.size });
+    expect(pages[1]).not.to.deep.equal(pages[0]);
+    logger.log("latestChipContinuations", { pages: [1, 2], counts: pages.map((items) => items.length) });
   });
 
   const verifyReader = async (source: SourceManga, chapters: Chapter[], reader: ChapterDetails, evidence: TestLogger, responses = probe.responses): Promise<ReaderProof> => {

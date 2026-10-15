@@ -17,7 +17,6 @@ import { HOME_PAGE_SIZE, homeHTML, parseHome, type HomePost } from "./home";
 const DISCOVER_SECTIONS: DiscoverSection[] = [
   { id: "featured", title: "Featured", type: DiscoverSectionType.prominentCarousel },
   { id: "popular-today", title: "Popular Today", type: DiscoverSectionType.prominentCarousel },
-  { id: "latest-releases", title: "Latest Releases", type: DiscoverSectionType.simpleCarousel },
   { id: "release-filters", title: "Browse releases", type: DiscoverSectionType.genres },
   { id: "collections", title: "Collections", type: DiscoverSectionType.genres },
   { id: "most-popular", title: "Most Popular", type: DiscoverSectionType.simpleCarousel },
