@@ -97,7 +97,7 @@ export async function runTests(logger: TestLogger) {
     expect((await ManhwaNex.getDiscoverSectionItems(SECTIONS[0])).metadata).to.equal(undefined);
   });
   suite.test("categories: exact linked native archives, bounded lazy requests, distinct titles and terminal pagination", async () => {
-    const categories = parseHomeCategories(home), homeIds = new Set(ids([...parseCatalog(home, "popular").items, ...parseCatalog(home, "latest").items]));
+    const categories = parseHomeCategories(home);
     for (const exclude of [true, false]) {
       await settings.setExcludeNSFW(exclude); probe.requests.length = 0; probe.responses.clear();
       const sections = await ManhwaNex.getDiscoverSections();
@@ -105,7 +105,7 @@ export async function runTests(logger: TestLogger) {
       for (const category of categories) {
         const section = sections.find((entry) => entry.id === category.id)!;
         let cursor: Parameters<typeof ManhwaNex.getDiscoverSectionItems>[1], url = category.url, pages = 0;
-        const seen: string[] = [], combined: string[] = [];
+        const seen: string[] = [], combined: string[] = [], expectedCombined: string[] = [];
         do {
           const count = probe.requests.length;
           const result = await ManhwaNex.getDiscoverSectionItems(section, cursor);
@@ -139,7 +139,7 @@ export async function runTests(logger: TestLogger) {
             expect(isAllowed(data)).to.equal(true);
             expect(data.genres.some((genre) => `genre:${genre.id}` === section.id)).to.equal(true);
           }
-          seen.push(...ids(raw.items)); combined.push(...ids(result.items)); pages++;
+          seen.push(...ids(raw.items)); combined.push(...ids(result.items)); expectedCombined.push(...expected); pages++;
           const warmCount = probe.requests.length;
           expect(ids((await ManhwaNex.getDiscoverSectionItems(section, cursor)).items)).to.deep.equal(ids(result.items));
           expect(probe.requests).to.have.length(warmCount);
@@ -147,7 +147,7 @@ export async function runTests(logger: TestLogger) {
           expect(pages).to.be.at.most(20);
         } while (cursor);
         expect(new Set(combined).size).to.equal(combined.length);
-        expect(combined.some((id) => !homeIds.has(id)), `${section.title} adds titles beyond home`).to.equal(true);
+        expect(combined, `${section.title} retains every eligible archive title in native order`).to.deep.equal(expectedCombined);
       }
     }
     await settings.reset();
