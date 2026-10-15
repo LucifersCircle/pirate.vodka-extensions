@@ -228,10 +228,11 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
   async getChapters(sourceManga: SourceManga) {
     const saved = this.saved();
     // Do not trust old library metadata: re-check the current content setting.
-    const current = await this.getMangaDetails(sourceManga.mangaId);
+    await this.getMangaDetails(sourceManga.mangaId);
     const chapters = parseChapters(
       await fetchText(`${seriesUrl(sourceManga.mangaId)}ajax/chapters/`, ""),
-      current,
+      // Paperback requires the exact SourceManga instance supplied by the app.
+      sourceManga,
       new Date(),
     );
     this.ensureCurrent(saved);

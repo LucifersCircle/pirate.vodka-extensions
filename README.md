@@ -175,8 +175,11 @@ bypassed.
 
 Mangasushi's maintained live suite also checks native continuation, strict NSFW
 handling, exact metadata, decimal chapter labels, complete asynchronous chapter
-lists, multiple readers and settings/cache transitions. Returned cover/page URLs
-are checked for structure; the automated suite does not download image bytes.
+lists, multiple readers and settings/cache transitions. Chapter lists must retain
+the exact SourceManga object supplied by Paperback, including when loading saved
+titles with cold caches. Reader tests fetch the first and last images of sampled
+safe and decimal chapters and verify successful responses, image MIME types and
+image signatures. This does not replace testing the physical iOS app.
 
 Use the included FlareSolverr test image. Set `FLARESOLVERR_URL` to connect to
 another instance of that image; the default is `http://127.0.0.1:8191`.
