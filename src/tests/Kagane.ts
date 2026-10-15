@@ -1,6 +1,7 @@
 import {
   PaperbackInterceptor,
   type Chapter,
+  type ChapterDetails,
   type Request,
   type Response,
   type SourceManga,
@@ -30,6 +31,54 @@ class Probe extends PaperbackInterceptor {
       this.captures.set(request.url, [response, data]);
     return data;
   }
+}
+
+// Use only the already-resolved native reader URLs. No new manifest or metadata
+// request, no Range, and no signed URL in diagnostics or returned evidence.
+export async function assertKaganeReaderImageBytes(sourceManga: SourceManga, chapter: Chapter, reader: ChapterDetails) {
+  expect(chapter.sourceManga === sourceManga, "original native chapter reference").to.equal(true);
+  expect(reader.id === chapter.chapterId && reader.mangaId === sourceManga.mangaId, "native reader identity").to.equal(true);
+  if (!("pages" in reader) || !Array.isArray(reader.pages) || !reader.pages.length)
+    throw new Error("Kagane native reader has no image pages");
+  const pages = reader.pages;
+  const evidence: Array<{ page: number; bytes: number; format: string; contentLength?: number }> = [];
+  for (const url of new Set([pages[0], pages[pages.length - 1]])) {
+    const page = pages.indexOf(url) + 1, label = `Kagane reader page ${page}`;
+    expect(typeof url === "string" && url.startsWith("https://"), `${label} native URL`).to.equal(true);
+    let pair: [Response, ArrayBuffer];
+    try { pair = await Application.scheduleRequest({ url, method: "GET" }); }
+    catch { throw new Error(`${label} image request failed`); }
+    const [response, data] = pair;
+    expect(response.status === 200, `${label} HTTP status`).to.equal(true);
+    const header = (name: string) => Object.entries(response.headers).find(([key]) => key.toLowerCase() === name)?.[1]?.trim();
+    expect(/^image\//i.test(header("content-type") ?? ""), `${label} image MIME`).to.equal(true);
+    const bytes = new Uint8Array(data), magic = String.fromCharCode(...bytes.slice(0, 16));
+    expect(bytes.length, `${label} complete body bytes`).to.be.greaterThan(1024);
+    const length = header("content-length"), encoding = header("content-encoding")?.toLowerCase();
+    const identity = !encoding || encoding === "identity";
+    const contentLength = length !== undefined && /^\d+$/.test(length) && Number.isSafeInteger(Number(length)) ? Number(length) : undefined;
+    if (length !== undefined) expect(contentLength !== undefined, `${label} valid Content-Length`).to.equal(true);
+    if (contentLength !== undefined && identity) expect(bytes.length, `${label} Content-Length completion`).to.equal(contentLength);
+    let format: string;
+    if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+      format = "JPEG";
+      expect(Array.from(bytes.slice(-2)), `${label} JPEG EOI`).to.deep.equal([0xff, 0xd9]);
+    } else if (magic.startsWith("\x89PNG\r\n\x1a\n")) {
+      format = "PNG";
+      expect(Array.from(bytes.slice(-12)), `${label} PNG final IEND`).to.deep.equal([0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130]);
+    } else if (magic.startsWith("GIF87a") || magic.startsWith("GIF89a")) {
+      format = "GIF";
+      expect(bytes[bytes.length - 1], `${label} GIF trailer`).to.equal(0x3b);
+    } else if (magic.startsWith("RIFF") && magic.slice(8, 12) === "WEBP") {
+      format = "WebP";
+      expect(new DataView(data).getUint32(4, true) + 8, `${label} WebP complete file`).to.equal(bytes.length);
+    } else if ((bytes[0] === 0xff && bytes[1] === 0x0a) || magic.startsWith("\0\0\0\x0cJXL \r\n\x87\n") || /^....ftypavi[fs]/s.test(magic)) {
+      format = /^....ftypavi[fs]/s.test(magic) ? "AVIF" : "JPEG XL";
+      expect(identity && contentLength !== undefined, `${label} complete transfer evidence`).to.equal(true);
+    } else throw new Error(`${label} unsupported image signature`);
+    evidence.push({ page, bytes: bytes.length, format, ...(contentLength !== undefined ? { contentLength } : {}) });
+  }
+  return evidence;
 }
 
 // Actual taxonomy/search response seeds, replayed only at the native request edge.
@@ -205,6 +254,13 @@ export async function runTests(logger: TestLogger) {
   const probe = new Probe("kagane-language-probe");
   probe.registerInterceptor();
   registerDefaultTests(suite, Kagane as typeof Kagane & KaganeImplementation, sourceInfo);
+  suite.test("Reader: original native chapter and complete first/last source-issued image bytes", async () => {
+    const manga = suite.state["MangaProviding.getMangaDetails"] as SourceManga | undefined;
+    const chapters = suite.state["ChapterProviding.getChapters"] as Chapter[] | undefined;
+    const reader = suite.state["ChapterProviding.getChapterDetails"] as ChapterDetails | undefined;
+    if (!manga || !chapters?.[0] || !reader) throw new Error("No successful native Kagane reader sample");
+    logger.log("readerImageEvidence", await assertKaganeReaderImageBytes(manga, chapters[0], reader));
+  });
   suite.test("Unknown malformed and stale tags fail before search; valid native payloads remain exact", async () => {
     await (Kagane as typeof Kagane & KaganeImplementation).getSearchFilters();
     const tags = probe.captures.get(`${API_URL}/api/v2/tags/list`);
