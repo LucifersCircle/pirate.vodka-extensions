@@ -265,7 +265,8 @@ export const parseDetails = (html: string, mangaId: string): SourceManga => {
   const alternative = field(/^Alternative$/i),
     release = field(/^Release$/i),
     type = field(/^Type$/i);
-  const rating = Number($(".post-total-rating .score").first().text());
+  const ratingText = clean($(".post-total-rating .score").first().text()),
+    rating = /^\d+(?:\.\d+)?$/.test(ratingText) ? Number(ratingText) : NaN;
   return {
     mangaId,
     mangaInfo: {
@@ -289,7 +290,7 @@ export const parseDetails = (html: string, mangaId: string): SourceManga => {
         ...(release ? { Released: release } : {}),
         ...(type ? { Type: type } : {}),
       },
-      ...(Number.isFinite(rating) && rating > 0 && rating <= 5 ? { rating } : {}),
+      ...(Number.isFinite(rating) && rating > 0 && rating <= 5 ? { rating: rating / 5 } : {}),
       shareUrl: seriesUrl(mangaId),
     },
   };

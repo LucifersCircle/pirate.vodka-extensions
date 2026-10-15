@@ -9,7 +9,7 @@ import { ManhwaNex } from "../ManhwaNex/main.js";
 import { ManhwaNexSearchForm, ManhwaNexSettingsForm, preferences } from "../ManhwaNex/forms.js";
 import { BASE_URL, GENRES, SECTIONS, SORTS, STATUSES, type CatalogItem } from "../ManhwaNex/models.js";
 import { fetchText, searchUrl, ManhwaNexInterceptor } from "../ManhwaNex/network.js";
-import { chapterTitle, emptyMetadata, imageUrl, isAllowed, parseCatalog, parseChapters, parseGenreOptions, parseHomeCategories, parseReader, seriesUrl, taxonomyId, validateCatalogUrl } from "../ManhwaNex/parsers.js";
+import { chapterTitle, emptyMetadata, imageUrl, isAllowed, parseCatalog, parseChapters, parseDetails, parseGenreOptions, parseHomeCategories, parseReader, seriesUrl, taxonomyId, validateCatalogUrl } from "../ManhwaNex/parsers.js";
 import { TestSuite } from "./suite.js";
 
 class RequestProbe extends PaperbackInterceptor {
@@ -437,6 +437,47 @@ export async function runTests(logger: TestLogger) {
     expect(sample.mangaInfo.tagGroups?.[0].tags).not.to.be.empty;
     expect(sample.mangaInfo.contentRating).to.equal(ContentRating.MATURE);
     expect(sample.mangaInfo.shareUrl).to.equal(seriesUrl(SAMPLE));
+  });
+  suite.test("details: reported title normalizes the native five-point rating", async () => {
+    await settings.setExcludeNSFW(true);
+    const id = "high-level-martial-arts-my-cells-can-evolve-infinitely", url = seriesUrl(id);
+    probe.responses.delete(url);
+    const details = await ManhwaNex.getMangaDetails(id), $ = cheerio.load(probe.responses.get(url)!);
+    const score = $(".post-total-rating .score");
+    expect(score).to.have.length(1);
+    const rawRating = Number(score.text().trim());
+    expect(rawRating).to.be.greaterThan(0).and.at.most(5);
+    expect(Number($("[property=bestRating]").first().text())).to.equal(5);
+    expect(Number($("[property=ratingValue]").first().text())).to.equal(rawRating);
+    expect(details.mangaId).to.equal(id);
+    expect(details.mangaInfo.primaryTitle).to.equal("High-Level Martial Arts: My Cells Can Evolve Infinitely");
+    expect(details.mangaInfo.rating).to.equal(rawRating / 5).and.within(0, 1);
+  });
+  suite.test("details: fresh live rating boundaries omit unrated and malformed scores", async () => {
+    const id = "high-level-martial-arts-my-cells-can-evolve-infinitely", url = seriesUrl(id);
+    await ManhwaNex.getMangaDetails(id);
+    const html = probe.responses.get(url);
+    expect(html).to.be.a("string").and.not.to.be.empty;
+    const original = parseDetails(html!, id);
+    const cases: [string | undefined, number | undefined][] = [
+      ["5", 1], ["4.5", 0.9], ["0.5", 0.1], [" 4.5 ", 0.9],
+      ["0", undefined], ["", undefined], ["  ", undefined], [undefined, undefined],
+      ["unrated", undefined], ["NaN", undefined], ["Infinity", undefined],
+      ["-1", undefined], ["5.1", undefined], ["0x4", undefined],
+      ["4e0", undefined], ["4/5", undefined], ["5 points", undefined],
+    ];
+    const requests = probe.requests.length;
+    for (const [text, expected] of cases) {
+      const $ = cheerio.load(html!), score = $(".post-total-rating .score");
+      expect(score).to.have.length(1);
+      if (text === undefined) score.remove(); else score.text(text);
+      const details = parseDetails($.html(), id);
+      expect(details.mangaId).to.equal(id);
+      expect({ ...details.mangaInfo, rating: undefined }).to.deep.equal({ ...original.mangaInfo, rating: undefined });
+      expect(details.mangaInfo.rating, String(text)).to.equal(expected);
+      expect(Object.hasOwn(details.mangaInfo, "rating"), String(text)).to.equal(expected !== undefined);
+    }
+    expect(probe.requests).to.have.length(requests);
   });
   suite.test("chapters: complete public AJAX list, exact persisted reference and volume zero", async () => {
     const stored = JSON.parse(JSON.stringify(sample)) as SourceManga;
