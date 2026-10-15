@@ -56,7 +56,6 @@ import {
   readDropdownFilter,
   readMultiselectFilter,
   readHomeSectionSort,
-  readInputFilter,
 } from "./parsers";
 
 export class SearchProvider {
@@ -227,9 +226,29 @@ async function addTagFilter(
   body: Record<string, unknown>,
   filters: SearchFilterValue[],
 ): Promise<void> {
+  const tagSelections = filters.filter((filter) => filter.id === "tags");
+  const textSelections = filters.filter((filter) => filter.id === "tags_text");
+  const matching = filters.filter((filter) => filter.id === "tags_match_all");
+  const selection = tagSelections[0]?.value;
+  const text = textSelections[0]?.value;
+  if (
+    tagSelections.length > 1 ||
+    textSelections.length > 1 ||
+    matching.length > 1 ||
+    (tagSelections.length > 0 &&
+      (!selection ||
+        typeof selection !== "object" ||
+        Array.isArray(selection) ||
+        Object.entries(selection).some(
+          ([id, state]) => !id.trim() || (state !== "included" && state !== "excluded"),
+        ))) ||
+    (textSelections.length > 0 && typeof text !== "string") ||
+    (matching.length > 0 && !["", "true", "false"].includes(matching[0].value as string))
+  )
+    throw new Error("Invalid Kagane tag filter. Refresh tag choices or remove this filter.");
   const selectedIncluded = readMultiselectFilter(filters, "tags");
   const selectedExcluded = readMultiselectFilter(filters, "tags", "excluded");
-  const typed = parseTagInput(readInputFilter(filters, "tags_text"));
+  const typed = parseTagInput(typeof text === "string" ? text : "");
   const customHiddenNames = getCustomHiddenTags();
   const selectedCategories = new Set(getHiddenTagCategories());
   const categoryIds = HIDDEN_TAG_CATEGORIES.filter((category) =>
@@ -249,17 +268,18 @@ async function addTagFilter(
 
   const entries = await getKaganeTagEntries();
   const tagIndex = buildTagNameIndex(entries);
-  const validIds = new Set(entries.map((entry) => entry.id));
+  // Validate built-in exclusions too, without changing their existing alias semantics.
+  resolveSelectedTagValues(categoryIds, tagIndex, entries);
   const included = [
     ...resolveSelectedTagValues(selectedIncluded, tagIndex, entries),
     ...resolveTagNames(typed.included, tagIndex),
-  ].filter((id) => validIds.has(id));
+  ];
   const excluded = [
     ...resolveSelectedTagValues(selectedExcluded, tagIndex, entries),
     ...resolveTagNames(typed.excluded, tagIndex),
     ...resolveTagNames(customHiddenNames, tagIndex),
     ...categoryIds,
-  ].filter((id) => validIds.has(id));
+  ];
 
   if (included.length > 0 || excluded.length > 0) {
     body.tags = buildCompoundFilter(

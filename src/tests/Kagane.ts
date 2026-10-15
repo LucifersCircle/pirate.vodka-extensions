@@ -11,6 +11,9 @@ import { TestSuite, registerDefaultTests } from "./suite.js";
 import { Kagane, type KaganeImplementation } from "../Kagane/main.js";
 import sourceInfo from "../Kagane/pbconfig.js";
 import { API_URL, CONTENT_LANGUAGES_KEY } from "../Kagane/implementations/shared/models.js";
+import type { TagDto } from "../Kagane/implementations/shared/models.js";
+import type { SearchFilterValue } from "@paperback/types/lib/compat/0.8";
+import { CUSTOM_HIDDEN_TAGS_KEY } from "../Kagane/implementations/shared/tag-options.js";
 
 type Capture = [Response, ArrayBuffer];
 class Probe extends PaperbackInterceptor {
@@ -23,9 +26,71 @@ class Probe extends PaperbackInterceptor {
     response: Response,
     data: ArrayBuffer,
   ): Promise<ArrayBuffer> {
-    if (request.url.startsWith(`${API_URL}/api/v2/series/`) && response.status === 200)
+    if (request.url.startsWith(`${API_URL}/api/v2/`) && response.status === 200)
       this.captures.set(request.url, [response, data]);
     return data;
+  }
+}
+
+// Actual taxonomy/search response seeds, replayed only at the native request edge.
+export async function assertKaganeTagFilters(tags: TagDto[], capture: Capture) {
+  const source = Kagane as typeof Kagane & KaganeImplementation;
+  const tag = tags.find((entry) => /^[A-Za-z][A-Za-z ]+$/.test(entry.tag_name));
+  if (!tag) throw new Error("No actual Kagane tag seed");
+  const nameIds = tags.filter((entry) => entry.tag_name.trim().toLowerCase() === tag.tag_name.trim().toLowerCase()).map((entry) => entry.id);
+  const schedule = Application.scheduleRequest;
+  const saved = Application.getState(CUSTOM_HIDDEN_TAGS_KEY);
+  Application.setState([], CUSTOM_HIDDEN_TAGS_KEY);
+  const bodies: Array<Record<string, { values: string[]; exclude?: string[] }>> = [];
+  Application.scheduleRequest = async (request) => {
+    if (!request.url.includes("/api/v2/search/series")) return schedule(request);
+    if (typeof request.body !== "string") throw new Error("Kagane search body must be JSON text");
+    bodies.push(JSON.parse(request.body));
+    const raw = JSON.parse(Application.arrayBufferToUTF8String(capture[1]));
+    return [capture[0], new TextEncoder().encode(JSON.stringify({ ...raw, last: true })).buffer as ArrayBuffer];
+  };
+  const search = (metadata: unknown) => source.getSearchResults({ title: "", metadata: metadata as SearchFilterValue[] });
+  try {
+    for (const metadata of [
+      [{ id: "tags_text", value: "__kagane_unknown_filter__" }],
+      [{ id: "tags_text", value: "-__kagane_unknown_filter__" }],
+      [{ id: "tags_text", value: `${tag.id}, __kagane_unknown_filter__` }],
+      [{ id: "tags_text", value: "-" }], [{ id: "tags_text", value: {} }],
+      [{ id: "tags", value: { __stale_tag__: "included" } }],
+      [{ id: "tags", value: { __stale_tag__: "excluded" } }],
+      [{ id: "tags", value: null }], [{ id: "tags", value: [] }],
+      [{ id: "tags", value: { [tag.id]: "unknown" } }],
+      [{ id: "tags_match_all", value: "unknown" }],
+    ]) {
+      const before = bodies.length;
+      let error: unknown;
+      try { await search(metadata); } catch (caught) { error = caught; }
+      expect(String(error)).to.match(/(?:Unknown|Invalid) Kagane tag/);
+      expect(bodies.length).to.equal(before);
+    }
+    for (const [metadata, values, exclude] of [
+      [[{ id: "tags_text", value: tag.id }], [tag.id], undefined],
+      [[{ id: "tags_text", value: `-${tag.id}` }], [], [tag.id]],
+      [[{ id: "tags", value: { [tag.id]: "included" } }], nameIds, undefined],
+      [[{ id: "tags_text", value: tag.tag_name.toUpperCase() }], nameIds, undefined],
+    ] as const) {
+      await search(metadata);
+      expect(bodies.at(-1)?.tags.values).to.deep.equal(values);
+      expect(bodies.at(-1)?.tags.exclude).to.deep.equal(exclude);
+    }
+    for (const metadata of [undefined, [], [{ id: "tags", value: {} }], [{ id: "tags_text", value: " , , " }]]) {
+      await search(metadata);
+      expect(bodies.at(-1)?.tags).to.equal(undefined);
+    }
+    Application.setState(["__stale_saved_tag__"], CUSTOM_HIDDEN_TAGS_KEY);
+    const before = bodies.length;
+    let error: unknown;
+    try { await search([]); } catch (caught) { error = caught; }
+    expect(String(error)).to.match(/Unknown Kagane tag/);
+    expect(bodies.length).to.equal(before);
+  } finally {
+    Application.scheduleRequest = schedule;
+    Application.setState(saved, CUSTOM_HIDDEN_TAGS_KEY);
   }
 }
 
@@ -140,6 +205,13 @@ export async function runTests(logger: TestLogger) {
   const probe = new Probe("kagane-language-probe");
   probe.registerInterceptor();
   registerDefaultTests(suite, Kagane as typeof Kagane & KaganeImplementation, sourceInfo);
+  suite.test("Unknown malformed and stale tags fail before search; valid native payloads remain exact", async () => {
+    await (Kagane as typeof Kagane & KaganeImplementation).getSearchFilters();
+    const tags = probe.captures.get(`${API_URL}/api/v2/tags/list`);
+    const search = [...probe.captures].find(([url]) => url.includes("/api/v2/search/series"))?.[1];
+    if (!tags || !search) throw new Error("No actual Kagane taxonomy/search response seeds");
+    await assertKaganeTagFilters(JSON.parse(Application.arrayBufferToUTF8String(tags[1])), search);
+  });
   suite.test(
     "Current live series translation and unknown language preserve native chapter identity",
     async () => {
