@@ -10,8 +10,8 @@ body:
   - type: input
     id: app-version
     attributes:
-      label: App and version
-      placeholder: "Paperback or Mana, including the app version"
+      label: App version
+      placeholder: "Enter the installed Paperback version"
     validations:
       required: true
   - type: input
