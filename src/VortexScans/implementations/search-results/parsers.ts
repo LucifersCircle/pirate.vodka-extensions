@@ -1,5 +1,5 @@
 import type { SearchResultItem } from "@paperback/types";
-import { ContentRating } from "@paperback/types";
+import { contentAllowed, contentRating, observeContent, sourceNames } from "../shared/content";
 import type { SearchFilter, SearchFilterValue } from "@paperback/types/lib/compat/0.8";
 import {
   HOME_SECTION_METADATA_ID,
@@ -109,8 +109,17 @@ export function buildSearchFilters(
 }
 
 export function parseSearchResults(data: VortexQueryResponse): SearchResultItem[] {
+  (data.posts ?? []).forEach((post) =>
+    observeContent(buildMangaId(post.id, post.slug), sourceNames(post)),
+  );
   return (data.posts ?? [])
-    .filter((post) => post.postTitle && post.postTitle.trim().length > 0 && !post.isNovel)
+    .filter(
+      (post) =>
+        post.postTitle &&
+        post.postTitle.trim().length > 0 &&
+        !post.isNovel &&
+        contentAllowed(buildMangaId(post.id, post.slug)),
+    )
     .map((post) => {
       const mangaId = buildMangaId(post.id, post.slug);
       const latestChapter = post.chapters?.[0];
@@ -120,7 +129,7 @@ export function parseSearchResults(data: VortexQueryResponse): SearchResultItem[
         title: Application.decodeHTMLEntities(post.postTitle),
         imageUrl: post.featuredImage || "",
         subtitle: `${latestChapter?.number ?? post._count?.chapters ?? 0} Chapters`,
-        contentRating: ContentRating.EVERYONE,
+        contentRating: contentRating(mangaId),
       };
     });
 }
@@ -128,14 +137,18 @@ export function parseSearchResults(data: VortexQueryResponse): SearchResultItem[
 export function parseCollectionSearchResults(
   data: VortexCollectionDetailResponse,
 ): SearchResultItem[] {
+  (data.collection?.works ?? []).forEach(({ post }) =>
+    observeContent(buildMangaId(post.id, post.slug), sourceNames(post)),
+  );
   return [...(data.collection?.works ?? [])]
+    .filter(({ post }) => contentAllowed(buildMangaId(post.id, post.slug)))
     .sort((left, right) => left.position - right.position)
     .map(({ post }) => ({
       mangaId: buildMangaId(post.id, post.slug),
       title: Application.decodeHTMLEntities(post.postTitle),
       imageUrl: post.featuredImage || "",
       subtitle: formatSeriesType(post.seriesType),
-      contentRating: ContentRating.EVERYONE,
+      contentRating: contentRating(buildMangaId(post.id, post.slug)),
     }));
 }
 

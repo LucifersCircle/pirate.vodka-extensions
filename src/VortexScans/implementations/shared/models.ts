@@ -91,7 +91,8 @@ export interface VortexCollectionsResponse {
 export interface VortexCollectionWork {
   id: number;
   position: number;
-  post: Pick<VortexPost, "id" | "slug" | "postTitle" | "featuredImage" | "seriesType">;
+  post: Pick<VortexPost, "id" | "slug" | "postTitle" | "featuredImage" | "seriesType"> &
+    Partial<Pick<VortexPost, "genres">>;
 }
 
 export interface VortexCollectionDetailResponse {
@@ -102,6 +103,7 @@ export interface VortexCollectionDetailResponse {
 
 export type Metadata = {
   page?: number;
+  contentContext?: string;
 };
 
 export const PAGE_SIZE = 48;

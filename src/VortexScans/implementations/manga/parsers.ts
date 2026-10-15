@@ -1,5 +1,5 @@
 import type { SourceManga } from "@paperback/types";
-import { ContentRating } from "@paperback/types";
+import { contentRating, sourceNames, observeContent } from "../shared/content";
 import * as cheerio from "cheerio";
 import { DOMAIN } from "../shared/models";
 import type { VortexPost } from "../shared/models";
@@ -10,7 +10,9 @@ interface VortexSeriesPageProps {
 }
 
 type VortexMangaDetailsPost = Pick<VortexPost, "id" | "slug" | "postTitle" | "featuredImage"> &
-  Partial<Pick<VortexPost, "postContent" | "alternativeTitles" | "seriesStatus" | "genres">>;
+  Partial<Pick<VortexPost, "postContent" | "alternativeTitles" | "seriesStatus" | "genres">> & {
+    homeRatingNames?: string[];
+  };
 
 interface VortexMangaPageFallback {
   id: string;
@@ -47,6 +49,7 @@ export function parseMangaDetails(
   post: VortexMangaDetailsPost,
   mangaId = buildMangaId(post.id, post.slug),
 ): SourceManga {
+  observeContent(mangaId, sourceNames(post));
   const synopsis = Application.decodeHTMLEntities(
     (post.postContent ?? "")
       .replace(/<br\s*\/?>/gi, "\n")
@@ -70,7 +73,7 @@ export function parseMangaDetails(
       thumbnailUrl: post.featuredImage || "",
       synopsis,
       status: post.seriesStatus ?? "UNKNOWN",
-      contentRating: ContentRating.EVERYONE,
+      contentRating: contentRating(mangaId),
 
       tagGroups:
         post.genres && post.genres.length > 0
@@ -78,10 +81,14 @@ export function parseMangaDetails(
               {
                 id: "genres",
                 title: "Genres",
-                tags: post.genres.map((g) => ({
-                  id: g.id.toString(),
-                  title: g.name,
-                })),
+                tags: post.genres
+                  .filter(
+                    (g) => Number.isSafeInteger(g.id) && g.id > 0 && typeof g.name === "string",
+                  )
+                  .map((g) => ({
+                    id: g.id.toString(),
+                    title: g.name,
+                  })),
               },
             ]
           : [],
@@ -133,6 +140,9 @@ function parseServerRenderedMangaPage(
     alternativeTitles,
     featuredImage: imageUrl,
     seriesStatus: readDefinitionValue($, "Status") || "UNKNOWN",
+    homeRatingNames: $('[itemprop="genre"]')
+      .map((_, element) => $(element).text().trim())
+      .get(),
     genres: $('[itemprop="genre"]')
       .map((_, element) => {
         const link = $(element);
