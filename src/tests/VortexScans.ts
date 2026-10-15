@@ -91,6 +91,22 @@ const isQuery = (request: Request): boolean => {
   return url.origin + url.pathname === `${DOMAIN_API}/query`;
 };
 
+const isSeriesRoute = (input: string, slug: string, chapter?: string): boolean => {
+  if (!input.startsWith(`${DOMAIN}/`)) return false;
+  const url = new globalThis.URL(input);
+  // Source-generated routes have this canonical authority. Inspect raw components
+  // before URL normalizes dot directories, controls or backslashes.
+  const rawPath = input.slice(DOMAIN.length).split(/[?#]/)[0];
+  const segments = rawPath.split("/"), expected = chapter === undefined ? [slug] : [slug, chapter];
+  if (url.origin !== DOMAIN || url.username || url.password || segments.length !== expected.length + 2 || segments[0] !== "" || segments[1] !== "series") return false;
+  const safe = (part: string) => part !== "." && part !== ".." && !Array.from(part).some((char) => char === "/" || char === "\\" || char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
+  try { return expected.every((part, index) => {
+    const decoded = decodeURIComponent(segments[index + 2]);
+    return safe(part) && safe(decoded) && decoded === part;
+  }); }
+  catch { return false; }
+};
+
 // Independent public API oracle for the unchanged multi-layout HTML reader.
 // Numeric chapter IDs come only from the same native chapter-list response.
 type ReaderIdentity = { id?: number; slug: string; number: number; postId: number; postSlug: string };
@@ -260,10 +276,7 @@ export async function runTests(logger: TestLogger) {
     logger.log("latestContinuations", { pages: [2, 3], unique: seen.size });
   });
 
-  suite.test("original reader: native source references, complete pages and first/last image bytes", async () => {
-    const source = suite.state["MangaProviding.getMangaDetails"] as SourceManga;
-    const chapters = suite.state["ChapterProviding.getChapters"] as Chapter[];
-    const reader = suite.state["ChapterProviding.getChapterDetails"] as ChapterDetails;
+  const verifyReader = async (source: SourceManga, chapters: Chapter[], reader: ChapterDetails, evidence: TestLogger, responses = probe.responses): Promise<void> => {
     expect(chapters).not.to.be.empty;
     for (const chapter of chapters) expect(chapter.sourceManga).to.equal(source);
     expect(reader.mangaId).to.equal(source.mangaId);
@@ -271,10 +284,10 @@ export async function runTests(logger: TestLogger) {
     if (!("pages" in reader)) throw new Error("Expected manga pages");
     const slug = source.mangaInfo.additionalInfo?.slug;
     expect(source.mangaInfo.shareUrl).to.equal(`${DOMAIN}/series/${slug}`);
-    const response = probe.responses.find(({ request }) => request.url.endsWith(`/series/${slug}/${chapters[0].chapterId}`));
+    const response = responses.find(({ request }) => isSeriesRoute(request.url, slug!, chapters[0].chapterId));
     expect(response).not.to.equal(undefined);
     const $ = cheerio.load(response!.body);
-    logger.log("readerInput", {
+    evidence.log("readerInput", {
       mangaId: source.mangaId, chapterId: chapters[0].chapterId, chapNum: chapters[0].chapNum,
       readerPath: new globalThis.URL(response!.request.url).pathname, nativePages: reader.pages.length,
       layout: { seoImages: $('section[aria-label*="comic pages"] img[src]').length,
@@ -283,7 +296,7 @@ export async function runTests(logger: TestLogger) {
     });
     const postId = Number(source.mangaId.split(/[:/|]/)[0]);
     expect(Number.isSafeInteger(postId) && postId > 0).to.equal(true);
-    const listResponse = probe.responses.find(({ request }) => {
+    const listResponse = responses.find(({ request }) => {
       const url = new globalThis.URL(request.url);
       return url.origin + url.pathname === `${DOMAIN_API}/chapters` && url.searchParams.get("postId") === String(postId);
     });
@@ -295,7 +308,7 @@ export async function runTests(logger: TestLogger) {
     assertPublicChapter(selected[0], identity);
     identity.id = selected[0].id;
     expect(raw.post.chapters.filter((chapter) => chapter.id === identity.id), "unique source chapter ID").to.have.length(1);
-    logger.log("readerOracleInput", { ...identity, publicListAccess: true, oracleRequests: 1 });
+    evidence.log("readerOracleInput", { ...identity, publicListAccess: true, oracleRequests: 1 });
     const [oracleResponse, oracleBody] = await Application.scheduleRequest({
       url: `${DOMAIN_API}/chapter?chapterId=${identity.id}`, method: "GET",
     });
@@ -303,7 +316,7 @@ export async function runTests(logger: TestLogger) {
     const oracle = JSON.parse(Application.arrayBufferToUTF8String(oracleBody)) as { chapter: OracleChapter };
     assertPublicChapter(oracle.chapter, identity, true);
     const pages = orderedOraclePages(oracle.chapter);
-    logger.log("readerOracle", { chapterId: oracle.chapter.id, postId: oracle.chapter.mangaPostId,
+    evidence.log("readerOracle", { chapterId: oracle.chapter.id, postId: oracle.chapter.mangaPostId,
       chapterStatus: oracle.chapter.chapterStatus, publicAccess: true, sourcePages: pages.length,
       firstPagePath: new globalThis.URL(pages[0]).pathname, lastPagePath: new globalThis.URL(pages.at(-1)!).pathname });
     expect(reader.pages, "HTML reader equals independent ordered public API manifest").to.deep.equal(pages);
@@ -352,7 +365,76 @@ export async function runTests(logger: TestLogger) {
       } else throw new Error(`Unsupported image response format: ${url}`);
       imageEvidence.push({ page: reader.pages.indexOf(url) + 1, bytes: bytes.length, contentLength, contentEncoding, format });
     }
-    logger.log("readerEvidence", { mangaId: source.mangaId, chapterId: reader.id, completePages: reader.pages.length, images: imageEvidence });
+    evidence.log("readerEvidence", { mangaId: source.mangaId, chapterId: reader.id, completePages: reader.pages.length, images: imageEvidence });
+  };
+
+  suite.test("original reader: native source references, complete pages and first/last image bytes", async () => {
+    await verifyReader(
+      suite.state["MangaProviding.getMangaDetails"] as SourceManga,
+      suite.state["ChapterProviding.getChapters"] as Chapter[],
+      suite.state["ChapterProviding.getChapterDetails"] as ChapterDetails,
+      logger,
+    );
+  });
+
+  suite.test("regression584: saved apostrophe ID details, original chapters/reader and complete image bytes", async () => {
+    const mangaId = "584:the-sword-emperor%27s-path-to-namgung";
+    const slug = "the-sword-emperor's-path-to-namgung";
+    const evidence = logger.scope("regression584");
+    const settings = await extension.getSettingsForm(), previous = contentSettings().excludeNSFW;
+    await settings.setExcludeNSFW(true);
+    evidence.log("input", { mangaId, slug, path: `/series/${slug}`, stage: "details", exclusion: true });
+    const schedule = Application.scheduleRequest, responseStart = probe.responses.length;
+    const transport = evidence.list("transport");
+    let sequence = 0;
+    const errorIdentity = (value: unknown) => {
+      const error = value as { name?: unknown; code?: unknown } | undefined;
+      const safe = (part: unknown) => typeof part === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(part) ? part : undefined;
+      return { name: safe(error?.name), code: typeof error?.code === "number" && Number.isSafeInteger(error.code) ? error.code : safe(error?.code) };
+    };
+    const record: typeof Application.scheduleRequest = async (request) => {
+      const url = new globalThis.URL(request.url), entry = transport.scope(String(++sequence));
+      entry.log("path", url.pathname);
+      try {
+        const result = await schedule(request);
+        entry.log("status", result[0].status);
+        if (url.origin === DOMAIN && url.pathname.startsWith("/series/")) {
+          const $ = cheerio.load(Application.arrayBufferToUTF8String(result[1]));
+          entry.log("layout", { h1: $("h1").length, namedH1: $('h1[itemprop="name"]').length,
+            schemaImages: $('[itemprop="image"][src]').length, astroIslands: $("astro-island").length,
+            indexedImages: $("[data-image-index]").length, seoImages: $('section[aria-label*="comic pages"] img[src]').length });
+        }
+        return result;
+      } catch (error) {
+        entry.log("error", { ...errorIdentity(error), cause: errorIdentity((error as { cause?: unknown })?.cause) });
+        throw error;
+      }
+    };
+    try {
+      Application.scheduleRequest = record;
+      if (Application.scheduleRequest !== record) throw new Error("Native runtime cannot record584 request diagnostics");
+      const before = probe.requests.length;
+      const source = await extension.getMangaDetails(mangaId);
+      evidence.log("details", { mangaId: source.mangaId, title: source.mangaInfo.primaryTitle,
+        paths: probe.requests.slice(before).map(({ url }) => new globalThis.URL(url).pathname) });
+      expect(source.mangaId).to.equal(mangaId);
+      expect(source.mangaInfo.primaryTitle).to.equal("The Sword Emperor’s Path to Namgung");
+      expect(source.mangaInfo.additionalInfo?.slug).to.equal(slug);
+      expect(source.mangaInfo.shareUrl).to.equal(`${DOMAIN}/series/${slug}`);
+      expect(source.mangaInfo.contentRating).to.equal(ContentRating.MATURE);
+      expect(probe.requests.slice(before).some(({ url }) => isSeriesRoute(url, slug)), "exact native apostrophe details route")
+        .to.equal(true);
+      const chapters = await extension.getChapters(source);
+      expect(chapters).not.to.be.empty;
+      const chapter = chapters[0];
+      expect(chapter.sourceManga).to.equal(source);
+      evidence.log("chapter", { chapterId: chapter.chapterId, chapNum: chapter.chapNum, stage: "original HTML reader" });
+      const reader = await extension.getChapterDetails(chapter);
+      await verifyReader(source, chapters, reader, evidence, probe.responses.slice(responseStart));
+    } finally {
+      Application.scheduleRequest = schedule;
+      await settings.setExcludeNSFW(previous);
+    }
   });
 
   suite.test("content: persisted default-on exclusion keeps unknown Mature and excludes actual warning names", async () => {
