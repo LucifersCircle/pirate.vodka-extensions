@@ -87,13 +87,24 @@ export class SearchProvider {
     metadata?: { page?: number },
     sortingOption?: SortingOption,
   ): Promise<PagedResults<SearchResultItem>> {
+    const homeSectionSort = readHomeSectionSort(query.metadata);
+    const selectedSort = homeSectionSort ?? sortingOption?.id ?? "relevance";
+    if (/^series_name(?:,|$)/.test(selectedSort)) {
+      throw new Error("Kagane no longer supports By Name sorting. Choose another sort.");
+    }
+    if (
+      /^books_count(?:,|$)/.test(selectedSort) &&
+      !/^books_count(?:,(?:asc|desc))?$/.test(selectedSort)
+    ) {
+      throw new Error("Invalid Kagane Books Count sorting direction. Choose another sort.");
+    }
+    // Migrate saved Books Count choices without changing their selected direction.
+    const sort = selectedSort.replace(/^books_count(?=,(?:asc|desc)$|$)/, "current_books");
     const page = metadata?.page ?? 1;
     const contentRatings = getContentRatingSettings();
     const kaganeMetadata = await getKaganeMetadata();
-    const homeSectionSort = readHomeSectionSort(query.metadata);
     const bodyQuery = homeSectionSort ? { title: "", metadata: [] } : query;
     const searchBody = await buildSearchBody(bodyQuery, kaganeMetadata, contentRatings);
-    const sort = homeSectionSort ?? sortingOption?.id ?? "relevance";
 
     const url = new URL(API_URL)
       .addPathComponent("api")

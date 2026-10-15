@@ -5,13 +5,14 @@ import {
   type Request,
   type Response,
   type SourceManga,
+  type SearchResultItem,
   type TestLogger,
 } from "@paperback/types";
 import { expect } from "chai";
 import { TestSuite, registerDefaultTests } from "./suite.js";
 import { Kagane, type KaganeImplementation } from "../Kagane/main.js";
 import sourceInfo from "../Kagane/pbconfig.js";
-import { API_URL, CONTENT_LANGUAGES_KEY } from "../Kagane/implementations/shared/models.js";
+import { API_URL, CONTENT_LANGUAGES_KEY, HOME_SECTION_METADATA_ID } from "../Kagane/implementations/shared/models.js";
 import type { TagDto } from "../Kagane/implementations/shared/models.js";
 import type { SearchFilterValue } from "@paperback/types/lib/compat/0.8";
 import { CUSTOM_HIDDEN_TAGS_KEY } from "../Kagane/implementations/shared/tag-options.js";
@@ -143,6 +144,86 @@ export async function assertKaganeTagFilters(tags: TagDto[], capture: Capture) {
   }
 }
 
+// Inspect the same actual response used by the native Books Count request, not a
+// second probe or a locally sorted copy. Equal counts are valid server ties.
+export function assertKaganeBooksCountOrder(capture: Capture, items: SearchResultItem[]) {
+  const raw = JSON.parse(Application.arrayBufferToUTF8String(capture[1])) as {
+    content: Array<{ series_id: string; current_books: number }>;
+  };
+  expect(raw.content.length, "native Books Count sample").to.be.greaterThan(1);
+  const counts = raw.content.map((book) => book.current_books);
+  expect(counts.every((count) => Number.isFinite(count) && count >= 0), "native book counts").to.equal(true);
+  expect(counts.every((count, index) => index === 0 || counts[index - 1] >= count), "Books Count descending, allowing ties").to.equal(true);
+  const ids = new Set(items.map((item) => item.mangaId));
+  expect(items.map((item) => item.mangaId), "native filtered result order").to.deep.equal(
+    raw.content.filter((book) => ids.has(book.series_id)).map((book) => book.series_id),
+  );
+}
+
+// Replay this run's unchanged actual search response at the native request edge.
+// Saved-sort checks add no provider calls and never change search filters/body.
+export async function assertKaganeSavedSorts(capture: Capture) {
+  const source = Kagane as typeof Kagane & KaganeImplementation;
+  const options = await source.getSortingOptions();
+  expect(options.map((option) => option.id)).to.deep.equal([
+    "relevance", "total_views,desc", "avg_views,desc", "avg_views_today,desc",
+    "avg_views_week,desc", "avg_views_month,desc", "updated_at,desc",
+    "current_books,desc", "created_at,desc",
+  ]);
+  const schedule = Application.scheduleRequest;
+  const requests: Request[] = [];
+  Application.scheduleRequest = async (request) => {
+    requests.push(request);
+    if (!request.url.includes("/api/v2/search/series")) throw new Error("Unexpected request during saved-sort replay");
+    return capture;
+  };
+  const query = { title: "", metadata: [{ id: "formats", value: { Manga: "included" as const } }] };
+  try {
+    const baseline = await source.getSearchResults(query, { page: 2 });
+    const body = requests[0].body;
+    for (const [id, expected] of [
+      [undefined, null], ...options.map((option) => [option.id, option.id === "relevance" ? null : option.id]),
+      ["books_count", "current_books"], ["books_count,asc", "current_books,asc"],
+      ["books_count,desc", "current_books,desc"],
+    ] as Array<[string | undefined, string | null]>) {
+      const result = await source.getSearchResults(query, { page: 2 }, id === undefined ? undefined : { id, label: "Saved sort" });
+      const request = requests.at(-1)!;
+      const url = new globalThis.URL(request.url);
+      expect(url.searchParams.get("sort")).to.equal(expected);
+      expect(url.searchParams.get("page")).to.equal("1");
+      expect(request.body).to.equal(body);
+      expect(result).to.deep.equal(baseline);
+    }
+    for (const id of ["series_name", "series_name,asc", "series_name,desc", "series_name,invalid"]) {
+      const before = requests.length;
+      let error: unknown;
+      try { await source.getSearchResults({ ...query, metadata: [...query.metadata, { id: "tags_text", value: "__unresolved_sort_tag__" }] }, undefined, { id, label: "Saved By Name" }); }
+      catch (caught) { error = caught; }
+      expect(String(error)).to.match(/no longer supports By Name.*Choose another sort/);
+      expect(requests.length, "name sort rejected before any request").to.equal(before);
+    }
+    for (const id of ["books_count,invalid", "books_count,asc,desc", "books_count,"]) {
+      const before = requests.length;
+      let error: unknown;
+      try { await source.getSearchResults(query, undefined, { id, label: "Malformed saved sort" }); }
+      catch (caught) { error = caught; }
+      expect(String(error)).to.match(/Invalid Kagane Books Count.*Choose another sort/);
+      expect(requests.length, "invalid direction rejected before any request").to.equal(before);
+    }
+    for (const sort of ["avg_views_today,desc", "avg_views_week,desc", "avg_views_month,desc", "avg_views,desc"]) {
+      const homeQuery = { title: "ignored", metadata: [{ id: HOME_SECTION_METADATA_ID, value: sort }] };
+      expect(await source.getSortingOptions(homeQuery)).to.deep.equal([]);
+      await source.getSearchResults(homeQuery, undefined, { id: "series_name,desc", label: "Ignored in home context" });
+      expect(new globalThis.URL(requests.at(-1)!.url).searchParams.get("sort")).to.equal(sort);
+      const homeBody = JSON.parse(requests.at(-1)!.body as string);
+      expect(homeBody.title).to.equal(undefined);
+      expect(homeBody.format).to.equal(undefined);
+    }
+  } finally {
+    Application.scheduleRequest = schedule;
+  }
+}
+
 // Replay only this run's actual target responses, changing language metadata only.
 // This checks the built-native boundary, not provider language or iOS UI coverage.
 export async function assertKaganeLanguageEntryPoints(
@@ -260,6 +341,16 @@ export async function runTests(logger: TestLogger) {
     const reader = suite.state["ChapterProviding.getChapterDetails"] as ChapterDetails | undefined;
     if (!manga || !chapters?.[0] || !reader) throw new Error("No successful native Kagane reader sample");
     logger.log("readerImageEvidence", await assertKaganeReaderImageBytes(manga, chapters[0], reader));
+  });
+  suite.test("Books Count uses descending native counts; saved sorts preserve filters and reject stale names", async () => {
+    const source = Kagane as typeof Kagane & KaganeImplementation;
+    const option = (await source.getSortingOptions()).find((entry) => entry.label === "Books Count");
+    if (!option) throw new Error("Missing Books Count sorting option");
+    const result = await source.getSearchResults({ title: "" }, undefined, option);
+    const capture = [...probe.captures].find(([url]) => new globalThis.URL(url).searchParams.get("sort") === "current_books,desc")?.[1];
+    if (!capture) throw new Error("No current Books Count native search response");
+    assertKaganeBooksCountOrder(capture, result.items);
+    await assertKaganeSavedSorts(capture);
   });
   suite.test("Unknown malformed and stale tags fail before search; valid native payloads remain exact", async () => {
     await (Kagane as typeof Kagane & KaganeImplementation).getSearchFilters();
