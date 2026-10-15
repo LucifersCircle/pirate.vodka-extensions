@@ -154,6 +154,23 @@ function orderedOraclePages(chapter: OracleChapter): string[] {
   return images.map((image) => image.url);
 }
 
+// The existing HTML reader collapses literal pathname slash runs. Do not extend
+// that equivalence to URL decoding, another origin, query/fragment or dot paths.
+function comparableReaderPage(input: string): string {
+  if (Array.from(input).some((char) => char === "\\" || char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127))
+    throw new Error("Ambiguous reader image URL");
+  const parts = /^(https:\/\/[^/?#]+)(\/[^?#]*)?(\?[^#]*)?(#.*)?$/s.exec(input);
+  if (!parts) throw new Error("Expected an absolute HTTPS reader image URL");
+  const path = parts[2] ?? "";
+  if (/%(?:2f|5c|0[0-9a-f]|1[0-9a-f]|7f)/i.test(path) || path.split("/").some((part) => {
+    const dots = part.replace(/%2e/gi, ".");
+    return dots === "." || dots === "..";
+  })) throw new Error("Ambiguous reader image pathname");
+  return parts[1] + path.replace(/\/{2,}/g, "/") + (parts[3] ?? "") + (parts[4] ?? "");
+}
+
+type ReaderProof = { mangaId: string; chapterId: string; completePages: number; literalSlashAliases: number; rawImageRequests: number };
+
 export async function runTests(logger: TestLogger) {
   const suite = new TestSuite("VortexScans tests", logger);
   const extension = VortexScans as typeof VortexScans & VortexScansImplementation;
@@ -276,7 +293,7 @@ export async function runTests(logger: TestLogger) {
     logger.log("latestContinuations", { pages: [2, 3], unique: seen.size });
   });
 
-  const verifyReader = async (source: SourceManga, chapters: Chapter[], reader: ChapterDetails, evidence: TestLogger, responses = probe.responses): Promise<void> => {
+  const verifyReader = async (source: SourceManga, chapters: Chapter[], reader: ChapterDetails, evidence: TestLogger, responses = probe.responses): Promise<ReaderProof> => {
     expect(chapters).not.to.be.empty;
     for (const chapter of chapters) expect(chapter.sourceManga).to.equal(source);
     expect(reader.mangaId).to.equal(source.mangaId);
@@ -316,12 +333,18 @@ export async function runTests(logger: TestLogger) {
     const oracle = JSON.parse(Application.arrayBufferToUTF8String(oracleBody)) as { chapter: OracleChapter };
     assertPublicChapter(oracle.chapter, identity, true);
     const pages = orderedOraclePages(oracle.chapter);
+    const comparablePages = pages.map(comparableReaderPage);
+    const literalSlashAliases = pages.filter((url, index) => url !== comparablePages[index]).length;
     evidence.log("readerOracle", { chapterId: oracle.chapter.id, postId: oracle.chapter.mangaPostId,
       chapterStatus: oracle.chapter.chapterStatus, publicAccess: true, sourcePages: pages.length,
-      firstPagePath: new globalThis.URL(pages[0]).pathname, lastPagePath: new globalThis.URL(pages.at(-1)!).pathname });
-    expect(reader.pages, "HTML reader equals independent ordered public API manifest").to.deep.equal(pages);
+      firstPagePath: new globalThis.URL(pages[0]).pathname, lastPagePath: new globalThis.URL(pages.at(-1)!).pathname,
+      literalSlashAliases });
+    expect(new Set(comparablePages).size, "no source pages collapse into duplicates").to.equal(pages.length);
+    expect(reader.pages.map(comparableReaderPage), "HTML reader equals independent ordered public API manifest; literal pathname slash runs only").to.deep.equal(comparablePages);
     expect(new Set(reader.pages).size).to.equal(reader.pages.length);
     const imageEvidence: { page: number; bytes: number; contentLength?: number; contentEncoding?: string; format: string }[] = [];
+    const pairs = evidence.list("readerRawImagePairs");
+    let rawImageRequests = 0;
     for (const url of new Set([reader.pages[0], reader.pages.at(-1)!])) {
       const [response, data] = await Application.scheduleRequest({ url, method: "GET" });
       expect(response.status, url).to.equal(200);
@@ -363,18 +386,57 @@ export async function runTests(logger: TestLogger) {
         }
         expect(offset, `AVIF complete file: ${url}`).to.equal(bytes.length);
       } else throw new Error(`Unsupported image response format: ${url}`);
+      const rawUrl = pages[reader.pages.indexOf(url)];
+      if (rawUrl !== url) {
+        // Both URLs are source-derived and already matched above. Fetch the exact
+        // raw API URL, never an alias manufactured from the normalized URL.
+        const [rawResponse, rawData] = await Application.scheduleRequest({ url: rawUrl, method: "GET" });
+        rawImageRequests++;
+        expect(rawResponse.status, rawUrl).to.equal(200);
+        expect(Object.entries(rawResponse.headers).find(([name]) => name.toLowerCase() === "content-type")?.[1], rawUrl).to.match(/^image\//i);
+        const rawBytes = new Uint8Array(rawData);
+        let firstMismatch = 0;
+        while (firstMismatch < bytes.length && firstMismatch < rawBytes.length && bytes[firstMismatch] === rawBytes[firstMismatch]) firstMismatch++;
+        if (firstMismatch === bytes.length && firstMismatch === rawBytes.length) firstMismatch = -1;
+        pairs.scope(String(rawImageRequests)).log("comparison", { page: reader.pages.indexOf(url) + 1,
+          rawPath: new globalThis.URL(rawUrl).pathname, nativePath: new globalThis.URL(url).pathname,
+          rawBytes: rawBytes.length, nativeBytes: bytes.length, firstMismatch });
+        expect(rawBytes.length, "raw published/native image body length").to.equal(bytes.length);
+        expect(firstMismatch, "raw published/native entire image body first mismatch (-1 means equal)").to.equal(-1);
+      }
       imageEvidence.push({ page: reader.pages.indexOf(url) + 1, bytes: bytes.length, contentLength, contentEncoding, format });
     }
-    evidence.log("readerEvidence", { mangaId: source.mangaId, chapterId: reader.id, completePages: reader.pages.length, images: imageEvidence });
+    const proof = { mangaId: source.mangaId, chapterId: reader.id, completePages: reader.pages.length, literalSlashAliases, rawImageRequests };
+    evidence.log("readerEvidence", { ...proof, images: imageEvidence });
+    return proof;
   };
 
   suite.test("original reader: native source references, complete pages and first/last image bytes", async () => {
-    await verifyReader(
+    const dynamic = await verifyReader(
       suite.state["MangaProviding.getMangaDetails"] as SourceManga,
       suite.state["ChapterProviding.getChapters"] as Chapter[],
       suite.state["ChapterProviding.getChapterDetails"] as ChapterDetails,
       logger,
     );
+    const mangaId = "403:so-did-someone-force-you-to-become-the-heavenly-demon";
+    const slug = "so-did-someone-force-you-to-become-the-heavenly-demon";
+    const evidence = logger.scope("regression403");
+    if (dynamic.mangaId === mangaId) {
+      evidence.log("proof", { ...dynamic, reusedDynamic: true });
+    } else {
+      const responseStart = probe.responses.length;
+      evidence.log("input", { mangaId, slug, path: `/series/${slug}` });
+      const source = await extension.getMangaDetails(mangaId);
+      expect(source.mangaId).to.equal(mangaId);
+      expect(source.mangaInfo.additionalInfo?.slug).to.equal(slug);
+      expect(source.mangaInfo.shareUrl).to.equal(`${DOMAIN}/series/${slug}`);
+      const chapters = await extension.getChapters(source);
+      expect(chapters).not.to.be.empty;
+      expect(chapters[0].sourceManga).to.equal(source);
+      const reader = await extension.getChapterDetails(chapters[0]);
+      const proof = await verifyReader(source, chapters, reader, evidence, probe.responses.slice(responseStart));
+      evidence.log("proof", { ...proof, reusedDynamic: false });
+    }
   });
 
   suite.test("regression584: saved apostrophe ID details, original chapters/reader and complete image bytes", async () => {
