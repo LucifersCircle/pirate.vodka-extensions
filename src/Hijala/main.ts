@@ -115,9 +115,12 @@ const loadCatalog = async <T extends { metadata?: unknown }>(
       item,
       id: (item as { mangaId?: unknown }).mangaId,
     }));
+    // chaptersCount can return its complete catalog despite perPage. A complete first
+    // response is terminal, so it never creates an oversized paginated cursor.
+    const completeFirstResponse = page === 1 && count === total;
     if (
       total > MAX_CATALOG_ITEMS ||
-      count > PAGE_SIZE ||
+      (count > PAGE_SIZE && !completeFirstResponse) ||
       count !== result.items.length ||
       !entries.every((entry) => catalogId(entry.id))
     )

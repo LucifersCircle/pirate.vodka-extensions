@@ -689,6 +689,107 @@ export async function runTests(logger: TestLogger) {
       }
     },
   );
+  suite.test(
+    "pagination: complete first responses are terminal while partial oversized responses fail",
+    async () => {
+      const ascending = new HijalaExtension(),
+        ascProbe = new Probe("Hijala.chapters-count-ascending");
+      let actual: ReturnType<typeof catalog> | undefined;
+      ascProbe.gate = async (request, data) => {
+        const url = new globalThis.URL(request.url);
+        if (
+          url.hostname === "api.en-hijala.com" &&
+          url.pathname === "/api/query" &&
+          url.searchParams.get("orderBy") === "chaptersCount"
+        ) {
+          expect(url.searchParams.get("orderDirection")).to.equal("asc");
+          actual = catalog(Application.arrayBufferToUTF8String(data));
+        }
+        return data;
+      };
+      ascProbe.registerInterceptor();
+      try {
+        const result = await ascending.getSearchResults(
+          { title: "", metadata: { direction: "asc" } },
+          undefined,
+          SORTS[4],
+        );
+        expect(actual).not.to.equal(undefined);
+        expect(result.items.map((item) => item.mangaId)).to.deep.equal(
+          actual!.posts
+            .map(searchItem)
+            .filter((item) => matchesPreferences(item, preferences()))
+            .map((item) => item.mangaId),
+        );
+        if (actual!.posts.length === actual!.totalCount)
+          expect(result.metadata).to.equal(undefined);
+        logger.log("chaptersCountAscending", {
+          raw: actual!.posts.length,
+          total: actual!.totalCount,
+          visible: result.items.length,
+          terminal: !result.metadata,
+        });
+      } finally {
+        ascProbe.unregisterInterceptor();
+      }
+      const posts = [...fullCatalog.values()];
+      expect(posts.length).to.be.greaterThan(21);
+      for (const mode of ["complete", "partial"]) {
+        const source = new HijalaExtension(),
+          probe = new Probe(`Hijala.complete-catalog-${mode}`);
+        probe.gate = async (request, data) => {
+          const url = new globalThis.URL(request.url);
+          if (url.hostname !== "api.en-hijala.com" || url.pathname !== "/api/query") return data;
+          const value = JSON.parse(Application.arrayBufferToUTF8String(data));
+          // Same verified complete-response shape, using only fresh real source identities.
+          value.posts = mode === "complete" ? posts : posts.slice(0, 21);
+          value.totalCount = posts.length;
+          return new TextEncoder().encode(JSON.stringify(value)).buffer as ArrayBuffer;
+        };
+        probe.registerInterceptor();
+        try {
+          if (mode === "partial")
+            await rejects(
+              () => source.getSearchResults({ title: "" }, undefined, SORTS[4]),
+              /invalid or oversized catalog.*refresh/i,
+            );
+          else {
+            const result = await source.getSearchResults({ title: "" }, undefined, SORTS[4]);
+            expect(result.metadata).to.equal(undefined);
+            expect(result.items.map((item) => item.mangaId)).to.deep.equal(
+              posts
+                .map(searchItem)
+                .filter((item) => matchesPreferences(item, preferences()))
+                .map((item) => item.mangaId),
+            );
+            expect(new Set(result.items.map((item) => item.mangaId)).size).to.equal(
+              result.items.length,
+            );
+            const count = probe.requests.length,
+              repeat = await source.getSearchResults({ title: "" }, undefined, SORTS[4]);
+            expect(repeat.items.map((item) => item.mangaId)).to.deep.equal(
+              result.items.map((item) => item.mangaId),
+            );
+            expect(repeat.metadata).to.equal(undefined);
+            expect(probe.requests.length).to.equal(count);
+            logger.log("completeCatalogResponse", {
+              raw: posts.length,
+              visible: result.items.length,
+              terminal: !result.metadata,
+              repeatedRequests: 0,
+            });
+          }
+          expect(
+            probe.requests.some((request) =>
+              new globalThis.URL(request.url).pathname.startsWith("/series/"),
+            ),
+          ).to.equal(false);
+        } finally {
+          probe.unregisterInterceptor();
+        }
+      }
+    },
+  );
   suite.test("search: every site sort, native advanced filters and true empty result", async () => {
     for (const sort of SORTS)
       expect((await Hijala.getSearchResults({ title: "" }, undefined, sort)).items).not.to.be.empty;
