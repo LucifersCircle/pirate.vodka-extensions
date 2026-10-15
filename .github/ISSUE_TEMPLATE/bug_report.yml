@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a problem with an extension or its repository.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check existing issues first. Include a public series or chapter link when the problem affects a specific title.
+        Issues and attachments are public. Remove passwords, cookies, access tokens, private account details, and token-bearing image URLs from screenshots and logs.
+  - type: input
+    id: app-version
+    attributes:
+      label: App and version
+      placeholder: "Paperback or Mana, including the app version"
+    validations:
+      required: true
+  - type: input
+    id: extension-version
+    attributes:
+      label: Extension and version
+      description: Use the installed extension version, or say repository-wide if no extension is affected.
+      placeholder: "Extension name, 0.0.1-alpha.1"
+    validations:
+      required: true
+  - type: textarea
+    id: affected-links
+    attributes:
+      label: Affected title or chapter links
+      description: Public source links only. Leave blank for a repository-wide issue.
+    validations:
+      required: false
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include relevant extension settings and whether the source website works in your browser.
+      placeholder: |
+        1. Open the extension...
+        2. Search for or open...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the exact error message, if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots or logs (optional)
+      description: Attach relevant, redacted screenshots or short logs. Do not include credentials, private details, or token-bearing URLs.
+    validations:
+      required: false
