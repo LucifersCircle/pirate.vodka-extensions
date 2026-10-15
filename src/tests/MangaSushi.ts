@@ -1,0 +1,323 @@
+/* eslint-disable no-unused-expressions */
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Copyright © 2026 Lucifers Circle */
+
+import { type Chapter, type SourceManga, type TestLogger } from "@paperback/types";
+import { expect } from "chai";
+import { MangaSushi } from "../MangaSushi/main.js";
+import { MangaSushiSearchForm, MangaSushiSettingsForm, preferences } from "../MangaSushi/forms.js";
+import {
+  BASE_URL,
+  BLOCKED_GENRES,
+  EDITORIAL_IDS,
+  SECTIONS,
+  SORTS,
+  STATUSES,
+} from "../MangaSushi/models.js";
+import { fetchNext, fetchText, searchUrl } from "../MangaSushi/network.js";
+import {
+  isAllowed,
+  parseCatalog,
+  parseGenreOptions,
+  parseReader,
+  seriesUrl,
+} from "../MangaSushi/parsers.js";
+import { TestSuite } from "./suite.js";
+
+const SAMPLE = "welcome-to-the-cheap-restaurant-of-outcasts";
+const rejects = async (operation: () => Promise<unknown>, pattern: RegExp) => {
+  let failure: unknown;
+  try {
+    await operation();
+  } catch (error) {
+    failure = error;
+  }
+  expect(String(failure)).to.match(pattern);
+};
+
+export async function runTests(logger: TestLogger) {
+  const saved = Application.getState("MangaSushi.preferences");
+  const suite = new TestSuite("MangaSushi tests", logger);
+  let safeSource: SourceManga;
+  let sample: SourceManga;
+  let sampleChapters: Chapter[];
+  let sourceSearch: ReturnType<typeof parseCatalog>;
+  let home = "";
+  const settings = new MangaSushiSettingsForm();
+  suite.test("initialisation", async () => {
+    Application.setState(undefined, "MangaSushi.preferences");
+    await MangaSushi.initialise();
+    expect(preferences().excludeNSFW).to.equal(true);
+  });
+  suite.test("getDiscoverSections: native section order", async () => {
+    expect((await MangaSushi.getDiscoverSections()).map((section) => section.title)).to.deep.equal([
+      "Popular Series",
+      "What's New",
+    ]);
+  });
+  suite.test("getSortingOptions: all seven site sorts", async () => {
+    expect(await MangaSushi.getSortingOptions()).to.deep.equal(SORTS);
+    const html = await fetchText(searchUrl({ title: "" }, true));
+    for (const sort of SORTS.filter((item) => item.id))
+      expect(html).to.include(`m_orderby=${sort.id}`);
+    sourceSearch = parseCatalog(html, "search", true);
+  });
+  suite.test("getSearchResults: native adult filter plus genre safety", async () => {
+    const result = await MangaSushi.getSearchResults({ title: "" });
+    expect(result.items).not.to.be.empty;
+    for (const item of result.items) {
+      expect(isAllowed(item.metadata)).to.equal(true);
+      expect(item.imageUrl).to.match(/^https:\/\//);
+      expect(item.metadata.genres.some((genre) => BLOCKED_GENRES.includes(genre.id))).to.equal(
+        false,
+      );
+    }
+    expect(result.items.map((item) => item.mangaId)).to.deep.equal(
+      sourceSearch.items.filter((item) => isAllowed(item.metadata)).map((item) => item.mangaId),
+    );
+    safeSource = await MangaSushi.getMangaDetails(result.items[0].mangaId);
+  });
+  suite.test("getSearchResults: displayed smart punctuation resolves by exact ID", async () => {
+    const quoted = sourceSearch.items.find((item) => /[‘’“”]/.test(item.title));
+    expect(quoted).not.to.equal(undefined);
+    const result = await MangaSushi.getSearchResults({ title: quoted!.title });
+    expect(result.items.some((item) => item.mangaId === quoted!.mangaId)).to.equal(true);
+  });
+  suite.test("getMangaDetails: full canonical metadata", async () => {
+    expect(safeSource.mangaInfo.primaryTitle).not.to.be.empty;
+    expect(safeSource.mangaInfo.synopsis).not.to.be.empty;
+    expect(safeSource.mangaInfo.author).to.be.a("string").and.not.be.empty;
+    expect(safeSource.mangaInfo.artist).to.be.a("string").and.not.be.empty;
+    expect(safeSource.mangaInfo.tagGroups?.[0].tags).not.to.be.empty;
+  });
+  suite.test("getMangaDetails: unknown classification is blocked by default", async () => {
+    await rejects(
+      () => MangaSushi.getMangaDetails(SAMPLE),
+      /hidden by NSFW exclusion|lacks reliable/,
+    );
+  });
+  suite.test("getChapters and reader: accessible with default exclusion", async () => {
+    const chapters = await MangaSushi.getChapters(safeSource);
+    expect(chapters.length).to.be.greaterThan(0);
+    const reader = await MangaSushi.getChapterDetails(chapters[0]);
+    if (!("pages" in reader)) throw new Error("Expected manga reader pages.");
+    expect(reader.pages.length).to.be.greaterThan(1);
+  });
+  suite.test("getSearchResults: every native sort executes", async () => {
+    for (const sort of SORTS) {
+      const result = await MangaSushi.getSearchResults({ title: "" }, undefined, sort);
+      expect(result.items.length).to.be.greaterThan(0);
+      for (const item of result.items) expect(isAllowed(item.metadata)).to.equal(true);
+    }
+  });
+  suite.test("getSearchResults: native continuation", async () => {
+    const first = await MangaSushi.getSearchResults({ title: "" });
+    expect(first.metadata).not.to.equal(undefined);
+    const second = await MangaSushi.getSearchResults({ title: "" }, first.metadata);
+    expect(second.items).not.to.be.empty;
+    expect(second.items.map((item) => item.mangaId)).not.to.deep.equal(
+      first.items.map((item) => item.mangaId),
+    );
+    for (const item of second.items) expect(isAllowed(item.metadata)).to.equal(true);
+  });
+  suite.test("getSearchResults: genuine empty query terminates", async () => {
+    const result = await MangaSushi.getSearchResults({ title: "qzxzqzxzznomatch887771" });
+    expect(result.items).to.deep.equal([]);
+    expect(result.metadata).to.equal(undefined);
+  });
+  suite.test("advanced search: actual taxonomy and native options", async () => {
+    const html = await fetchText(searchUrl({ title: "" }, true));
+    const genres = parseGenreOptions(html);
+    expect(genres.length).to.be.greaterThan(20);
+    expect(genres.some((genre) => genre.id === "action")).to.equal(true);
+    const form = new MangaSushiSearchForm({ title: "" }, genres);
+    await form.setGenres(["action", "fantasy"]);
+    await form.setCondition(["1"]);
+    await form.setAuthor("Yamata Nagato");
+    await form.setArtist("Abeno Chaco");
+    await form.setRelease("2026");
+    await form.setStatuses([STATUSES[0].id]);
+    await form.setAdult(["1"]);
+    await form.formDidSubmit();
+    const query = { title: "", metadata: form.getSearchQueryMetadata() };
+    const url = searchUrl(query, true);
+    for (const part of [
+      "genre%5B0%5D=action",
+      "genre%5B1%5D=fantasy",
+      "op=1",
+      "author=Yamata%20Nagato",
+      "artist=Abeno%20Chaco",
+      "release=2026",
+      "adult=0",
+      "status%5B0%5D=on-going",
+    ])
+      expect(url).to.include(part);
+    const result = await MangaSushi.getSearchResults(query);
+    expect(result.items).not.to.be.empty;
+    for (const item of result.items)
+      expect(item.metadata.genres.map((genre) => genre.id)).to.include.members([
+        "action",
+        "fantasy",
+      ]);
+    await form.reset();
+    expect(form.getSearchQueryMetadata()).to.include({
+      adult: "",
+      condition: "",
+      author: "",
+      artist: "",
+      release: "",
+    });
+  });
+  suite.test(
+    "getDiscoverSectionItems: cold-cache default exactly mirrors eligible site rows",
+    async () => {
+      const safeIds = new Set(
+        sourceSearch.items.filter((item) => isAllowed(item.metadata)).map((item) => item.mangaId),
+      );
+      let page = sourceSearch;
+      for (let index = 0; page.next && index < 20; index++) {
+        page = parseCatalog(await fetchNext(page.next), "search", true, page.next);
+        for (const item of page.items) if (isAllowed(item.metadata)) safeIds.add(item.mangaId);
+      }
+      expect(page.next).to.equal(undefined);
+      await settings.setExcludeNSFW(false);
+      await settings.setExcludeNSFW(true);
+      const homepage = await fetchText(`${BASE_URL}/`);
+      for (const section of SECTIONS) {
+        const native = parseCatalog(homepage, section.id === "popular" ? "popular" : "latest");
+        const expectedIds = native.items
+          .filter((item) => safeIds.has(item.mangaId))
+          .map((item) => item.mangaId);
+        const result = await MangaSushi.getDiscoverSectionItems(section);
+        expect(result.items.map((item) => ("mangaId" in item ? item.mangaId : ""))).to.deep.equal(
+          expectedIds,
+        );
+        for (const item of result.items)
+          expect(isAllowed(item.metadata as Parameters<typeof isAllowed>[0])).to.equal(true);
+        if (section.id === "popular") expect(result.metadata).to.equal(undefined);
+      }
+    },
+  );
+  suite.test("settings: explicit opt-out and finite Popular fidelity", async () => {
+    await settings.setExcludeNSFW(false);
+    expect(preferences().excludeNSFW).to.equal(false);
+    home = await fetchText(`${BASE_URL}/`);
+    const native = parseCatalog(home, "popular");
+    const result = await MangaSushi.getDiscoverSectionItems(SECTIONS[0]);
+    expect(result.items.map((item) => ("mangaId" in item ? item.mangaId : ""))).to.deep.equal(
+      native.items.map((item) => item.mangaId),
+    );
+    expect(result.metadata).to.equal(undefined);
+  });
+  suite.test("getDiscoverSectionItems: What's New native load more", async () => {
+    const first = await MangaSushi.getDiscoverSectionItems(SECTIONS[1]);
+    const native = parseCatalog(home, "latest");
+    expect(first.items.map((item) => ("mangaId" in item ? item.mangaId : ""))).to.deep.equal(
+      native.items.map((item) => item.mangaId),
+    );
+    expect(first.metadata).not.to.equal(undefined);
+    const second = await MangaSushi.getDiscoverSectionItems(SECTIONS[1], first.metadata);
+    const expected = parseCatalog(await fetchNext(native.next!), "latest", false, native.next);
+    expect(second.items.map((item) => ("mangaId" in item ? item.mangaId : ""))).to.deep.equal(
+      expected.items.map((item) => item.mangaId),
+    );
+    expect(second.items).not.to.be.empty;
+  });
+  suite.test("catalog: editorial posts are not manga even with exclusions off", async () => {
+    for (const id of EDITORIAL_IDS) {
+      const result = await MangaSushi.getSearchResults({ title: id.replace(/-/g, " ") });
+      expect(result.items.some((item) => item.mangaId === id)).to.equal(false);
+      await rejects(() => MangaSushi.getMangaDetails(id), /site announcement/);
+    }
+  });
+  suite.test("getMangaDetails: original title and alternatives", async () => {
+    sample = await MangaSushi.getMangaDetails(SAMPLE);
+    expect(sample.mangaId).to.equal(SAMPLE);
+    expect(sample.mangaInfo.primaryTitle).to.equal("Welcome to the Cheap Restaurant of Outcasts!");
+    expect(sample.mangaInfo.secondaryTitles).to.include("Tsuihousha Shokudou e Youkoso!");
+    expect(sample.mangaInfo.synopsis).not.to.be.empty;
+    expect(sample.mangaInfo.status).to.equal("OnGoing");
+  });
+  suite.test("getChapters: asynchronous full list and decimal labels", async () => {
+    sampleChapters = await MangaSushi.getChapters(sample);
+    expect(sampleChapters.length).to.be.greaterThan(60);
+    expect(new Set(sampleChapters.map((chapter) => chapter.chapterId)).size).to.equal(
+      sampleChapters.length,
+    );
+    const chapter = sampleChapters.find((item) => item.chapterId === "chapter-66-1");
+    expect(chapter?.chapNum).to.equal(66.1);
+    expect(chapter?.title).to.equal("Chapter 66.1");
+    expect(chapter?.publishDate?.toISOString().slice(0, 10)).to.equal("2026-10-08");
+    for (const item of sampleChapters)
+      expect(item.publishDate?.getTime()).to.be.a("number").and.not.to.be.NaN;
+  });
+  suite.test("getChapterDetails: exact ordered lazy pages", async () => {
+    const result = await MangaSushi.getChapterDetails(
+      sampleChapters.find((chapter) => chapter.chapterId === "chapter-66-1")!,
+    );
+    if (!("pages" in result)) throw new Error("Expected manga reader pages.");
+    expect(result.id).to.equal("chapter-66-1");
+    expect(result.mangaId).to.equal(SAMPLE);
+    expect(result.pages).to.have.length(12);
+    for (const [index, page] of result.pages.entries())
+      expect(page).to.match(new RegExp(`/${String(index).padStart(2, "0")}\\.jpg$`));
+  });
+  suite.test("reader: duplicate pages and page-order gaps fail closed", async () => {
+    const chapter = sampleChapters.find((item) => item.chapterId === "chapter-66-1")!;
+    const html = await fetchText(seriesUrl(SAMPLE, chapter.chapterId));
+    expect(() => parseReader(html.replace('id="image-1"', 'id="image-2"'), chapter)).to.throw(
+      /page order/,
+    );
+    expect(() => parseReader(html.replace("/01.jpg", "/00.jpg"), chapter)).to.throw(
+      /duplicate reader pages/,
+    );
+  });
+  suite.test("getChapterDetails: second chapter pages", async () => {
+    const chapter = sampleChapters.find((item) => item.chapterId !== "chapter-66-1")!;
+    const result = await MangaSushi.getChapterDetails(chapter);
+    if (!("pages" in result)) throw new Error("Expected manga reader pages.");
+    expect(result.pages.length).to.be.greaterThan(1);
+    expect(new Set(result.pages).size).to.equal(result.pages.length);
+    for (const page of result.pages) expect(page).to.match(/^https:\/\/\S+$/);
+  });
+  suite.test("settings: stale library and cached metadata cannot bypass exclusion", async () => {
+    await settings.setExcludeNSFW(true);
+    await rejects(
+      () => MangaSushi.getMangaDetails(SAMPLE),
+      /hidden by NSFW exclusion|lacks reliable/,
+    );
+    await rejects(() => MangaSushi.getChapters(sample), /hidden by NSFW exclusion|lacks reliable/);
+    await rejects(
+      () => MangaSushi.getChapterDetails(sampleChapters[0]),
+      /hidden by NSFW exclusion|lacks reliable/,
+    );
+  });
+  suite.test("settings: pending permissive response cannot survive exclusion switch", async () => {
+    await settings.setExcludeNSFW(false);
+    const pending = MangaSushi.getMangaDetails(SAMPLE);
+    await settings.setExcludeNSFW(true);
+    await rejects(() => pending, /settings changed/);
+    await rejects(
+      () => MangaSushi.getMangaDetails(SAMPLE),
+      /hidden by NSFW exclusion|lacks reliable/,
+    );
+  });
+  suite.test("getSearchResults: all-filtered native pages reach real end", async () => {
+    const result = await MangaSushi.getSearchResults({
+      title: "",
+      metadata: { genres: ["ecchi"] },
+    });
+    expect(result.items).to.deep.equal([]);
+    expect(result.metadata).to.equal(undefined);
+  });
+  suite.test("catalog: malformed response fails closed", async () => {
+    expect(() =>
+      parseCatalog("<html><title>Unexpected response</title></html>", "search", true),
+    ).to.throw();
+  });
+  try {
+    await suite.run();
+  } finally {
+    Application.setState(saved, "MangaSushi.preferences");
+  }
+}
