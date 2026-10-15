@@ -4,6 +4,7 @@
 - VortexScans
 - Kagane
 - Mangasushi
+- ManhwaNex
 
 ## Extension health
 
@@ -240,3 +241,24 @@ docker compose down
 ```
 
 [here]: https://read.pirate.vodka
+
+## ManhwaNex
+
+ManhwaNex uses the public website's Popular Series and Latest Updates sections,
+canonical releases, native search filters, and reader pages. Homepage metadata is
+fetched in one bounded batch, shared by both sections; it does not fetch details
+for every card.
+
+NSFW exclusion is on by default and applies to discovery, search, saved-title
+details, chapters, and reader entry. It requires the website's non-adult flag and
+verified genre metadata; unknown or conflicting classifications are hidden. The
+site has no verified granular age-rating taxonomy, so selective age ratings are
+not offered. Paperback's conservative Mature badge is not an all-ages guarantee.
+Website labels can be incomplete, and downloaded pages cannot be revoked.
+
+Search preserves the site's query behavior, including its limitations: long
+punctuated titles can return unrelated native matches, and some numeric author
+queries redirect to the homepage and report an error. Try a short title fragment
+or another author spelling. Alternative-title text is preserved without guessing
+translations or merging separate source entries. Only publicly listed chapters
+are returned, which may be a recent subset rather than every historical release.
