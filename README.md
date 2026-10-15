@@ -198,8 +198,10 @@ without one request per title. Exact punctuation-sensitive full-title searches u
 verified source-title fallbacks; ordinary partial searches are unchanged.
 
 Mangasushi's maintained live suite also checks native continuation, strict NSFW
-handling, exact metadata, decimal chapter labels, complete asynchronous chapter
-lists, multiple readers and settings/cache transitions. Chapter lists must retain
+handling, exact metadata, decimal chapter numbers, complete asynchronous chapter
+lists, multiple readers and settings/cache transitions. Paperback renders the chapter
+number itself, so redundant matching number prefixes are removed from chapter titles;
+real subtitles and special labels remain. Chapters without a reported volume use zero. Chapter lists must retain
 the exact SourceManga object supplied by Paperback, including when loading saved
 titles with cold caches. Valid underscore chapter IDs are retained, including the
 named Lonely Attack on the Different World chapter-list and reader regression.

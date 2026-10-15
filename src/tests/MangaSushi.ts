@@ -23,6 +23,7 @@ import {
 } from "../MangaSushi/models.js";
 import { fetchNext, fetchText, searchUrl } from "../MangaSushi/network.js";
 import {
+  chapterTitle,
   isAllowed,
   parseCatalog,
   parseGenreOptions,
@@ -212,10 +213,21 @@ export async function runTests(logger: TestLogger) {
     const chapters = await MangaSushi.getChapters(source);
     expect(chapters.length).to.be.greaterThan(330);
     for (const chapter of chapters) expect(chapter.sourceManga).to.equal(source);
+    expect(chapters.find((chapter) => chapter.chapterId === "chapter-335")).to.include({
+      chapNum: 335,
+      title: "",
+      volume: 0,
+    });
+    for (const [number, title] of [[213, "REUP"], [204, "Fixed"]] as const)
+      expect(chapters.find((chapter) => chapter.chapterId === `chapter-${number}`)).to.include({
+        chapNum: number,
+        title,
+      });
     for (const number of [143, 127]) {
       const chapter = chapters.find((item) => item.chapterId === `chapter-${number}_1`);
       expect(chapter, `Canonical chapter-${number}_1 must not be omitted`).not.to.equal(undefined);
       expect(chapter!.chapNum).to.equal(number);
+      expect(chapter!.title).to.equal("");
       const reader = await MangaSushi.getChapterDetails(chapter!);
       if (!("pages" in reader)) throw new Error("Expected manga reader pages.");
       expect(reader.id).to.equal(chapter!.chapterId);
@@ -223,6 +235,30 @@ export async function runTests(logger: TestLogger) {
       expect(reader.pages.length).to.be.greaterThan(1);
       await checkReaderImages(reader.pages);
     }
+    const titledSource = await MangaSushi.getMangaDetails(
+      "yondome-wa-iya-na-shizokusei-majutsushi",
+    );
+    const titledChapters = await MangaSushi.getChapters(titledSource);
+    for (const [id, chapNum, title] of [
+      ["chapter-21-taleas-weapon", 21, "Taleas Weapon"],
+      ["chapter-20-ghouls-versus-orcs", 20, "Ghouls Versus Orcs!"],
+      ["chapter-19-preparing-for-war", 19, "Preparing For War"],
+    ] as const)
+      expect(titledChapters.find((chapter) => chapter.chapterId === id)).to.include({
+        sourceManga: titledSource,
+        volume: 0,
+        chapNum,
+        title,
+      });
+    const titledChapter = titledChapters.find(
+      (chapter) => chapter.chapterId === "chapter-21-taleas-weapon",
+    )!;
+    const titledReader = await MangaSushi.getChapterDetails(titledChapter);
+    if (!("pages" in titledReader)) throw new Error("Expected manga reader pages.");
+    expect(titledReader.id).to.equal(titledChapter.chapterId);
+    expect(titledReader.mangaId).to.equal(titledSource.mangaId);
+    expect(titledReader.pages.length).to.be.greaterThan(1);
+    await checkReaderImages(titledReader.pages);
   });
   suite.test(
     "English titles: exact source aliases keep original titles, full alternatives and IDs",
@@ -627,7 +663,15 @@ export async function runTests(logger: TestLogger) {
     );
     const chapter = sampleChapters.find((item) => item.chapterId === "chapter-66-1");
     expect(chapter?.chapNum).to.equal(66.1);
-    expect(chapter?.title).to.equal("Chapter 66.1");
+    expect(chapter?.title).to.equal("");
+    // Exercise conservative boundaries alongside the real decimal-row flow.
+    expect(chapterTitle("Chapter 66.1", chapter!.chapNum)).to.equal("");
+    expect(chapterTitle("66.1", chapter!.chapNum)).to.equal("");
+    expect(chapterTitle("Chapter 66.1", 66)).to.equal("Chapter 66.1");
+    expect(chapterTitle("Chapter 66.1-66.2", chapter!.chapNum)).to.equal("Chapter 66.1-66.2");
+    expect(chapterTitle("Chapter 66.1 to 66.2", chapter!.chapNum)).to.equal("Chapter 66.1 to 66.2");
+    expect(chapterTitle("Chapter 66.1.5", chapter!.chapNum)).to.equal("Chapter 66.1.5");
+    expect(chapterTitle("Special Chapter 66.1", chapter!.chapNum)).to.equal("Special Chapter 66.1");
     expect(chapter?.publishDate?.toISOString().slice(0, 10)).to.equal("2026-10-08");
     const probe = new DiscoveryProbe("MangaSushi.reported-volume-test");
     probe.gate = async (request, data) =>
@@ -636,18 +680,37 @@ export async function runTests(logger: TestLogger) {
             Application.arrayBufferToUTF8String(data).replace(
               "Chapter 66.1",
               "Volume 2 Chapter 66.1",
-            ),
+            )
+              .replace("Chapter 65", "Chapter 65: A New Beginning")
+              .replace("Chapter 64", "Ch. 64 – Extra")
+              .replace("Chapter 63", "Special Chapter 63")
+              .replace("Chapter 62", "Chapter 62-63")
+              .replace("Chapter 61", "Special"),
           ).buffer as ArrayBuffer)
         : data;
     probe.registerInterceptor();
     try {
-      // Mutate only the explicit label of a fresh live row, not its identity or
-      // chapter number: a source-reported volume must not become the fallback 0.
+      // Change only labels in a fresh live response, keeping canonical URLs.
+      // Subtitles, special labels and reported volumes use the public source path.
       const reported = await MangaSushi.getChapters(sample);
       expect(reported.find((item) => item.chapterId === "chapter-66-1")).to.include({
         volume: 2,
         chapNum: 66.1,
+        title: "Volume 2 Chapter 66.1",
       });
+      for (const [id, chapNum, title] of [
+        ["chapter-65", 65, "A New Beginning"],
+        ["chapter-64", 64, "Extra"],
+        ["chapter-63", 63, "Special Chapter 63"],
+        ["chapter-62", 62, "Chapter 62-63"],
+        ["chapter-61", 0, "Special"],
+      ] as const)
+        expect(reported.find((item) => item.chapterId === id)).to.include({
+          sourceManga: sample,
+          volume: 0,
+          chapNum,
+          title,
+        });
     } finally {
       probe.unregisterInterceptor();
     }
