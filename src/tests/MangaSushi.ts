@@ -3,7 +3,9 @@
 /* Copyright © 2026 Lucifers Circle */
 
 import {
+  DiscoverSectionType,
   PaperbackInterceptor,
+  type GenresCarouselItem,
   type Chapter,
   type Request,
   type Response,
@@ -11,15 +13,23 @@ import {
   type TestLogger,
 } from "@paperback/types";
 import { expect } from "chai";
+import * as cheerio from "cheerio";
 import { MangaSushi } from "../MangaSushi/main.js";
-import { MangaSushiSearchForm, MangaSushiSettingsForm, preferences } from "../MangaSushi/forms.js";
+import {
+  MangaSushiSearchForm,
+  MangaSushiSettingsForm,
+  preferences,
+  readGenreRoute,
+} from "../MangaSushi/forms.js";
 import {
   BASE_URL,
   BLOCKED_GENRES,
   EDITORIAL_IDS,
+  GENRE_ROUTE_KEY,
   SECTIONS,
   SORTS,
   STATUSES,
+  type Cursor,
 } from "../MangaSushi/models.js";
 import { fetchNext, fetchText, searchUrl } from "../MangaSushi/network.js";
 import {
@@ -27,6 +37,7 @@ import {
   isAllowed,
   parseCatalog,
   parseGenreOptions,
+  parseHomeGenres,
   parseReader,
   seriesUrl,
 } from "../MangaSushi/parsers.js";
@@ -37,6 +48,7 @@ import { TestSuite } from "./suite.js";
 // No saved HTML, alternate parser, or replacement source implementation is used.
 class DiscoveryProbe extends PaperbackInterceptor {
   readonly requests: Request[] = [];
+  readonly responses: { request: Request; html: string }[] = [];
   gate?: (request: Request, data: ArrayBuffer) => Promise<ArrayBuffer>;
   override async interceptRequest(request: Request): Promise<Request> {
     if (request.url.startsWith(`${BASE_URL}/`)) this.requests.push(request);
@@ -47,7 +59,10 @@ class DiscoveryProbe extends PaperbackInterceptor {
     _response: Response,
     data: ArrayBuffer,
   ): Promise<ArrayBuffer> {
-    return this.gate ? this.gate(request, data) : data;
+    const result = this.gate ? await this.gate(request, data) : data;
+    if (request.url.startsWith(`${BASE_URL}/`))
+      this.responses.push({ request, html: Application.arrayBufferToUTF8String(result) });
+    return result;
   }
 }
 
@@ -60,6 +75,24 @@ const requestParameters = (body: string): Map<string, string> =>
     }),
   );
 
+const boundedIds = (body: string): string[] =>
+  [...requestParameters(body)]
+    .filter(([key]) => /^vars\[post_name__in\]\[\d+\]$/.test(key))
+    .map(([, value]) => value);
+
+const FEED_SECTIONS = SECTIONS.filter((section) => section.id !== "genres");
+const GENRE_IDS =
+  "action adventure romance comedy drama school-life shounen adult anime comic cooking doujinshi ecchi fantasy gender-bender harem historical horror josei live-action manga manhua manhwa martial-arts mature mecha mystery one-shot psychological sci-fi seinen shoujo shoujo-ai shounen-ai slice-of-life smut soft-yaoi soft-yuri sports tragedy supernatural webtoon yaoi yuri".split(
+    " ",
+  );
+const ids = (items: object[]): string[] =>
+  items.map((item) => {
+    if (!("mangaId" in item) || typeof item.mangaId !== "string")
+      throw new Error("Expected a native manga card, not a genre chip.");
+    return item.mangaId;
+  });
+const encodeHTML = (html: string): ArrayBuffer =>
+  new TextEncoder().encode(html).buffer as ArrayBuffer;
 const SAMPLE = "welcome-to-the-cheap-restaurant-of-outcasts";
 const rejects = async (operation: () => Promise<unknown>, pattern: RegExp) => {
   let failure: unknown;
@@ -110,7 +143,9 @@ export async function runTests(logger: TestLogger) {
     expect((await MangaSushi.getDiscoverSections()).map((section) => section.title)).to.deep.equal([
       "Popular Series",
       "What's New",
+      "Genres",
     ]);
+    expect((await MangaSushi.getDiscoverSections())[2].type).to.equal(DiscoverSectionType.genres);
   });
   suite.test("getSortingOptions: all seven site sorts", async () => {
     expect(await MangaSushi.getSortingOptions()).to.deep.equal(SORTS);
@@ -218,7 +253,10 @@ export async function runTests(logger: TestLogger) {
       title: "",
       volume: 0,
     });
-    for (const [number, title] of [[213, "REUP"], [204, "Fixed"]] as const)
+    for (const [number, title] of [
+      [213, "REUP"],
+      [204, "Fixed"],
+    ] as const)
       expect(chapters.find((chapter) => chapter.chapterId === `chapter-${number}`)).to.include({
         chapNum: number,
         title,
@@ -438,6 +476,894 @@ export async function runTests(logger: TestLogger) {
     });
   });
   suite.test(
+    "genres: exact native menu chips, safe defaults and lazy private routing",
+    async () => {
+      const genreSection = SECTIONS.find((section) => section.id === "genres")!;
+      const probe = new DiscoveryProbe("MangaSushi.genre-navigation-test");
+      await settings.setExcludeNSFW(true);
+      probe.registerInterceptor();
+      try {
+        const result = await MangaSushi.getDiscoverSectionItems(genreSection);
+        expect(probe.requests.map((request) => request.url)).to.deep.equal([`${BASE_URL}/`]);
+        const native = parseHomeGenres(probe.responses[0].html);
+        expect(native.map((genre) => genre.id)).to.deep.equal(GENRE_IDS);
+        expect(native).to.have.length(44);
+        const chips = result.items as GenresCarouselItem[];
+        const eligible = native.filter((genre) => !BLOCKED_GENRES.includes(genre.id));
+        expect(chips).to.have.length(40);
+        expect(chips.map((chip) => chip.name)).to.deep.equal(eligible.map((genre) => genre.title));
+        expect(result.metadata).to.equal(undefined);
+        for (const [index, chip] of chips.entries()) {
+          expect(chip.type).to.equal("genresCarouselItem");
+          expect(chip).not.to.have.property("mangaId");
+          expect(chip).not.to.have.property("imageUrl");
+          expect(chip.searchQuery.metadata).to.deep.equal({
+            [GENRE_ROUTE_KEY]: eligible[index].id,
+          });
+          expect(readGenreRoute(chip.searchQuery.metadata)).to.equal(eligible[index].id);
+        }
+        await MangaSushi.getDiscoverSectionItems(genreSection);
+        expect(probe.requests, "Warm chips never fetch any archive").to.have.length(1);
+        const query = chips[0].searchQuery;
+        const form = await MangaSushi.getAdvancedSearchForm(query);
+        expect(form.getSections()).to.deep.equal([]);
+        await form.formDidSubmit();
+        expect(form.getSearchQueryMetadata()).to.deep.equal(query.metadata);
+        expect(await MangaSushi.getSortingOptions(query)).to.deep.equal([]);
+        expect(probe.requests, "Route-specific form and sorting are local").to.have.length(1);
+        expect(readGenreRoute()).to.equal(undefined);
+        for (const value of [
+          null,
+          1,
+          [],
+          ["action", "action"],
+          {},
+          "",
+          "Action",
+          " action",
+          "../action",
+          "action/",
+          "action?x=1",
+          "https://mangasushi.org/manga-genre/action/",
+          "https://other.invalid/manga-genre/action/",
+        ]) {
+          const metadata = { [GENRE_ROUTE_KEY]: value };
+          expect(() => readGenreRoute(metadata)).to.throw(/genre|archive|route/i);
+          await rejects(
+            () => MangaSushi.getSearchResults({ title: "Action", metadata }),
+            /genre|archive|route/i,
+          );
+        }
+        for (const metadata of [
+          { [GENRE_ROUTE_KEY]: "action", genres: ["romance"] },
+          { [GENRE_ROUTE_KEY]: "action", extra: "action" },
+        ]) {
+          expect(() => readGenreRoute(metadata)).to.throw(/genre|archive|route/i);
+          await rejects(
+            () => MangaSushi.getSearchResults({ title: "Action", metadata }),
+            /genre|archive|route/i,
+          );
+        }
+        for (const id of ["adult", "ecchi", "mature", "smut"])
+          await rejects(
+            () => MangaSushi.getSearchResults({ title: id, metadata: { [GENRE_ROUTE_KEY]: id } }),
+            /unavailable|genre|archive/i,
+          );
+        await rejects(
+          () =>
+            MangaSushi.getSearchResults({
+              title: "Cartoon",
+              metadata: { [GENRE_ROUTE_KEY]: "cartoon" },
+            }),
+          /genre|archive|route/i,
+        );
+        expect(probe.requests, "Invalid route metadata must not make requests").to.have.length(1);
+        await settings.setExcludeNSFW(false);
+        const unrestricted = await MangaSushi.getDiscoverSectionItems(genreSection);
+        expect(
+          (unrestricted.items as GenresCarouselItem[]).map((chip) =>
+            readGenreRoute(chip.searchQuery.metadata),
+          ),
+        ).to.deep.equal(GENRE_IDS);
+      } finally {
+        probe.unregisterInterceptor();
+        await settings.setExcludeNSFW(true);
+      }
+    },
+  );
+  suite.test(
+    "genres: exact archive canonical order, bounded enrichment and native continuation",
+    async () => {
+      const genreSection = SECTIONS.find((section) => section.id === "genres")!;
+      await settings.setExcludeNSFW(true);
+      const chips = (await MangaSushi.getDiscoverSectionItems(genreSection))
+        .items as GenresCarouselItem[];
+      const probe = new DiscoveryProbe("MangaSushi.genre-archive-test");
+      let actionCursor: Parameters<typeof MangaSushi.getSearchResults>[1];
+      probe.registerInterceptor();
+      try {
+        for (const genre of ["action", "romance"]) {
+          const query = chips.find(
+            (chip) => readGenreRoute(chip.searchQuery.metadata) === genre,
+          )!.searchQuery;
+          const start = probe.requests.length,
+            responseStart = probe.responses.length;
+          const first = await MangaSushi.getSearchResults(query);
+          const requests = probe.requests.slice(start),
+            responses = probe.responses.slice(responseStart);
+          expect(requests).to.have.length(2);
+          expect(requests[0].url).to.equal(`${BASE_URL}/manga-genre/${genre}/`);
+          expect(
+            requests.some((request) => request.url.startsWith(`${BASE_URL}/?`)),
+            "Display title must not become text search",
+          ).to.equal(false);
+          const raw = parseCatalog(
+            responses.find(({ request }) => request.url === requests[0].url)!.html,
+            "latest",
+          );
+          expect(raw.items).to.have.length(12);
+          const batch = requests.find((request) => typeof request.body === "string")!;
+          expect(batch.url).to.equal(`${BASE_URL}/wp-admin/admin-ajax.php`);
+          const body = requestParameters(batch.body as string);
+          for (const [key, value] of Object.entries({
+            template: "madara-core/content/content-search",
+            page: "0",
+            "vars[taxonomy]": "wp-manga-genre",
+            "vars[term]": genre,
+            "vars[posts_per_page]": "12",
+            "vars[meta_key]": "_latest_update",
+            "vars[orderby]": "post_name__in",
+            "vars[paged]": "1",
+            "vars[order]": "desc",
+            "vars[s]": "",
+          }))
+            expect(body.get(key), key).to.equal(value);
+          expect(batch.body).to.include("manga_adult_content");
+          expect(boundedIds(batch.body as string)).to.deep.equal(ids(raw.items));
+          const metadata = parseCatalog(
+            responses.find(
+              ({ request }) => request.url === batch.url && request.body === batch.body,
+            )!.html,
+            "search",
+            true,
+            { ...raw.next!, page: 0 },
+          ).items;
+          const allowed = new Map(
+            metadata.filter((item) => isAllowed(item.metadata)).map((item) => [item.mangaId, item]),
+          );
+          expect(ids(first.items)).to.deep.equal(ids(raw.items).filter((id) => allowed.has(id)));
+          for (const item of first.items) {
+            expect(item.metadata.genres.map((tag) => tag.id)).to.include(genre);
+            expect(item.metadata.adult).to.equal(false);
+            const original = raw.items.find((entry) => entry.mangaId === item.mangaId)!;
+            expect(item.title).to.equal(
+              englishTitle(item.mangaId, original.title, [
+                allowed.get(item.mangaId)!.metadata.alternative,
+              ]),
+            );
+          }
+          expect(first.metadata).not.to.equal(undefined);
+          const warmCount = probe.requests.length;
+          expect(ids((await MangaSushi.getSearchResults(query)).items)).to.deep.equal(
+            ids(first.items),
+          );
+          expect(probe.requests, "Warm archive and metadata must both be reused").to.have.length(
+            warmCount,
+          );
+          if (genre === "romance") {
+            expect(
+              ids((await MangaSushi.getSearchResults(query, actionCursor)).items),
+            ).to.deep.equal(ids(first.items));
+            expect(
+              probe.requests,
+              "A foreign archive cursor must restart only the selected genre",
+            ).to.have.length(warmCount);
+          }
+          if (genre === "action") {
+            actionCursor = first.metadata;
+            const nextStart = probe.requests.length,
+              nextResponseStart = probe.responses.length;
+            const second = await MangaSushi.getSearchResults(query, first.metadata);
+            const nextRequests = probe.requests.slice(nextStart),
+              nextResponses = probe.responses.slice(nextResponseStart);
+            expect(nextRequests).to.have.length(2);
+            for (const request of nextRequests) {
+              expect(request.url).to.equal(`${BASE_URL}/wp-admin/admin-ajax.php`);
+              const parameters = requestParameters(request.body as string);
+              const archive = parameters.get("template") === "madara-core/content/content-archive";
+              expect(parameters.get("page")).to.equal(archive ? "1" : "0");
+              if (!archive) {
+                expect(parameters.get("vars[paged]")).to.equal("1");
+                expect(parameters.get("vars[orderby]")).to.equal("post_name__in");
+              }
+              expect(parameters.get("vars[term]")).to.equal("action");
+              expect(parameters.get("vars[posts_per_page]")).to.equal("12");
+            }
+            const archiveResponse = nextResponses.find(
+              ({ request }) =>
+                requestParameters(request.body as string).get("template") ===
+                "madara-core/content/content-archive",
+            )!;
+            const native = parseCatalog(archiveResponse.html, "latest", false, raw.next);
+            const enriched = nextResponses.find(
+              ({ request }) =>
+                requestParameters(request.body as string).get("template") ===
+                "madara-core/content/content-search",
+            )!;
+            expect(boundedIds(enriched.request.body as string)).to.deep.equal(ids(native.items));
+            const eligible = new Set(
+              parseCatalog(enriched.html, "search", true, raw.next)
+                .items.filter((item) => isAllowed(item.metadata))
+                .map((item) => item.mangaId),
+            );
+            expect(ids(second.items)).to.deep.equal(
+              ids(native.items).filter((id) => eligible.has(id) && !ids(first.items).includes(id)),
+            );
+            expect(second.items).not.to.be.empty;
+            expect(new Set([...ids(first.items), ...ids(second.items)]).size).to.equal(
+              first.items.length + second.items.length,
+            );
+            const repeatedCount = probe.requests.length;
+            expect(
+              ids((await MangaSushi.getSearchResults(query, first.metadata)).items),
+            ).to.deep.equal(ids(second.items));
+            expect(probe.requests).to.have.length(repeatedCount);
+          }
+        }
+      } finally {
+        probe.unregisterInterceptor();
+        await settings.setExcludeNSFW(true);
+      }
+    },
+  );
+  suite.test(
+    "genres: finite Horror archive retains metadata and terminates with two cold requests",
+    async () => {
+      await settings.setExcludeNSFW(true);
+      const chips = (
+        await MangaSushi.getDiscoverSectionItems(
+          SECTIONS.find((section) => section.id === "genres")!,
+        )
+      ).items as GenresCarouselItem[];
+      const query = chips.find(
+        (chip) => readGenreRoute(chip.searchQuery.metadata) === "horror",
+      )!.searchQuery;
+      const probe = new DiscoveryProbe("MangaSushi.finite-genre-test");
+      probe.registerInterceptor();
+      try {
+        const result = await MangaSushi.getSearchResults(query);
+        expect(probe.requests).to.have.length(2);
+        expect(probe.requests[0].url).to.equal(`${BASE_URL}/manga-genre/horror/`);
+        const raw = parseCatalog(probe.responses[0].html, "latest");
+        expect(raw.items).to.have.length(1);
+        expect(raw.next).to.equal(undefined);
+        const body = requestParameters(probe.requests[1].body as string);
+        expect(body.get("page")).to.equal("0");
+        expect(body.get("vars[term]")).to.equal("horror");
+        expect(body.get("vars[posts_per_page]")).to.equal(String(raw.items.length));
+        expect(body.get("vars[orderby]")).to.equal("post_name__in");
+        expect(boundedIds(probe.requests[1].body as string)).to.deep.equal(ids(raw.items));
+        const metadata = parseCatalog(probe.responses[1].html, "search", true, {
+          page: 0,
+          template: "madara-core/content/content-search",
+          vars: {},
+        }).items;
+        const eligible = new Set(
+          metadata.filter((item) => isAllowed(item.metadata)).map((item) => item.mangaId),
+        );
+        expect(ids(result.items)).to.deep.equal(ids(raw.items).filter((id) => eligible.has(id)));
+        expect(result.metadata).to.equal(undefined);
+        expect(ids((await MangaSushi.getSearchResults(query)).items)).to.deep.equal(
+          ids(result.items),
+        );
+        expect(probe.requests).to.have.length(2);
+      } finally {
+        probe.unregisterInterceptor();
+        await settings.setExcludeNSFW(true);
+      }
+    },
+  );
+  suite.test(
+    "genres: malformed cumulative history is rejected before source requests",
+    async () => {
+      await settings.setExcludeNSFW(true);
+      const chips = (
+        await MangaSushi.getDiscoverSectionItems(
+          SECTIONS.find((section) => section.id === "genres")!,
+        )
+      ).items as GenresCarouselItem[];
+      const query = chips.find(
+        (chip) => readGenreRoute(chip.searchQuery.metadata) === "action",
+      )!.searchQuery;
+      const first = await MangaSushi.getSearchResults(query);
+      expect(first.metadata).not.to.equal(undefined);
+      const probe = new DiscoveryProbe("MangaSushi.genre-history-test");
+      probe.registerInterceptor();
+      try {
+        for (const seen of [
+          undefined,
+          null,
+          "action",
+          {},
+          [1],
+          ["../manga"],
+          ["lonely-attack-on-the-different-world", "lonely-attack-on-the-different-world"],
+        ])
+          await rejects(
+            () =>
+              MangaSushi.getSearchResults(query, {
+                ...(first.metadata as unknown as Cursor),
+                seen,
+              }),
+            /history/i,
+          );
+        expect(probe.requests).to.have.length(0);
+      } finally {
+        probe.unregisterInterceptor();
+        await settings.setExcludeNSFW(true);
+      }
+    },
+  );
+  suite.test(
+    "genres: duplicate-only and excluded-only pages advance, while stalled archives stop visibly",
+    async () => {
+      for (const mode of ["duplicates", "excluded", "stalled"]) {
+        await settings.setExcludeNSFW(true);
+        const chips = (
+          await MangaSushi.getDiscoverSectionItems(
+            SECTIONS.find((section) => section.id === "genres")!,
+          )
+        ).items as GenresCarouselItem[];
+        const query = chips.find(
+          (chip) => readGenreRoute(chip.searchQuery.metadata) === "action",
+        )!.searchQuery;
+        const probe = new DiscoveryProbe(`MangaSushi.genre-progress-${mode}-test`);
+        let firstCards = "",
+          firstHTML = "",
+          active = false;
+        probe.gate = async (request, data) => {
+          const html = Application.arrayBufferToUTF8String(data);
+          if (request.url === `${BASE_URL}/manga-genre/action/`) {
+            const $ = cheerio.load(html);
+            firstHTML = html;
+            firstCards = $(".page-item-detail.manga")
+              .toArray()
+              .map((node) => $.html(node))
+              .join("");
+            expect(firstCards).not.to.equal("");
+            return data;
+          }
+          if (!active || typeof request.body !== "string") return data;
+          const body = requestParameters(request.body);
+          if (body.get("template") !== "madara-core/content/content-archive") return data;
+          if (mode === "stalled" || (mode === "duplicates" && body.get("page") === "1"))
+            return encodeHTML(firstCards);
+          if (mode === "excluded" && body.get("page") === "1") {
+            const $ = cheerio.load(html);
+            expect($(".page-item-detail.manga").length).to.be.greaterThan(0);
+            $(".page-item-detail.manga").attr("data-adult", "1");
+            return encodeHTML($.html());
+          }
+          return data;
+        };
+        probe.registerInterceptor();
+        try {
+          const first = await MangaSushi.getSearchResults(query);
+          const nativeFirst = parseCatalog(firstHTML, "latest");
+          expect(first.metadata).not.to.equal(undefined);
+          active = true;
+          const count = probe.requests.length,
+            responseStart = probe.responses.length;
+          if (mode === "stalled") {
+            await rejects(
+              () => MangaSushi.getSearchResults(query, first.metadata),
+              /no visible progress in ten source pages/i,
+            );
+            const requests = probe.requests.slice(count);
+            expect(requests).to.have.length(10);
+            expect(
+              requests.every(
+                (request) =>
+                  typeof request.body === "string" &&
+                  requestParameters(request.body).get("template") ===
+                    "madara-core/content/content-archive",
+              ),
+            ).to.equal(true);
+          } else {
+            const next = await MangaSushi.getSearchResults(query, first.metadata);
+            const requests = probe.requests.slice(count),
+              responses = probe.responses.slice(responseStart);
+            expect(requests).to.have.length(mode === "duplicates" ? 3 : 4);
+            const archiveResponses = responses.filter(
+              ({ request }) =>
+                typeof request.body === "string" &&
+                requestParameters(request.body).get("template") ===
+                  "madara-core/content/content-archive",
+            );
+            expect(
+              archiveResponses.map(({ request }) =>
+                requestParameters(request.body as string).get("page"),
+              ),
+            ).to.deep.equal(["1", "2"]);
+            const native = parseCatalog(archiveResponses[1].html, "latest", false, {
+              ...nativeFirst.next!,
+              page: 2,
+            });
+            const batch = responses
+              .filter(
+                ({ request }) =>
+                  typeof request.body === "string" &&
+                  requestParameters(request.body).get("template") ===
+                    "madara-core/content/content-search",
+              )
+              .at(-1)!;
+            const bounded = requestParameters(batch.request.body as string);
+            expect(bounded.get("page")).to.equal("0");
+            expect(bounded.get("vars[paged]")).to.equal("1");
+            expect(bounded.get("vars[posts_per_page]")).to.equal(String(native.items.length));
+            expect(bounded.get("vars[orderby]")).to.equal("post_name__in");
+            expect(boundedIds(batch.request.body as string)).to.deep.equal(ids(native.items));
+            const eligible = new Set(
+              parseCatalog(batch.html, "search", true, nativeFirst.next)
+                .items.filter((item) => isAllowed(item.metadata))
+                .map((item) => item.mangaId),
+            );
+            expect(ids(next.items)).to.deep.equal(
+              ids(native.items).filter(
+                (id) => eligible.has(id) && !ids(nativeFirst.items).includes(id),
+              ),
+            );
+            expect(next.items).not.to.be.empty;
+            expect(new Set([...ids(first.items), ...ids(next.items)]).size).to.equal(
+              first.items.length + next.items.length,
+            );
+            const repeated = probe.requests.length;
+            expect(
+              ids((await MangaSushi.getSearchResults(query, first.metadata)).items),
+            ).to.deep.equal(ids(next.items));
+            expect(probe.requests, "A repeated logical cursor must be pure").to.have.length(
+              repeated,
+            );
+          }
+          expect(
+            probe.requests
+              .slice(count)
+              .some((request) => request.url.startsWith(`${BASE_URL}/manga/`)),
+          ).to.equal(false);
+        } finally {
+          probe.unregisterInterceptor();
+          await settings.setExcludeNSFW(true);
+        }
+      }
+    },
+  );
+  suite.test("genres: out-of-page metadata fails closed without per-title fallback", async () => {
+    await settings.setExcludeNSFW(true);
+    const chips = (
+      await MangaSushi.getDiscoverSectionItems(SECTIONS.find((section) => section.id === "genres")!)
+    ).items as GenresCarouselItem[];
+    const query = chips.find(
+      (chip) => readGenreRoute(chip.searchQuery.metadata) === "action",
+    )!.searchQuery;
+    const target = "lonely-attack-on-the-different-world";
+    await MangaSushi.getMangaDetails(target);
+    const probe = new DiscoveryProbe("MangaSushi.genre-identity-test");
+    let changed = false;
+    probe.gate = async (request, data) => {
+      if (
+        typeof request.body !== "string" ||
+        requestParameters(request.body).get("template") !== "madara-core/content/content-search"
+      )
+        return data;
+      const $ = cheerio.load(Application.arrayBufferToUTF8String(data));
+      const warm = $(".c-tabs-item__content").filter(
+        (_index, node) => $(node).find(`.post-title a[href="${seriesUrl(target)}"]`).length > 0,
+      );
+      expect(warm).to.have.length(1);
+      warm.append('<span class="adult-content">Adult content</span>');
+      const anchor = $(".c-tabs-item__content .post-title a")
+        .filter((_index, node) => $(node).attr("href") !== seriesUrl(target))
+        .first();
+      expect(anchor).to.have.length(1);
+      anchor.attr("href", `${BASE_URL}/manga/out-of-page-canonical-proof/`);
+      changed = true;
+      return encodeHTML($.html());
+    };
+    probe.registerInterceptor();
+    try {
+      await rejects(
+        () => MangaSushi.getSearchResults(query),
+        /bounded genre metadata|canonical|outside/i,
+      );
+      expect(changed).to.equal(true);
+      expect(probe.requests).to.have.length(2);
+      expect(
+        probe.requests.filter((request) => request.url.startsWith(`${BASE_URL}/manga/`)),
+      ).to.have.length(0);
+      probe.gate = undefined;
+      await rejects(
+        () => MangaSushi.getMangaDetails(target),
+        /hidden by NSFW exclusion|lacks reliable/i,
+      );
+      const valid = await MangaSushi.getSearchResults({
+        title: "Lonely Attack on the Different World",
+      });
+      expect(ids(valid.items)).not.to.include(target);
+      await rejects(
+        () => MangaSushi.getMangaDetails(target),
+        /hidden by NSFW exclusion|lacks reliable/i,
+      );
+    } finally {
+      probe.unregisterInterceptor();
+      await settings.setExcludeNSFW(true);
+    }
+  });
+  suite.test(
+    "genres: raw root and descendant warnings survive held metadata enrichment",
+    async () => {
+      await settings.setExcludeNSFW(true);
+      const chips = (
+        await MangaSushi.getDiscoverSectionItems(
+          SECTIONS.find((section) => section.id === "genres")!,
+        )
+      ).items as GenresCarouselItem[];
+      const query = chips.find(
+        (chip) => readGenreRoute(chip.searchQuery.metadata) === "action",
+      )!.searchQuery;
+      const targets = [
+        "lonely-attack-on-the-different-world",
+        "yondome-wa-iya-na-shizokusei-majutsushi",
+      ];
+      await MangaSushi.getMangaDetails(targets[0]);
+      const probe = new DiscoveryProbe("MangaSushi.genre-warning-test");
+      let arrived!: () => void, release!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        arrived = resolve;
+      });
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      probe.gate = async (request, data) => {
+        if (
+          typeof request.body === "string" &&
+          requestParameters(request.body).get("template") === "madara-core/content/content-search"
+        ) {
+          arrived();
+          await held;
+          return data;
+        }
+        if (request.url !== `${BASE_URL}/manga-genre/action/`) return data;
+        const $ = cheerio.load(Application.arrayBufferToUTF8String(data));
+        for (const [index, id] of targets.entries()) {
+          const row = $(".page-item-detail.manga").filter(
+            (_index, node) => $(node).find(`.post-title a[href="${seriesUrl(id)}"]`).length > 0,
+          );
+          expect(row).to.have.length(1);
+          if (index === 0) row.attr("data-adult", "1");
+          else row.append('<span class="adult-content">Adult content</span>');
+        }
+        return encodeHTML($.html());
+      };
+      probe.registerInterceptor();
+      const pending = MangaSushi.getSearchResults(query);
+      void pending.catch(() => undefined);
+      try {
+        await Promise.race([
+          ready,
+          pending.then(() => {
+            throw new Error("Archive completed without its bounded metadata gate.");
+          }),
+        ]);
+        // Both fresh raw warnings must be observed before a later safe batch resolves.
+        // A same-ID details response cannot revive either title while the batch is held.
+        for (const id of targets)
+          await rejects(
+            () => MangaSushi.getMangaDetails(id),
+            /hidden by NSFW exclusion|lacks reliable/i,
+          );
+        release();
+        const result = await pending;
+        for (const id of targets) expect(ids(result.items)).not.to.include(id);
+        const batch = probe.requests.filter((request) => typeof request.body === "string");
+        expect(batch).to.have.length(1);
+        for (const id of targets)
+          await rejects(
+            () => MangaSushi.getMangaDetails(id),
+            /hidden by NSFW exclusion|lacks reliable/i,
+          );
+      } finally {
+        release();
+        await pending.catch(() => undefined);
+        probe.unregisterInterceptor();
+        await settings.setExcludeNSFW(true);
+      }
+    },
+  );
+  suite.test(
+    "genres: Cooking archive is genuinely empty without metadata or catalog scans",
+    async () => {
+      await settings.setExcludeNSFW(true);
+      const chips = (
+        await MangaSushi.getDiscoverSectionItems(
+          SECTIONS.find((section) => section.id === "genres")!,
+        )
+      ).items as GenresCarouselItem[];
+      const query = chips.find(
+        (chip) => readGenreRoute(chip.searchQuery.metadata) === "cooking",
+      )!.searchQuery;
+      const probe = new DiscoveryProbe("MangaSushi.empty-genre-test");
+      probe.registerInterceptor();
+      try {
+        const result = await MangaSushi.getSearchResults(query);
+        expect(result.items).to.deep.equal([]);
+        expect(result.metadata).to.equal(undefined);
+        expect(probe.requests.map((request) => request.url)).to.deep.equal([
+          `${BASE_URL}/manga-genre/cooking/`,
+        ]);
+        const $ = cheerio.load(probe.responses[0].html);
+        expect($("body").hasClass("term-cooking")).to.equal(true);
+        expect($(".no-results.not-found")).to.have.length(1);
+        expect($("#navigation-ajax")).to.have.length(0);
+      } finally {
+        probe.unregisterInterceptor();
+      }
+    },
+  );
+  suite.test(
+    "advanced genres: ignored Cooking filter fails visibly in one native request",
+    async () => {
+      const probe = new DiscoveryProbe("MangaSushi.ignored-genre-test");
+      probe.registerInterceptor();
+      try {
+        await rejects(
+          () => MangaSushi.getSearchResults({ title: "", metadata: { genres: ["cooking"] } }),
+          /genre.*filter|filter.*genre/i,
+        );
+        expect(probe.requests).to.have.length(1);
+        expect(probe.requests[0].url).to.equal(
+          searchUrl({ title: "", metadata: { genres: ["cooking"] } }, true),
+        );
+        const $ = cheerio.load(probe.responses[0].html);
+        expect($('input[name="genre[]"][value="cooking"]').attr("checked")).not.to.equal(undefined);
+        expect(parseCatalog(probe.responses[0].html, "search", true).items).not.to.be.empty;
+      } finally {
+        probe.unregisterInterceptor();
+      }
+    },
+  );
+  suite.test(
+    "advanced genres: fresh malformed taxonomy and wrong-card evidence fail without scans",
+    async () => {
+      const query = { title: "", metadata: { genres: ["action"] } };
+      const probe = new DiscoveryProbe("MangaSushi.genre-boundary-test");
+      probe.registerInterceptor();
+      try {
+        for (const mutation of [
+          "missing",
+          "malformed",
+          "malformed-json",
+          "duplicate",
+          "duplicate-json",
+          "wrong-term",
+          "constructor-sibling",
+          "wrong-cards",
+        ]) {
+          let changed = false;
+          probe.gate = async (request, data) => {
+            if (request.url !== searchUrl(query, true)) return data;
+            const $ = cheerio.load(Application.arrayBufferToUTF8String(data));
+            if (mutation === "wrong-cards") {
+              const anchors = $('.mg_genres a[href="https://mangasushi.org/manga-genre/action/"]');
+              expect(anchors.length).to.be.greaterThan(0);
+              anchors.attr("href", `${BASE_URL}/manga-genre/cooking/`).text("Cooking");
+            } else {
+              const script = $("script").filter((_index, node) =>
+                /^\s*var __madara_query_vars = /.test($(node).text()),
+              );
+              expect(script).to.have.length(1);
+              if (mutation === "duplicate") script.after($.html(script));
+              else {
+                const state = JSON.parse(script.text().match(/= (\{.*\});?\s*$/s)![1]) as Record<
+                  string,
+                  unknown
+                >;
+                if (mutation === "missing") delete state.tax_query;
+                else if (mutation === "malformed") state.tax_query = "action";
+                else if (mutation === "wrong-term")
+                  state.tax_query = {
+                    relation: "OR",
+                    0: { taxonomy: "wp-manga-genre", field: "slug", terms: ["romance"] },
+                  };
+                else if (mutation === "constructor-sibling")
+                  (state.tax_query as Record<string, unknown>)["1"] = {
+                    taxonomy: "constructor",
+                    field: "term_id",
+                    terms: [2],
+                  };
+                let serialized = JSON.stringify(state);
+                if (mutation === "malformed-json") serialized = serialized.replace("{", "{broken");
+                if (mutation === "duplicate-json")
+                  serialized = serialized.replace('"tax_query":', '"tax_query":{},"tax_query":');
+                script.text(`var __madara_query_vars = ${serialized};`);
+              }
+            }
+            changed = true;
+            return encodeHTML($.html());
+          };
+          const count = probe.requests.length;
+          await rejects(
+            () => MangaSushi.getSearchResults(query),
+            /genre|filter|pagination|query|ambiguous/i,
+          );
+          expect(changed, mutation).to.equal(true);
+          expect(
+            probe.requests.length - count,
+            `${mutation} must not trigger fallback requests`,
+          ).to.equal(1);
+        }
+      } finally {
+        probe.unregisterInterceptor();
+      }
+    },
+  );
+  suite.test(
+    "advanced genres: rejected filters cannot discard fresh warnings or revive warm-safe titles",
+    async () => {
+      const query = { title: "", metadata: { genres: ["action"] } };
+      for (const continuation of [false, true]) {
+        await settings.setExcludeNSFW(true);
+        const first = await MangaSushi.getSearchResults(query);
+        const cursor = continuation ? first.metadata : undefined;
+        const warm = continuation ? await MangaSushi.getSearchResults(query, cursor) : first;
+        expect(warm.items).not.to.be.empty;
+        const target = warm.items[0].mangaId;
+        const probe = new DiscoveryProbe(`MangaSushi.ignored-warning-${continuation}-test`);
+        let changed = false;
+        probe.gate = async (request, data) => {
+          if (
+            continuation
+              ? typeof request.body !== "string" ||
+                requestParameters(request.body).get("page") !== "1"
+              : request.url !== searchUrl(query, true)
+          )
+            return data;
+          const $ = cheerio.load(Application.arrayBufferToUTF8String(data));
+          const row = $(".c-tabs-item__content").filter(
+            (_index, node) => $(node).find(`.post-title a[href="${seriesUrl(target)}"]`).length > 0,
+          );
+          expect(row).to.have.length(1);
+          row.append('<span class="adult-content">Adult content</span>');
+          if (continuation) {
+            const action = row.find(`.mg_genres a[href="${BASE_URL}/manga-genre/action/"]`);
+            expect(action).to.have.length(1);
+            action.attr("href", `${BASE_URL}/manga-genre/cooking/`).text("Cooking");
+          } else {
+            const script = $("script").filter((_index, node) =>
+              /^\s*var __madara_query_vars = /.test($(node).text()),
+            );
+            expect(script).to.have.length(1);
+            const state = JSON.parse(script.text().match(/= (\{.*\});?\s*$/s)![1]) as Record<
+              string,
+              unknown
+            >;
+            delete state.tax_query;
+            script.text(`var __madara_query_vars = ${JSON.stringify(state)};`);
+          }
+          changed = true;
+          return encodeHTML($.html());
+        };
+        probe.registerInterceptor();
+        try {
+          await rejects(
+            () => MangaSushi.getSearchResults(query, cursor),
+            /genre.*filter|filter.*genre/i,
+          );
+          expect(changed).to.equal(true);
+          expect(probe.requests).to.have.length(1);
+          probe.gate = undefined;
+          await rejects(
+            () => MangaSushi.getMangaDetails(target),
+            /hidden by NSFW exclusion|lacks reliable/i,
+          );
+          const valid = await MangaSushi.getSearchResults(query, cursor);
+          expect(ids(valid.items)).not.to.include(target);
+          await rejects(
+            () => MangaSushi.getMangaDetails(target),
+            /hidden by NSFW exclusion|lacks reliable/i,
+          );
+        } finally {
+          probe.unregisterInterceptor();
+          await settings.setExcludeNSFW(true);
+        }
+      }
+    },
+  );
+  suite.test(
+    "advanced genres: changed or contradictory empty responses fail without scanning",
+    async () => {
+      const query = { title: "qzxzqzxzznomatch887771", metadata: { genres: ["action"] } };
+      const probe = new DiscoveryProbe("MangaSushi.empty-genre-boundary-test");
+      probe.registerInterceptor();
+      try {
+        for (const mutation of ["text", "navigation", "duplicate-state"]) {
+          let changed = false;
+          probe.gate = async (request, data) => {
+            if (request.url !== searchUrl(query, true)) return data;
+            const $ = cheerio.load(Application.arrayBufferToUTF8String(data));
+            const empty = $(".no-results.not-found");
+            expect(empty).to.have.length(1);
+            expect(empty.text().replace(/\s+/g, " ").trim()).to.equal(
+              "No matches found. Try a different search...",
+            );
+            if (mutation === "text") empty.text("Unexpected provider response.");
+            else if (mutation === "navigation") {
+              expect(sourceSearch.next).not.to.equal(undefined);
+              $("body").append(
+                '<a id="navigation-ajax" data-template="madara-core/content/content-search"></a>',
+              );
+              $("body").append(
+                `<script>var __madara_query_vars = ${JSON.stringify(sourceSearch.next!.vars)};</script>`,
+              );
+            } else {
+              const script = $("script").filter((_index, node) =>
+                /\bvar manga_args\s*=/.test($(node).text()),
+              );
+              expect(script).to.have.length(1);
+              script.after($.html(script));
+            }
+            changed = true;
+            return encodeHTML($.html());
+          };
+          const count = probe.requests.length;
+          await rejects(
+            () => MangaSushi.getSearchResults(query),
+            /genre|filter|pagination|ambiguous/i,
+          );
+          expect(changed).to.equal(true);
+          expect(probe.requests.length - count).to.equal(1);
+        }
+      } finally {
+        probe.unregisterInterceptor();
+      }
+    },
+  );
+  suite.test(
+    "advanced genres: native multiple-genre OR, AND and genuine empty remain distinct",
+    async () => {
+      const probe = new DiscoveryProbe("MangaSushi.multi-genre-test");
+      probe.registerInterceptor();
+      try {
+        for (const condition of ["", "1"]) {
+          const count = probe.requests.length;
+          const result = await MangaSushi.getSearchResults({
+            title: "",
+            metadata: { genres: ["action", "fantasy"], condition },
+          });
+          expect(result.items).not.to.be.empty;
+          expect(probe.requests.length - count).to.equal(1);
+          for (const item of result.items) {
+            const genres = item.metadata.genres.map((genre) => genre.id);
+            expect(
+              condition === "1"
+                ? ["action", "fantasy"].every((genre) => genres.includes(genre))
+                : ["action", "fantasy"].some((genre) => genres.includes(genre)),
+            ).to.equal(true);
+          }
+          const emptyCount = probe.requests.length;
+          const empty = await MangaSushi.getSearchResults({
+            title: "qzxzqzxzznomatch887771",
+            metadata: { genres: ["action", "fantasy"], condition },
+          });
+          expect(empty.items).to.deep.equal([]);
+          expect(empty.metadata).to.equal(undefined);
+          expect(probe.requests.length - emptyCount).to.equal(1);
+        }
+      } finally {
+        probe.unregisterInterceptor();
+      }
+    },
+  );
+  suite.test(
     "getDiscoverSectionItems: cold-cache default exactly mirrors eligible site rows",
     async () => {
       const safeIds = new Set(
@@ -494,7 +1420,16 @@ export async function runTests(logger: TestLogger) {
                 "mangaId" in item && item.mangaId === "yondome-wa-iya-na-shizokusei-majutsushi",
             ),
           ).to.include({ title: "Death Attribute Magician" });
-        for (const [index, section] of SECTIONS.entries()) {
+        expect(
+          (rows[2].items as GenresCarouselItem[]).map((chip) =>
+            readGenreRoute(chip.searchQuery.metadata),
+          ),
+        ).to.deep.equal(
+          parseHomeGenres(homepage)
+            .filter((genre) => !BLOCKED_GENRES.includes(genre.id))
+            .map((genre) => genre.id),
+        );
+        for (const [index, section] of FEED_SECTIONS.entries()) {
           const native = parseCatalog(homepage, section.id === "popular" ? "popular" : "latest");
           const expectedIds = native.items
             .filter((item) => safeIds.has(item.mangaId))
@@ -606,7 +1541,12 @@ export async function runTests(logger: TestLogger) {
         native.items.map((item) => item.mangaId),
       );
       expect(result.metadata).to.equal(undefined);
-      for (const [index, section] of SECTIONS.entries()) {
+      expect(
+        (rows[2].items as GenresCarouselItem[]).map((chip) =>
+          readGenreRoute(chip.searchQuery.metadata),
+        ),
+      ).to.deep.equal(parseHomeGenres(home).map((genre) => genre.id));
+      for (const [index, section] of FEED_SECTIONS.entries()) {
         const originals = parseCatalog(home, section.id === "popular" ? "popular" : "latest").items;
         for (const item of rows[index].items) {
           if (!("mangaId" in item)) throw new Error("Expected manga discovery item.");
@@ -677,10 +1617,8 @@ export async function runTests(logger: TestLogger) {
     probe.gate = async (request, data) =>
       request.url.endsWith("/ajax/chapters/")
         ? (new TextEncoder().encode(
-            Application.arrayBufferToUTF8String(data).replace(
-              "Chapter 66.1",
-              "Volume 2 Chapter 66.1",
-            )
+            Application.arrayBufferToUTF8String(data)
+              .replace("Chapter 66.1", "Volume 2 Chapter 66.1")
               .replace("Chapter 65", "Chapter 65: A New Beginning")
               .replace("Chapter 64", "Ch. 64 – Extra")
               .replace("Chapter 63", "Special Chapter 63")

@@ -47,7 +47,11 @@ export class MangaSushiInterceptor extends PaperbackInterceptor {
     return data;
   }
 }
-export const fetchText = async (url: string, body?: string): Promise<string> => {
+export const fetchText = async (
+  url: string,
+  body?: string,
+  exactRoute = false,
+): Promise<string> => {
   const [response, data] = await Application.scheduleRequest({
     url,
     method: body === undefined ? "GET" : "POST",
@@ -55,6 +59,8 @@ export const fetchText = async (url: string, body?: string): Promise<string> => 
       ? {}
       : { body, headers: { "content-type": "application/x-www-form-urlencoded" } }),
   });
+  if (exactRoute && response.url !== url)
+    throw new Error("Mangasushi returned a different genre archive route.");
   if (response.status < 200 || response.status >= 300)
     throw new Error(`Mangasushi request failed (${response.status}).`);
   const text = Application.arrayBufferToUTF8String(data);
