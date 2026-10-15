@@ -12,6 +12,7 @@ import {
 } from "@paperback/types";
 import * as cheerio from "cheerio";
 import { serializedProperty } from "./page-data";
+import { blockedGenre } from "./forms";
 import {
   BASE_URL,
   LABELS,
@@ -25,6 +26,7 @@ import {
 
 export const slugToId = (slug: string): string => {
   if (
+    typeof slug !== "string" ||
     !slug ||
     slug === "." ||
     slug === ".." ||
@@ -40,6 +42,7 @@ export const slugToId = (slug: string): string => {
 };
 
 export const idToSlug = (id: string): string => {
+  if (typeof id !== "string" || !id) throw new Error("Hijala requires a valid source ID.");
   const slug = decodeURIComponent(id);
   slugToId(slug);
   return slug;
@@ -118,24 +121,46 @@ const imageUrl = (value: string): string => {
   return url;
 };
 
-const searchItem = (post: Post): CatalogItem => {
+export const searchItem = (post: Post): CatalogItem => {
   if (!post.postTitle?.trim() || !post.featuredImage)
     throw new Error("Hijala returned an incomplete series card.");
+  const classified =
+    Array.isArray(post.genres) &&
+    post.genres.length > 0 &&
+    post.genres.every(
+      (genre) =>
+        Number.isSafeInteger(genre.id) &&
+        genre.id > 0 &&
+        typeof genre.name === "string" &&
+        !!genre.name.trim(),
+    );
+  const reportedGenres = Array.isArray(post.genres) ? post.genres : [];
+  const genres = reportedGenres.filter(
+    (genre) =>
+      Number.isSafeInteger(genre.id) &&
+      genre.id > 0 &&
+      typeof genre.name === "string" &&
+      !!genre.name.trim(),
+  );
   return {
     mangaId: slugToId(post.slug),
     title: post.postTitle.trim(),
     imageUrl: imageUrl(post.featuredImage),
     subtitle: post.seriesType ? (LABELS[post.seriesType] ?? post.seriesType.trim()) : undefined,
-    contentRating: contentRating(post.genres),
+    contentRating: contentRating(genres),
     metadata: {
       type: post.seriesType ?? "",
-      genres: (post.genres ?? []).map((genre) => String(genre.id)),
+      genres: reportedGenres
+        .filter((genre) => Number.isSafeInteger(genre.id) && genre.id > 0)
+        .map((genre) => String(genre.id)),
       novel: post.isNovel === true,
+      classified,
+      blocked: genres.some((genre) => blockedGenre(genre.name)),
     },
   };
 };
 
-const catalog = (text: string): Catalog => {
+export const catalog = (text: string): Catalog => {
   const data = JSON.parse(text) as Catalog;
   if (!Array.isArray(data.posts) || !Number.isSafeInteger(data.totalCount) || data.totalCount < 0)
     throw new Error("Hijala returned an invalid catalog response.");
@@ -227,7 +252,7 @@ export const parseDate = (value: string | undefined, capturedAt: Date): Date | u
     : undefined;
 };
 
-const chapterTitle = (value: string | null | undefined, number: number): string => {
+export const chapterTitle = (value: string | null | undefined, number: number): string => {
   const title = value?.trim() ?? "";
   if (/^\d+(?:\.\d+)?$/.test(title) && Number(title) === number) return "";
   const prefix = title.match(
@@ -297,7 +322,7 @@ export const parseDetails = (html: string, mangaId: string): SourceManga => {
       ],
       thumbnailUrl: item.imageUrl,
       synopsis: plainText(post.postContent ?? ""),
-      contentRating: contentRating(post.genres),
+      contentRating: item.contentRating ?? ContentRating.MATURE,
       contentType: post.isNovel ? "novel" : "comic",
       author: author || undefined,
       artist:
@@ -316,10 +341,15 @@ export const parseDetails = (html: string, mangaId: string): SourceManga => {
         {
           id: "genres",
           title: "Genres",
-          tags: (post.genres ?? []).map((genre) => ({
-            id: String(genre.id),
-            title: genre.name.trim(),
-          })),
+          tags: (post.genres ?? [])
+            .filter(
+              (genre) =>
+                Number.isSafeInteger(genre.id) &&
+                genre.id > 0 &&
+                typeof genre.name === "string" &&
+                !!genre.name.trim(),
+            )
+            .map((genre) => ({ id: String(genre.id), title: genre.name.trim() })),
         },
       ],
       additionalInfo: {
@@ -407,10 +437,12 @@ export const parseReader = (html: string, chapter: Chapter): ChapterDetails => {
     throw new Error("Hijala returned no reader pages.");
   const images = [...data.images].sort((a, b) => a.order - b.order);
   if (
-    images.some((item) => !Number.isInteger(item.order) || !item.url) ||
+    images.some((item) => !Number.isSafeInteger(item.order) || item.order < 0 || !item.url) ||
     new Set(images.map((item) => item.order)).size !== images.length
   )
     throw new Error("Hijala returned invalid page ordering.");
   const pages = images.map((item) => imageUrl(item.url));
+  if (new Set(pages).size !== pages.length)
+    throw new Error("Hijala returned duplicate reader pages.");
   return { id: chapter.chapterId, mangaId: chapter.sourceManga.mangaId, pages };
 };

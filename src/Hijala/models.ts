@@ -10,11 +10,9 @@ export const PAGE_SIZE = 20;
 export const SECTIONS: DiscoverSection[] = [
   { id: "featured", title: "Featured", type: DiscoverSectionType.featured },
   { id: "latest", title: "Latest Releases", type: DiscoverSectionType.simpleCarousel },
-  { id: "hot", title: "Hot", type: DiscoverSectionType.simpleCarousel },
   { id: "new", title: "New", type: DiscoverSectionType.simpleCarousel },
   { id: "popular", title: "Most Popular", type: DiscoverSectionType.simpleCarousel },
-  { id: "updates", title: "Latest Chapter Updates", type: DiscoverSectionType.chapterUpdates },
-  { id: "genres", title: "Genres", type: DiscoverSectionType.genres },
+  { id: "updates", title: "Latest Updates", type: DiscoverSectionType.chapterUpdates },
 ];
 
 export const SORTS = [
@@ -105,6 +103,8 @@ export type SeriesMetadata = {
   genres: string[];
   novel: boolean;
   paid?: boolean;
+  classified: boolean;
+  blocked: boolean;
 };
 export type CatalogItem = SearchResultItem & { metadata: SeriesMetadata };
 export interface SearchFilters {
@@ -118,6 +118,7 @@ export interface SearchFilters {
   createdBefore: string;
 }
 export interface Preferences {
+  excludeNSFW: boolean;
   hidePaid: boolean;
   sections: string[];
   types: string[];

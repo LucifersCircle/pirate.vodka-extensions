@@ -6,6 +6,27 @@
 - Mangasushi
 - ManhwaNex
 
+## Hijala
+
+Version `0.0.1-alpha.3` follows the current Hijala website: Featured, Latest
+Releases, New, Most Popular and Latest Updates. Latest/New use verified source
+pagination; Popular uses the rendered first nine titles and chapter updates use
+actual source chapter identities. Stale Hot and homepage Genres rows are removed;
+all live genres remain available in advanced search and source settings.
+
+Latest and New are separate native rows for the site's tabs.
+
+Default-on persistent NSFW exclusion uses verified source genre labels, not an
+invented four-category rating or demographic guesses. Unknown classification is
+hidden by default, and explicit genre exclusions remain fail-closed after opt-out.
+Existing content types and paid-chapter hiding intersect those preferences across
+browsing, details, chapters and readers; protected chapters remain on the website.
+Bounded caches reused across callbacks avoid per-title metadata requests.
+
+Native checks preserve the exact supplied `SourceManga` reference, all source
+chapters and genuine decimal numbers, semantic titles, paid boundaries and real
+first/middle/last reader image bytes. Covers retain their source-provided URLs.
+
 ## Extension health
 
 All extensions are checked every 30 minutes at minutes 17 and 47 (UTC), and on

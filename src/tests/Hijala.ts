@@ -1,12 +1,643 @@
+/* eslint-disable no-unused-expressions */
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Copyright © 2026 Lucifers Circle */
 
-  import { type TestLogger } from '@paperback/types'
-  import { TestSuite, registerDefaultTests } from './suite.js'
-  import { Hijala } from '../Hijala/main.js'
-  import sourceInfo from '../Hijala/pbconfig.js'
-  
-  export async function runTests(logger: TestLogger) {
-    const suite = new TestSuite('Hijala tests', logger)
-    registerDefaultTests(suite, Hijala, sourceInfo)
-    
-    await suite.run()
+import {
+  PaperbackInterceptor,
+  type Chapter,
+  type DiscoverSectionItem,
+  type Request,
+  type Response,
+  type SourceManga,
+  type TestLogger,
+} from "@paperback/types";
+import { expect } from "chai";
+import { Hijala, HijalaExtension } from "../Hijala/main.js";
+import {
+  blockedGenre,
+  HijalaSettingsForm,
+  matchesPreferences,
+  preferences,
+} from "../Hijala/forms.js";
+import { API_URL, BASE_URL, SECTIONS, SORTS, TYPES, type Post } from "../Hijala/models.js";
+import { catalogUrl, feedUrl, fetchText } from "../Hijala/network.js";
+import {
+  catalog,
+  pageProperty,
+  parseChapters,
+  parseGenreOptions,
+  searchItem,
+  seriesUrl,
+  slugToId,
+} from "../Hijala/parsers.js";
+import sourceInfo from "../Hijala/pbconfig.js";
+import { TestSuite, registerDefaultTests } from "./suite.js";
+
+// Observe actual built-native callbacks. Negative cases mutate fresh live responses only.
+class Probe extends PaperbackInterceptor {
+  readonly requests: Request[] = [];
+  gate?: (request: Request, data: ArrayBuffer) => Promise<ArrayBuffer>;
+  override async interceptRequest(request: Request): Promise<Request> {
+    if (request.url.startsWith(`${BASE_URL}/`) || request.url.startsWith(`${API_URL}/`))
+      this.requests.push(request);
+    return request;
   }
+  override async interceptResponse(
+    request: Request,
+    _response: Response,
+    data: ArrayBuffer,
+  ): Promise<ArrayBuffer> {
+    return this.gate ? this.gate(request, data) : data;
+  }
+}
+const rejects = async (operation: () => Promise<unknown>, pattern: RegExp) => {
+  let failure: unknown;
+  try {
+    await operation();
+  } catch (error) {
+    failure = error;
+  }
+  expect(String(failure)).to.match(pattern);
+};
+const ids = (items: DiscoverSectionItem[]) =>
+  items.map((item) => ("mangaId" in item ? item.mangaId : item.name));
+const bytes = async (pages: string[]) => {
+  const evidence: { page: number; status: number; bytes: number }[] = [];
+  for (const url of new Set([
+    pages[0],
+    pages[Math.floor(pages.length / 2)],
+    pages[pages.length - 1],
+  ])) {
+    const [response, data] = await Application.scheduleRequest({ url, method: "GET" });
+    expect(response.status).to.equal(200);
+    expect(
+      Object.entries(response.headers).find(([name]) => name.toLowerCase() === "content-type")?.[1],
+    ).to.match(/^image\//i);
+    const value = new Uint8Array(data),
+      magic = String.fromCharCode(...value.slice(0, 16));
+    expect(value.length).to.be.greaterThan(100);
+    expect(
+      (value[0] === 0xff && value[1] === 0xd8 && value[2] === 0xff) ||
+        magic.startsWith("\x89PNG\r\n\x1a\n") ||
+        magic.startsWith("GIF8") ||
+        (magic.startsWith("RIFF") && magic.slice(8, 12) === "WEBP") ||
+        /^....ftypavi[fs]/s.test(magic),
+    ).to.equal(true);
+    evidence.push({ page: pages.indexOf(url) + 1, status: response.status, bytes: value.length });
+  }
+  return evidence;
+};
+
+export async function runTests(logger: TestLogger) {
+  const saved = Application.getState("Hijala.preferences");
+  const suite = new TestSuite("Hijala tests", logger);
+  suite.test("defaults: fresh persistent state", async () => {
+    Application.setState(undefined, "Hijala.preferences");
+  });
+  registerDefaultTests(suite, Hijala, sourceInfo);
+  let settings: HijalaSettingsForm;
+  let home = "";
+  let fullCatalog = new Map<string, Post>();
+  let rows: Awaited<ReturnType<typeof Hijala.getDiscoverSectionItems>>[] = [];
+  let sample: SourceManga, chapters: Chapter[];
+
+  suite.test(
+    "settings: honest default-on genre exclusion and complete native taxonomy",
+    async () => {
+      settings = await Hijala.getSettingsForm();
+      expect(preferences().excludeNSFW).to.equal(true);
+      expect(preferences().hidePaid).to.equal(true);
+      expect(preferences().types).to.deep.equal(TYPES);
+      const taxonomy = parseGenreOptions(await fetchText(`${BASE_URL}/series`));
+      expect(taxonomy.length).to.be.greaterThan(20);
+      expect(
+        taxonomy.some((item) => blockedGenre(item.title) && /mature/i.test(item.title)),
+      ).to.equal(true);
+      const form = await Hijala.getAdvancedSearchForm({ title: "" });
+      expect(form.getSections().length).to.equal(2);
+      expect((await Hijala.getSortingOptions()).map((item) => item.id)).to.deep.equal(
+        SORTS.map((item) => item.id),
+      );
+      logger.log("liveGenres", taxonomy.length);
+    },
+  );
+  suite.test("discover: actual current five sections and rendered Popular limit", async () => {
+    home = await fetchText(`${BASE_URL}/`);
+    expect(pageProperty<string[]>(home, "latestReleaseFilters")).to.deep.equal(["latest", "new"]);
+    expect(home)
+      .to.include("Latest Releases")
+      .and.to.include("Most Popular")
+      .and.to.include("Latest Updates");
+    expect(
+      (await Hijala.getDiscoverSections()).map(({ id, title }) => ({ id, title })),
+    ).to.deep.equal(SECTIONS.map(({ id, title }) => ({ id, title })));
+    expect(SECTIONS.map((section) => section.id)).to.deep.equal([
+      "featured",
+      "latest",
+      "new",
+      "popular",
+      "updates",
+    ]);
+    for (let page = 1, total = 1; fullCatalog.size < total; page++) {
+      const data = catalog(
+        await fetchText(
+          `${API_URL}/api/query?page=${page}&perPage=100&orderBy=lastChapterAddedAt&orderDirection=desc`,
+        ),
+      );
+      total = data.totalCount;
+      expect(data.posts.length).to.equal(Math.min(100, total - (page - 1) * 100));
+      for (const post of data.posts) {
+        expect(fullCatalog.has(post.slug)).to.equal(false);
+        fullCatalog.set(post.slug, post);
+      }
+      expect(page).to.be.lessThan(11);
+    }
+    logger.log("bulkCatalogCount", fullCatalog.size);
+  });
+  suite.test(
+    "discover: cold and warm native callbacks share bounded bulk requests without N+1",
+    async () => {
+      await settings.setExcludeNSFW(false);
+      await settings.setExcludeNSFW(true);
+      const source = new HijalaExtension(),
+        probe = new Probe("Hijala.discovery-count");
+      probe.gate = async (request, data) => {
+        if (request.url === `${BASE_URL}/`) home = Application.arrayBufferToUTF8String(data);
+        return data;
+      };
+      probe.registerInterceptor();
+      try {
+        const sections = await source.getDiscoverSections();
+        rows = await Promise.all(
+          sections.map((section) => source.getDiscoverSectionItems(section)),
+        );
+        const cold = probe.requests.length;
+        expect(probe.requests.filter((request) => request.url === `${BASE_URL}/`).length).to.equal(
+          1,
+        );
+        expect(
+          probe.requests.filter((request) => request.url.includes("perPage=100")).length,
+        ).to.equal(Math.ceil(fullCatalog.size / 100));
+        expect(
+          probe.requests.some((request) =>
+            new globalThis.URL(request.url).pathname.startsWith("/series/"),
+          ),
+        ).to.equal(false);
+        expect(cold).to.equal(3 + Math.ceil(fullCatalog.size / 100));
+        const warm = await Promise.all(
+          sections.map((section) => source.getDiscoverSectionItems(section)),
+        );
+        expect(probe.requests.length).to.equal(cold);
+        expect(warm.map((row) => ids(row.items))).to.deep.equal(rows.map((row) => ids(row.items)));
+        logger.log("discoveryRequests", { cold, warm: 0, bulk: Math.ceil(fullCatalog.size / 100) });
+      } finally {
+        probe.unregisterInterceptor();
+      }
+    },
+  );
+  suite.test(
+    "discover: homepage order, covers and bounded snapshots match public source data",
+    async () => {
+      const allow = (post: Post) => matchesPreferences(searchItem(post), preferences());
+      expect(ids(rows[0].items)).to.deep.equal(
+        pageProperty<Post[]>(home, "combinedSliderPosts")
+          .filter(allow)
+          .map((post) => slugToId(post.slug)),
+      );
+      expect(ids(rows[1].items)).to.deep.equal(
+        pageProperty<Post[]>(home, "latestMangaPosts")
+          .filter(allow)
+          .map((post) => slugToId(post.slug)),
+      );
+      const popular = pageProperty<{ slug: string; coverImage: string }[]>(
+        home,
+        "transformedTopSeries",
+      ).slice(0, 9);
+      expect(ids(rows[3].items)).to.deep.equal(
+        popular
+          .filter((post) => fullCatalog.has(post.slug) && allow(fullCatalog.get(post.slug)!))
+          .map((post) => slugToId(post.slug)),
+      );
+      for (const item of rows[3].items)
+        if ("mangaId" in item)
+          expect(item.imageUrl).to.equal(
+            popular.find((post) => slugToId(post.slug) === item.mangaId)!.coverImage,
+          );
+      for (const index of [0, 3, 4]) expect(rows[index].metadata).to.equal(undefined);
+      expect(
+        rows
+          .flatMap((row) => row.items)
+          .some((item) => "title" in item && /coin sale|announcement/i.test(item.title)),
+      ).to.equal(false);
+    },
+  );
+  suite.test(
+    "discover: every real per-chapter update retains identity and paid boundary",
+    async () => {
+      const updates = pageProperty<{ seriesSlug: string; chapterSlug: string; isPaid: boolean }[]>(
+        home,
+        "chapterUpdates",
+      );
+      const expected = updates.filter(
+        (update) =>
+          !update.isPaid &&
+          fullCatalog.has(update.seriesSlug) &&
+          matchesPreferences(searchItem(fullCatalog.get(update.seriesSlug)!), preferences()),
+      );
+      expect(
+        rows[4].items.map((item) =>
+          "chapterId" in item ? `${item.mangaId}/${item.chapterId}` : "",
+        ),
+      ).to.deep.equal(
+        expected.map((update) => `${slugToId(update.seriesSlug)}/${slugToId(update.chapterSlug)}`),
+      );
+      expect(new Set(expected.map((item) => item.seriesSlug)).size).to.be.lessThan(expected.length);
+      await settings.setHidePaid(false);
+      const all = await Hijala.getDiscoverSectionItems(SECTIONS[4]);
+      expect(
+        all.items.some((item) => "subtitle" in item && item.subtitle?.startsWith("[Paid]")),
+      ).to.equal(true);
+      expect(all.items.length).to.be.greaterThan(rows[4].items.length);
+      await settings.setHidePaid(true);
+    },
+  );
+  suite.test("discover: New actual request, next page and repeated native requests", async () => {
+    const first = await Hijala.getDiscoverSectionItems(SECTIONS[2]);
+    const reference = catalog(await fetchText(feedUrl("new", 1)));
+    expect(ids(first.items)).to.deep.equal(
+      reference.posts
+        .map(searchItem)
+        .filter((item) => matchesPreferences(item, preferences()))
+        .map((item) => item.mangaId),
+    );
+    expect(first.metadata).not.to.equal(undefined);
+    const second = await Hijala.getDiscoverSectionItems(SECTIONS[2], first.metadata);
+    expect(second.items).not.to.be.empty;
+    expect(
+      ids((await Hijala.getDiscoverSectionItems(SECTIONS[2], first.metadata)).items),
+    ).to.deep.equal(ids(second.items));
+    expect(ids(second.items).some((id) => !ids(first.items).includes(id))).to.equal(true);
+  });
+  suite.test("discover: Latest uses verified pinned feed and actual page 2", async () => {
+    const pinned = pageProperty<boolean>(home, "hasPinnedSeriesSection");
+    const tag = pinned ? "latestUpdate" : "latestUpdatePinned";
+    const first = await Hijala.getDiscoverSectionItems(SECTIONS[1]);
+    const reference = catalog(await fetchText(feedUrl("latest", 1, tag)));
+    expect(reference.posts.map((post) => post.slug)).to.deep.equal(
+      pageProperty<Post[]>(home, "latestMangaPosts").map((post) => post.slug),
+    );
+    expect(ids(first.items)).to.deep.equal(
+      reference.posts
+        .map(searchItem)
+        .filter((item) => matchesPreferences(item, preferences()))
+        .map((item) => item.mangaId),
+    );
+    expect(first.metadata).not.to.equal(undefined);
+    const second = await Hijala.getDiscoverSectionItems(SECTIONS[1], first.metadata);
+    const next = catalog(await fetchText(feedUrl("latest", 2, tag)));
+    expect(ids(second.items)).to.deep.equal(
+      next.posts
+        .map(searchItem)
+        .filter((item) => matchesPreferences(item, preferences()))
+        .map((item) => item.mangaId),
+    );
+    expect(ids(second.items).every((id) => !ids(first.items).includes(id))).to.equal(true);
+  });
+  suite.test(
+    "discover: stale hidden sections and disabled site tabs stay bounded empty",
+    async () => {
+      await settings.setSections(["featured"]);
+      expect((await Hijala.getDiscoverSectionItems(SECTIONS[1])).items).to.be.empty;
+      expect((await Hijala.getDiscoverSections()).map((item) => item.id)).to.deep.equal([
+        "featured",
+      ]);
+      await settings.setSections(SECTIONS.map((item) => item.id));
+      const source = new HijalaExtension(),
+        probe = new Probe("Hijala.disabled-tabs");
+      probe.gate = async (request, data) => {
+        if (request.url !== `${BASE_URL}/`) return data;
+        const text = Application.arrayBufferToUTF8String(data);
+        const changed = text.replace(
+          /(latestReleaseFilters:\$R\[\d+\]=)\["latest","new"\]/,
+          "$1[]",
+        );
+        expect(changed).not.to.equal(text);
+        return new TextEncoder().encode(changed).buffer as ArrayBuffer;
+      };
+      probe.registerInterceptor();
+      try {
+        expect((await source.getDiscoverSections()).map((item) => item.id)).to.deep.equal([
+          "featured",
+          "popular",
+          "updates",
+        ]);
+        expect((await source.getDiscoverSectionItems(SECTIONS[1])).items).to.be.empty;
+        expect((await source.getDiscoverSectionItems(SECTIONS[2])).items).to.be.empty;
+        expect(probe.requests.length).to.equal(1);
+      } finally {
+        probe.unregisterInterceptor();
+      }
+    },
+  );
+  suite.test("search: every site sort, native advanced filters and true empty result", async () => {
+    for (const sort of SORTS)
+      expect((await Hijala.getSearchResults({ title: "" }, undefined, sort)).items).not.to.be.empty;
+    const query = {
+      title: "",
+      metadata: {
+        genres: { "1": "included", "4": "excluded" },
+        statuses: ["ONGOING"],
+        types: ["MANHWA"],
+        direction: "desc",
+        minChapters: "1",
+        maxChapters: "1000",
+        createdAfter: "2020-01-01",
+        createdBefore: "2027-01-01",
+      },
+    };
+    const url = catalogUrl(query, 1, SORTS[4]);
+    for (const text of [
+      "genreIds=1",
+      "excludedGenreIds=4",
+      "seriesStatus=ONGOING",
+      "seriesType=MANHWA",
+      "minChapters=1",
+      "maxChapters=1000",
+      "createdAfter=2020-01-01",
+      "createdBefore=2027-01-01",
+      "orderBy=chaptersCount",
+    ])
+      expect(url).to.include(text);
+    const result = await Hijala.getSearchResults(query, undefined, SORTS[4]);
+    expect(result.items).not.to.be.empty;
+    for (const item of result.items) {
+      expect(item.metadata.genres).to.include("1").and.not.include("4");
+      expect(item.metadata.type).to.equal("MANHWA");
+    }
+    expect((await Hijala.getSearchResults({ title: "zzzxqv-hijala-no-title-843021" })).items).to.be
+      .empty;
+  });
+  suite.test("chapters: complete actual SourceManga reference and paid preference", async () => {
+    sample = await Hijala.getMangaDetails("mimosa");
+    await settings.setHidePaid(false);
+    chapters = await Hijala.getChapters(sample);
+    const reference = parseChapters(await fetchText(seriesUrl(sample.mangaId)), sample, new Date());
+    expect(chapters.length).to.equal(reference.length);
+    expect(chapters.length).to.be.greaterThan(50);
+    for (const chapter of chapters) expect(chapter.sourceManga).to.equal(sample);
+    expect(chapters.some((chapter) => chapter.additionalInfo?.locked === "true")).to.equal(true);
+    const paid = chapters.find((chapter) => chapter.additionalInfo?.locked === "true")!;
+    await rejects(() => Hijala.getChapterDetails(paid), /requires access/);
+    await settings.setHidePaid(true);
+    const free = await Hijala.getChapters(sample);
+    expect(free.length).to.be.lessThan(chapters.length);
+    expect(free.every((chapter) => chapter.additionalInfo?.locked === "false")).to.equal(true);
+    logger.log("mimosaChapterCounts", { total: chapters.length, free: free.length });
+  });
+  suite.test(
+    "reader: actual native Chapter and real first middle last public image bytes",
+    async () => {
+      const chapter = chapters.find((item) => item.chapterId === "chapter-56")!;
+      expect(chapter).not.to.equal(undefined);
+      const result = await Hijala.getChapterDetails(chapter);
+      expect(result.id).to.equal(chapter.chapterId);
+      expect(result.mangaId).to.equal(sample.mangaId);
+      if (!("pages" in result)) throw new Error("Expected native comic reader pages");
+      expect(result.pages.length).to.be.greaterThan(10);
+      logger.log("mimosaReaderImages", await bytes(result.pages));
+      logger.log("mimosaReaderPages", result.pages.length);
+    },
+  );
+  suite.test("chapters: real large full list, decimal numbers and source titles", async () => {
+    const manga = await Hijala.getMangaDetails("ahiru-no-sora");
+    await settings.setHidePaid(false);
+    try {
+      const html = await fetchText(seriesUrl(manga.mangaId));
+      const result = await Hijala.getChapters(manga);
+      expect(result.length).to.equal(pageProperty<number>(html, "totalChapterCount"));
+      expect(result.length).to.be.greaterThan(300);
+      const decimal = result.filter((chapter) => !Number.isInteger(chapter.chapNum));
+      expect(decimal.length).to.be.greaterThan(0);
+      for (const chapter of result) expect(chapter.sourceManga).to.equal(manga);
+      expect(
+        result.map((chapter) => [chapter.chapterId, chapter.chapNum, chapter.title]),
+      ).to.deep.equal(
+        parseChapters(html, manga, new Date()).map((chapter) => [
+          chapter.chapterId,
+          chapter.chapNum,
+          chapter.title,
+        ]),
+      );
+      const publicDecimal = decimal.find((chapter) => chapter.additionalInfo?.locked === "false")!;
+      expect(publicDecimal).not.to.equal(undefined);
+      const decimalReader = await Hijala.getChapterDetails(publicDecimal);
+      if (!("pages" in decimalReader)) throw new Error("Expected native decimal comic reader");
+      logger.log("decimalReaderImages", await bytes(decimalReader.pages));
+      logger.log("largeChapterList", {
+        total: result.length,
+        decimals: decimal.length,
+        readerChapter: publicDecimal.chapterId,
+        readerPages: decimalReader.pages.length,
+      });
+    } finally {
+      await settings.setHidePaid(true);
+    }
+  });
+  suite.test(
+    "safety: actual Mature tag and persisted opt-out do not bypass other filters",
+    async () => {
+      await rejects(() => Hijala.getMangaDetails("fog-land"), /excluded/);
+      await settings.setExcludeNSFW(false);
+      const explicit = await Hijala.getMangaDetails("fog-land");
+      expect(
+        explicit.mangaInfo.tagGroups
+          ?.flatMap((group) => group.tags)
+          .some((tag) => /mature/i.test(tag.title)),
+      ).to.equal(true);
+      expect((await new HijalaExtension().getMangaDetails("fog-land")).mangaId).to.equal(
+        "fog-land",
+      );
+      const available = (await Hijala.getChapters(explicit)).find(
+        (chapter) => chapter.additionalInfo?.locked === "false",
+      )!;
+      expect(available).not.to.equal(undefined);
+      const mature = parseGenreOptions(await fetchText(`${BASE_URL}/series`)).find((genre) =>
+        /mature/i.test(genre.title),
+      )!;
+      await settings.setExcludedGenres([mature.id]);
+      await rejects(() => Hijala.getMangaDetails("fog-land"), /excluded/);
+      await settings.setExcludedGenres([]);
+      await settings.setTypes(["MANGA"]);
+      await rejects(() => Hijala.getMangaDetails("fog-land"), /excluded/);
+      await settings.setTypes([...TYPES]);
+      await settings.setExcludeNSFW(true);
+      for (const target of [Hijala, new HijalaExtension()]) {
+        await rejects(() => target.getMangaDetails("fog-land"), /excluded/);
+        await rejects(() => target.getChapters(explicit), /excluded/);
+        await rejects(() => target.getChapterDetails(available), /excluded/);
+      }
+    },
+  );
+  suite.test(
+    "safety: missing live metadata fails closed by default but opt-out is explicit",
+    async () => {
+      const probe = new Probe("Hijala.unknown-metadata");
+      let unknown = "";
+      probe.gate = async (request, data) => {
+        if (request.url.includes("/api/query?") && request.url.includes("searchTerm=Mimosa")) {
+          const value = JSON.parse(Application.arrayBufferToUTF8String(data));
+          expect(value.posts.length).to.be.greaterThan(0);
+          unknown = slugToId(value.posts[0].slug);
+          value.posts[0].genres = [];
+          return new TextEncoder().encode(JSON.stringify(value)).buffer as ArrayBuffer;
+        }
+        return data;
+      };
+      probe.registerInterceptor();
+      try {
+        const safe = await new HijalaExtension().getSearchResults({ title: "Mimosa" });
+        expect(safe.items.some((item) => item.mangaId === unknown)).to.equal(false);
+        await settings.setExcludeNSFW(false);
+        const optedOut = await new HijalaExtension().getSearchResults({ title: "Mimosa" });
+        expect(optedOut.items.some((item) => item.mangaId === unknown)).to.equal(true);
+        const mature = parseGenreOptions(await fetchText(`${BASE_URL}/series`)).find((genre) =>
+          /mature/i.test(genre.title),
+        )!;
+        await settings.setExcludedGenres([mature.id]);
+        const stillExcluded = await new HijalaExtension().getSearchResults({ title: "Mimosa" });
+        expect(stillExcluded.items.some((item) => item.mangaId === unknown)).to.equal(false);
+      } finally {
+        probe.unregisterInterceptor();
+        await settings.setExcludedGenres([]);
+        await settings.setExcludeNSFW(true);
+      }
+    },
+  );
+  suite.test(
+    "native: string and incomplete chapter inputs fail before any network request",
+    async () => {
+      const probe = new Probe("Hijala.native-object-guards");
+      probe.registerInterceptor();
+      try {
+        await rejects(
+          () => Hijala.getChapters("mimosa" as unknown as SourceManga),
+          /native SourceManga/,
+        );
+        await rejects(
+          () => Hijala.getChapters({ mangaId: "mimosa" } as SourceManga),
+          /native SourceManga/,
+        );
+        await rejects(
+          () => Hijala.getChapterDetails("chapter-56" as unknown as Chapter),
+          /native Chapter/,
+        );
+        await rejects(
+          () => Hijala.getChapterDetails({ chapterId: "chapter-56" } as Chapter),
+          /native Chapter/,
+        );
+        expect(probe.requests.length).to.equal(0);
+      } finally {
+        probe.unregisterInterceptor();
+      }
+    },
+  );
+  suite.test("safety: pending cached discovery cannot survive a settings change", async () => {
+    const source = new HijalaExtension(),
+      probe = new Probe("Hijala.settings-race");
+    let release!: () => void, started!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    probe.gate = async (request, data) => {
+      if (request.url === `${BASE_URL}/`) {
+        started();
+        await gate;
+      }
+      return data;
+    };
+    probe.registerInterceptor();
+    const pending = source.getDiscoverSectionItems(SECTIONS[0]);
+    try {
+      await Promise.race([
+        ready,
+        pending.then(() => {
+          throw new Error("Expected live response gate");
+        }),
+      ]);
+      await settings.setExcludeNSFW(false);
+      await settings.setExcludeNSFW(true);
+      release();
+      await rejects(() => pending, /settings changed/);
+    } finally {
+      release();
+      probe.unregisterInterceptor();
+    }
+    const current = await source.getDiscoverSectionItems(SECTIONS[0]);
+    expect(current.items).not.to.be.empty;
+  });
+  suite.test(
+    "reader: live-derived malformed page order and duplicate URLs fail closed",
+    async () => {
+      const chapter = chapters.find((item) => item.chapterId === "chapter-56")!;
+      for (const mode of ["negative-order", "duplicate-url"]) {
+        const probe = new Probe(`Hijala.reader-${mode}`);
+        probe.gate = async (request, data) => {
+          if (request.url !== seriesUrl(chapter.sourceManga.mangaId, chapter.chapterId))
+            return data;
+          const text = Application.arrayBufferToUTF8String(data);
+          const images = pageProperty<{ publicImages: { url: string; order: number }[] }>(
+            text,
+            "chapter",
+          ).publicImages;
+          expect(images.length).to.be.greaterThan(1);
+          const start = text.indexOf("publicImages:");
+          const changed =
+            mode === "negative-order"
+              ? text.slice(0, start) + text.slice(start).replace(/order:0(?=[,}])/, "order:-1")
+              : text.slice(0, start) +
+                text
+                  .slice(start)
+                  .replace(JSON.stringify(images[1].url), JSON.stringify(images[0].url));
+          expect(changed).not.to.equal(text);
+          const altered = pageProperty<{ publicImages: { url: string; order: number }[] }>(
+            changed,
+            "chapter",
+          ).publicImages;
+          if (mode === "negative-order") expect(altered[0].order).to.equal(-1);
+          else expect(altered[1].url).to.equal(altered[0].url);
+          return new TextEncoder().encode(changed).buffer as ArrayBuffer;
+        };
+        probe.registerInterceptor();
+        try {
+          await rejects(
+            () => new HijalaExtension().getChapterDetails(chapter),
+            /invalid page ordering|duplicate reader pages/,
+          );
+        } finally {
+          probe.unregisterInterceptor();
+        }
+      }
+    },
+  );
+  suite.test(
+    "safety: parser never evaluates current site scripts or weakens access checks",
+    async () => {
+      const unsafe = home.replace(
+        "latestReleaseFilters:",
+        'latestReleaseFilters:(()=>{throw new Error("executed")})(),unused:',
+      );
+      expect(() => pageProperty(unsafe, "latestReleaseFilters")).to.throw(/unsupported|incomplete/);
+      const paid = chapters.find((chapter) => chapter.additionalInfo?.locked === "true")!;
+      const forced = { ...paid, additionalInfo: { locked: "false" } };
+      await rejects(() => Hijala.getChapterDetails(forced), /requires access|no reader pages/);
+    },
+  );
+  try {
+    await suite.run();
+  } finally {
+    Application.setState(saved, "Hijala.preferences");
+  }
+}
