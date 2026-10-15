@@ -325,8 +325,8 @@ export function parseKaganeDate(value?: string | null): Date | undefined {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
-export function mapPublicationStatus(status: string): string {
-  switch (status.toUpperCase()) {
+export function mapPublicationStatus(status: unknown): string {
+  switch (typeof status === "string" ? status.trim().toUpperCase() : "") {
     case "ONGOING":
       return "Ongoing";
     case "COMPLETED":

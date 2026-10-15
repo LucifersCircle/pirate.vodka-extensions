@@ -218,7 +218,8 @@ export interface DetailsDto {
   title: string;
   translated_language?: string | null;
   description?: string | null;
-  upload_status: string;
+  publication_status?: string | null;
+  upload_status?: string | null;
   format?: string | null;
   content_rating?: string | null;
   age_rating?: string | null;
