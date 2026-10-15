@@ -34,6 +34,27 @@ const rejects = async (operation: () => Promise<unknown>, pattern: RegExp) => {
   }
   expect(String(failure)).to.match(pattern);
 };
+const checkReaderImages = async (pages: string[]) => {
+  for (const url of new Set([pages[0], pages[pages.length - 1]])) {
+    const [response, data] = await Application.scheduleRequest({ url, method: "GET" });
+    expect(response.status, url).to.equal(200);
+    const contentType = Object.entries(response.headers).find(
+      ([name]) => name.toLowerCase() === "content-type",
+    )?.[1];
+    expect(contentType, url).to.match(/^image\//i);
+    const bytes = new Uint8Array(data);
+    expect(bytes.length, url).to.be.greaterThan(100);
+    const magic = String.fromCharCode(...bytes.slice(0, 16));
+    expect(
+      (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) ||
+        magic.startsWith("\x89PNG\r\n\x1a\n") ||
+        magic.startsWith("GIF8") ||
+        (magic.startsWith("RIFF") && magic.slice(8, 12) === "WEBP") ||
+        /^....ftypavi[fs]/s.test(magic),
+      `Image response must contain supported image bytes: ${url}`,
+    ).to.equal(true);
+  }
+};
 
 export async function runTests(logger: TestLogger) {
   const saved = Application.getState("MangaSushi.preferences");
@@ -99,9 +120,42 @@ export async function runTests(logger: TestLogger) {
   suite.test("getChapters and reader: accessible with default exclusion", async () => {
     const chapters = await MangaSushi.getChapters(safeSource);
     expect(chapters.length).to.be.greaterThan(0);
+    for (const chapter of chapters) expect(chapter.sourceManga).to.equal(safeSource);
     const reader = await MangaSushi.getChapterDetails(chapters[0]);
     if (!("pages" in reader)) throw new Error("Expected manga reader pages.");
     expect(reader.pages.length).to.be.greaterThan(1);
+    await checkReaderImages(reader.pages);
+  });
+  suite.test("getChapters and reader: cold-cache persisted records across three safe titles", async () => {
+    const titles = sourceSearch.items.filter((item) => isAllowed(item.metadata)).slice(0, 3);
+    expect(titles).to.have.length(3);
+    for (const item of titles) {
+      // Reload from persisted IDs rather than relying on a warm discovery cache.
+      await settings.setExcludeNSFW(true);
+      const source = await MangaSushi.getMangaDetails(item.mangaId);
+      const storedSource = JSON.parse(JSON.stringify(source)) as SourceManga;
+      const chapters = await MangaSushi.getChapters(storedSource);
+      expect(chapters.length, item.mangaId).to.be.greaterThan(0);
+      expect(new Set(chapters.map((chapter) => chapter.chapterId)).size).to.equal(
+        chapters.length,
+      );
+      for (const chapter of chapters) {
+        expect(chapter.sourceManga).to.equal(storedSource);
+        expect(chapter.sourceManga.mangaId).to.equal(item.mangaId);
+        expect(chapter.chapNum).to.be.a("number").and.not.to.be.NaN;
+        if (chapter.publishDate)
+          expect(chapter.publishDate.getTime()).to.be.a("number").and.not.to.be.NaN;
+      }
+      for (const chapter of new Set([chapters[0], chapters[chapters.length - 1]])) {
+        const storedChapter = JSON.parse(JSON.stringify(chapter)) as Chapter;
+        const reader = await MangaSushi.getChapterDetails(storedChapter);
+        if (!("pages" in reader)) throw new Error("Expected manga reader pages.");
+        expect(reader.id).to.equal(chapter.chapterId);
+        expect(reader.mangaId).to.equal(item.mangaId);
+        expect(reader.pages.length).to.be.greaterThan(0);
+        expect(new Set(reader.pages).size).to.equal(reader.pages.length);
+      }
+    }
   });
   suite.test("getSearchResults: every native sort executes", async () => {
     for (const sort of SORTS) {
@@ -241,6 +295,7 @@ export async function runTests(logger: TestLogger) {
   suite.test("getChapters: asynchronous full list and decimal labels", async () => {
     sampleChapters = await MangaSushi.getChapters(sample);
     expect(sampleChapters.length).to.be.greaterThan(60);
+    for (const chapter of sampleChapters) expect(chapter.sourceManga).to.equal(sample);
     expect(new Set(sampleChapters.map((chapter) => chapter.chapterId)).size).to.equal(
       sampleChapters.length,
     );
@@ -261,6 +316,7 @@ export async function runTests(logger: TestLogger) {
     expect(result.pages).to.have.length(12);
     for (const [index, page] of result.pages.entries())
       expect(page).to.match(new RegExp(`/${String(index).padStart(2, "0")}\\.jpg$`));
+    await checkReaderImages(result.pages);
   });
   suite.test("reader: duplicate pages and page-order gaps fail closed", async () => {
     const chapter = sampleChapters.find((item) => item.chapterId === "chapter-66-1")!;

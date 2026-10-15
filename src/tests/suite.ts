@@ -309,6 +309,7 @@ export const registerDefaultChapterProvidingSourceTests = function (
       expect(new Set(chapters.map((chapter) => chapter.chapterId)).size).to.equal(chapters.length);
       for (const chapter of chapters) {
         expect(chapter.chapterId).to.be.a("string").and.not.be.empty;
+        expect(chapter.sourceManga).to.equal(params[0]);
         expect(chapter.sourceManga.mangaId).to.equal(params[0].mangaId);
       }
 
