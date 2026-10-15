@@ -1,5 +1,27 @@
 [
   {
+    "checkedAt": "2026-10-15T07:04:38.090Z",
+    "runUrl": "https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38696063430",
+    "sha": "b9c225e91f9626f26717f3d4c4ffc8672b9a6383",
+    "sources": {
+      "Hijala": {
+        "status": "pass"
+      },
+      "Kagane": {
+        "status": "pass"
+      },
+      "MangaSushi": {
+        "status": "pass"
+      },
+      "ManhwaNex": {
+        "status": "pass"
+      },
+      "VortexScans": {
+        "status": "pass"
+      }
+    }
+  },
+  {
     "checkedAt": "2026-10-15T06:42:38.307Z",
     "runUrl": "https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/38693772613",
     "sha": "d28641be1897a01499148a278c202915128177e7",
