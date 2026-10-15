@@ -10,6 +10,8 @@ import { POPULAR_TAG_NAMES } from "./tag-options";
 interface PersistedTagCache {
   cachedAt: number;
   entries: TagDto[];
+  // Runtime-only provenance: a stale fallback cannot establish that a tag is unknown.
+  refreshFailure?: { error: unknown };
 }
 
 let tagMemo: PersistedTagCache | undefined;
@@ -44,18 +46,20 @@ async function loadTagEntries(memoryCache?: PersistedTagCache): Promise<Persiste
   }
 
   try {
-    const entries = (
-      await fetchJSON<TagDto[]>({
-        url: `${API_URL}/api/v2/tags/list`,
-        method: "GET",
-      })
-    ).filter(isTagDto);
+    const response = await fetchJSON<TagDto[]>({
+      url: `${API_URL}/api/v2/tags/list`,
+      method: "GET",
+    });
+    if (!Array.isArray(response) || !response.length || !response.every(isTagDto)) {
+      throw new Error("Kagane tags are unavailable. Refresh and try again.");
+    }
+    const entries = response;
     const cache = { cachedAt: Date.now(), entries };
     persistTagCache(cache);
     return cache;
   } catch (error) {
     if (error instanceof CloudflareError) throw error;
-    if (cached) return cached;
+    if (cached) return { ...cached, refreshFailure: { error } };
     throw error;
   }
 }
@@ -88,13 +92,22 @@ export function resolveSelectedTagValues(
   return unique(
     values.flatMap((value) => {
       const name = namesById.get(value);
-      return name ? (index.get(name) ?? []) : [value];
+      if (!name) throw unknownTag(value);
+      return index.get(name) ?? [];
     }),
   );
 }
 
 export function resolveTagNames(names: string[], index: Map<string, string[]>): string[] {
-  return unique(names.flatMap((name) => index.get(normalizeTagName(name)) ?? []));
+  const validIds = new Set([...index.values()].flat());
+  return unique(
+    names.flatMap((name) => {
+      if (validIds.has(name)) return [name];
+      const ids = index.get(normalizeTagName(name));
+      if (!ids?.length) throw unknownTag(name);
+      return ids;
+    }),
+  );
 }
 
 export function parseTagInput(input: string): { included: string[]; excluded: string[] } {
@@ -107,7 +120,8 @@ export function parseTagInput(input: string): { included: string[]; excluded: st
 
     const shouldExclude = entry.startsWith("-");
     const name = shouldExclude ? entry.slice(1).trim() : entry;
-    if (name) (shouldExclude ? excluded : included).push(name);
+    if (!name) throw new Error("Invalid Kagane tag filter. Enter a tag name after '-'.");
+    (shouldExclude ? excluded : included).push(name);
   }
 
   return { included: unique(included), excluded: unique(excluded) };
@@ -122,7 +136,8 @@ function readTagCache(): PersistedTagCache | undefined {
     if (
       !isRecord(parsed) ||
       typeof parsed.cachedAt !== "number" ||
-      !Array.isArray(parsed.entries)
+      !Array.isArray(parsed.entries) ||
+      !parsed.entries.length
     ) {
       return undefined;
     }
@@ -145,7 +160,7 @@ function isTagDto(value: unknown): value is TagDto {
   return (
     isRecord(value) &&
     typeof value.id === "string" &&
-    value.id.length > 0 &&
+    value.id.trim().length > 0 &&
     typeof value.tag_name === "string" &&
     value.tag_name.trim().length > 0
   );
@@ -157,6 +172,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeTagName(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function unknownTag(value: string): unknown {
+  if (tagMemo?.refreshFailure) return tagMemo.refreshFailure.error;
+  return new Error(`Unknown Kagane tag "${value}". Refresh tag choices or remove this filter.`);
 }
 
 function unique(values: string[]): string[] {
