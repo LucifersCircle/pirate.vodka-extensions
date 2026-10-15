@@ -5,10 +5,11 @@ import type { Chapter, ChapterDetails, SourceManga, UpdateManager } from "@paper
 import { URL } from "@paperback/types";
 
 import { fetchJSON } from "../../services/network";
-import { getChapterTitleMode, getContentLanguages, getDataSaver } from "../settings-form/main";
+import { getChapterTitleMode, getDataSaver } from "../settings-form/main";
 import { API_URL, BASE_URL, type DetailsDto, type SourceDto } from "../shared/models";
 import { getChallengeResponse, getKaganeMetadata } from "../shared/utils";
 import { fetchChapterBooks } from "./books";
+import { chapterLanguage } from "./language";
 import { parseChapterList } from "./parsers";
 
 export class ChapterProvider {
@@ -34,7 +35,7 @@ export class ChapterProvider {
       throw new Error("Kagane series response contains an invalid chapter list.");
     }
     const sources = await safeSources();
-    const langCode = getContentLanguages()[0] ?? "en";
+    const langCode = chapterLanguage(data.translated_language);
 
     return parseChapterList(data, sourceManga, getChapterTitleMode(), langCode, sources);
   }

@@ -217,6 +217,7 @@ export interface LatestChapter {
 
 export interface DetailsDto {
   title: string;
+  translated_language?: string | null;
   description?: string | null;
   upload_status: string;
   format?: string | null;
