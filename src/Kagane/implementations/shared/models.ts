@@ -85,8 +85,7 @@ export const SORTING_OPTIONS: SortingOption[] = [
   { id: "avg_views_week,desc", label: "Popular (Week)" },
   { id: "avg_views_month,desc", label: "Popular (Month)" },
   { id: "updated_at,desc", label: "Latest" },
-  { id: "series_name,desc", label: "By Name" },
-  { id: "books_count,desc", label: "Books Count" },
+  { id: "current_books,desc", label: "Books Count" },
   { id: "created_at,desc", label: "Created At" },
 ];
 

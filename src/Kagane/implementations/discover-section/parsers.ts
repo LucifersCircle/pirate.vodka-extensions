@@ -97,7 +97,7 @@ function buildInfoItems(
   | [{ symbol: string; text: string }, { symbol: string; text: string }]
   | undefined {
   const ratingItem =
-    typeof rating === "number" && Number.isFinite(rating)
+    typeof rating === "number" && Number.isFinite(rating) && rating >= 0 && rating <= 100
       ? { symbol: "star.fill", text: `${formatRating(rating)}/10` }
       : undefined;
   const viewsItem =
@@ -112,8 +112,7 @@ function buildInfoItems(
 }
 
 function formatRating(value: number): string {
-  const rating = value > 10 ? value / 10 : value;
-  return rating.toFixed(1);
+  return (value / 10).toFixed(1);
 }
 
 function formatCompactNumber(value: number): string {
