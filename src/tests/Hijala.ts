@@ -155,21 +155,31 @@ export async function runTests(logger: TestLogger) {
   suite.test(
     "settings: honest default-on genre exclusion and complete native taxonomy",
     async () => {
-      settings = await Hijala.getSettingsForm();
-      expect(preferences().excludeNSFW).to.equal(true);
-      expect(preferences().hidePaid).to.equal(true);
-      expect(preferences().types).to.deep.equal(TYPES);
-      const taxonomy = parseGenreOptions(await fetchText(`${BASE_URL}/series`));
-      expect(taxonomy.length).to.be.greaterThan(20);
-      expect(
-        taxonomy.some((item) => blockedGenre(item.title) && /mature/i.test(item.title)),
-      ).to.equal(true);
-      const form = await Hijala.getAdvancedSearchForm({ title: "" });
-      expect(form.getSections().length).to.equal(2);
-      expect((await Hijala.getSortingOptions()).map((item) => item.id)).to.deep.equal(
-        SORTS.map((item) => item.id),
-      );
-      logger.log("liveGenres", taxonomy.length);
+      const canonical = new Probe("Hijala.canonical-taxonomy");
+      canonical.registerInterceptor();
+      try {
+        settings = await Hijala.getSettingsForm();
+        expect(preferences().excludeNSFW).to.equal(true);
+        expect(preferences().hidePaid).to.equal(true);
+        expect(preferences().types).to.deep.equal(TYPES);
+        const taxonomy = parseGenreOptions(await fetchText(`${BASE_URL}/series/`));
+        expect(taxonomy.length).to.be.greaterThan(20);
+        expect(
+          taxonomy.some((item) => blockedGenre(item.title) && /mature/i.test(item.title)),
+        ).to.equal(true);
+        const form = await Hijala.getAdvancedSearchForm({ title: "" });
+        expect(form.getSections().length).to.equal(2);
+        expect((await Hijala.getSortingOptions()).map((item) => item.id)).to.deep.equal(
+          SORTS.map((item) => item.id),
+        );
+        logger.log("liveGenres", taxonomy.length);
+        expect(canonical.requests.length).to.be.greaterThan(0);
+        expect(
+          canonical.requests.every((request) => request.url === `${BASE_URL}/series/`),
+        ).to.equal(true);
+      } finally {
+        canonical.unregisterInterceptor();
+      }
     },
   );
   suite.test("discover: actual current five sections and rendered Popular limit", async () => {
@@ -912,7 +922,7 @@ export async function runTests(logger: TestLogger) {
         (chapter) => chapter.additionalInfo?.locked === "false",
       )!;
       expect(available).not.to.equal(undefined);
-      const mature = parseGenreOptions(await fetchText(`${BASE_URL}/series`)).find((genre) =>
+      const mature = parseGenreOptions(await fetchText(`${BASE_URL}/series/`)).find((genre) =>
         /mature/i.test(genre.title),
       )!;
       await settings.setExcludedGenres([mature.id]);
@@ -951,7 +961,7 @@ export async function runTests(logger: TestLogger) {
         await settings.setExcludeNSFW(false);
         const optedOut = await new HijalaExtension().getSearchResults({ title: "Mimosa" });
         expect(optedOut.items.some((item) => item.mangaId === unknown)).to.equal(true);
-        const mature = parseGenreOptions(await fetchText(`${BASE_URL}/series`)).find((genre) =>
+        const mature = parseGenreOptions(await fetchText(`${BASE_URL}/series/`)).find((genre) =>
           /mature/i.test(genre.title),
         )!;
         await settings.setExcludedGenres([mature.id]);

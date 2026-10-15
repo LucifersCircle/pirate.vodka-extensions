@@ -8,7 +8,7 @@
 
 ## Hijala
 
-Version `0.0.1-alpha.3` follows the current Hijala website: Featured, Latest
+Version `0.0.1-alpha.4` follows the current Hijala website: Featured, Latest
 Releases, New, Most Popular and Latest Updates. Latest/New use verified source
 pagination; Popular uses the rendered first nine titles and chapter updates use
 actual source chapter identities. Stale Hot and homepage Genres rows are removed;
