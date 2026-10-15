@@ -11,6 +11,7 @@ import {
   type TriStateSelectRowProps,
 } from "@paperback/types";
 import * as cheerio from "cheerio";
+import { serializedProperty } from "./page-data";
 import {
   BASE_URL,
   LABELS,
@@ -53,9 +54,24 @@ const plainText = (value: string): string =>
     .text()
     .trim();
 
-// Next streams JSON strings across script tags. Parse data only; never execute scripts.
+const routerScript = ($: cheerio.CheerioAPI): string | undefined => {
+  const scripts = $("script")
+    .toArray()
+    .map((element) => $(element).text())
+    .filter(
+      (text) =>
+        text.startsWith('(self.$R=self.$R||{})["tsr"]=[];') && text.includes("$_TSR.router="),
+    );
+  if (scripts.length > 1) throw new Error("Hijala returned ambiguous page data.");
+  return scripts[0];
+};
+
+// Support both TanStack/Seroval literals and legacy Next JSON streams. Never execute scripts.
 export const pageProperty = <T>(html: string, key: string): T => {
   const $ = cheerio.load(html);
+  const serialized = routerScript($);
+  if (serialized)
+    return serializedProperty<T>(serialized, key === "sliderPosts" ? "combinedSliderPosts" : key);
   let stream = "";
   $("script").each((_index, element) => {
     const match = $(element)
@@ -321,6 +337,19 @@ export const parseChapters = (
   capturedAt: Date,
 ): Chapter[] => {
   const post = pageProperty<Post>(html, "post");
+  if (routerScript(cheerio.load(html))) {
+    const chapters = pageProperty<SiteChapter[]>(html, "initialChapters");
+    const total = pageProperty<number>(html, "totalChapterCount");
+    if (
+      !Number.isSafeInteger(total) ||
+      total < 0 ||
+      total !== post._count?.chapters ||
+      !Array.isArray(chapters) ||
+      chapters.some((chapter) => typeof chapter.isLocked !== "boolean")
+    )
+      throw new Error("Hijala returned an incomplete chapter list or access status.");
+    post.chapters = chapters;
+  }
   if (
     post.slug !== idToSlug(sourceManga.mangaId) ||
     !Array.isArray(post.chapters) ||
@@ -354,6 +383,19 @@ export const parseChapters = (
 
 export const parseReader = (html: string, chapter: Chapter): ChapterDetails => {
   const data = pageProperty<ReaderChapter>(html, "chapter");
+  if (routerScript(cheerio.load(html))) {
+    if (
+      typeof data.seriesSlug !== "string" ||
+      typeof data.isNovel !== "boolean" ||
+      typeof data.isLocked !== "boolean" ||
+      typeof data.isAccessible !== "boolean"
+    )
+      throw new Error("Hijala returned incomplete reader identity or access status.");
+    if (data.requiresProtectedFetch !== false)
+      throw new Error("This chapter requires access on the Hijala website.");
+    data.mangaPost = { slug: data.seriesSlug, isNovel: data.isNovel };
+    data.images = data.publicImages!;
+  }
   if (
     data.slug !== idToSlug(chapter.chapterId) ||
     data.mangaPost?.slug !== idToSlug(chapter.sourceManga.mangaId)

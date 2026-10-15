@@ -6,7 +6,8 @@
 
 ## Extension health
 
-All extensions are checked hourly at minute 17 (UTC). Click a run link for full
+All extensions are checked every 30 minutes at minutes 17 and 47 (UTC), and on
+relevant source or configuration pushes to `0.9/stable`. Click a run link for full
 logs and downloadable results.
 
 <!-- LIVE_TEST_STATUS:START -->

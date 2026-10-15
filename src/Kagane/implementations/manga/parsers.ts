@@ -4,12 +4,8 @@
 import type { SourceManga, TagSection } from "@paperback/types";
 
 import { BASE_URL, type DetailsDto, type KaganeMetadata } from "../shared/models";
-import {
-  buildImageUrl,
-  getPaperbackContentRating,
-  joinUnique,
-  mapPublicationStatus,
-} from "../shared/utils";
+import { getPaperbackBookContentRating } from "../shared/rating";
+import { buildImageUrl, joinUnique, mapPublicationStatus } from "../shared/utils";
 
 export function parseMangaDetails(
   mangaId: string,
@@ -46,7 +42,7 @@ export function parseMangaDetails(
       author: joinUnique(authors),
       artist: joinUnique(artists),
       status: mapPublicationStatus(data.upload_status),
-      contentRating: getPaperbackContentRating(data.content_rating),
+      contentRating: getPaperbackBookContentRating(data),
       tagGroups,
       shareUrl: `${BASE_URL}/series/${mangaId}`,
     },

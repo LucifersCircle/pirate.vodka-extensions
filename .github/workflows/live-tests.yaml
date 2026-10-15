@@ -2,8 +2,17 @@ name: Live Extension Tests
 
 on:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "17,47 * * * *"
   workflow_dispatch:
+  push:
+    branches:
+      - "0.9/stable"
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "compose*.yaml"
+      - "package*.json"
+      - ".github/workflows/live-tests.yaml"
   pull_request:
     paths:
       - "src/**"
@@ -114,7 +123,7 @@ jobs:
           if git diff --cached --quiet; then
             exit 0
           fi
-          git commit -m "docs: update hourly extension test results"
+          git commit -m "docs: update extension test results"
           # Reapply the status to the latest README if the branch advanced during testing.
           for attempt in 1 2 3; do
             if git push origin "HEAD:$DEFAULT_BRANCH"; then
@@ -127,6 +136,6 @@ jobs:
             if git diff --cached --quiet; then
               exit 0
             fi
-            git commit -m "docs: update hourly extension test results"
+            git commit -m "docs: update extension test results"
           done
           exit 1

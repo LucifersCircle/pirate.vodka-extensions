@@ -232,6 +232,9 @@ export const registerDefaultSearchResultsProvidingSourceTests = function (
       const searchResults = await extension.getSearchResults(...params);
       expect(searchResults).not.empty;
       expect(searchResults.items).not.be.empty;
+      expect(new Set(searchResults.items.map((item) => item.mangaId)).size).to.equal(
+        searchResults.items.length,
+      );
       for (const item of searchResults.items) {
         expect(item.mangaId).to.be.a("string").and.not.be.empty;
         expect(item.title).to.be.a("string").and.not.be.empty;
@@ -303,6 +306,7 @@ export const registerDefaultChapterProvidingSourceTests = function (
 
       const chapters = await extension.getChapters(...params);
       expect(chapters).to.not.be.empty;
+      expect(new Set(chapters.map((chapter) => chapter.chapterId)).size).to.equal(chapters.length);
       for (const chapter of chapters) {
         expect(chapter.chapterId).to.be.a("string").and.not.be.empty;
         expect(chapter.sourceManga.mangaId).to.equal(params[0].mangaId);
