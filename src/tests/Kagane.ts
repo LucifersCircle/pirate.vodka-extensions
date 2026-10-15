@@ -164,6 +164,21 @@ export function assertKaganeBooksCountOrder(capture: Capture, items: SearchResul
 // Saved-sort checks add no provider calls and never change search filters/body.
 export async function assertKaganeSavedSorts(capture: Capture) {
   const source = Kagane as typeof Kagane & KaganeImplementation;
+  const sections = await source.getDiscoverSections();
+  expect(sections.map(({ id, title }) => [id, title])).to.deep.equal([
+    ["popular", "Popular"], ["trending", "Popularity"], ["latest", "Latest Updates"],
+    ["recently-added", "Recently Added"], ["genres", "Genres"],
+  ]);
+  const popularity = sections.find((section) => section.id === "trending")!;
+  const chips = await source.getDiscoverSectionItems(popularity);
+  expect(chips.metadata).to.equal(undefined);
+  expect(chips.items).to.deep.equal([
+    ["Today", "avg_views_today,desc"], ["This Week", "avg_views_week,desc"],
+    ["This Month", "avg_views_month,desc"], ["All Time", "avg_views,desc"],
+  ].map(([name, sort]) => ({
+    type: "genresCarouselItem", name,
+    searchQuery: { title: "", metadata: [{ id: HOME_SECTION_METADATA_ID, value: sort }] },
+  })));
   const options = await source.getSortingOptions();
   expect(options.map((option) => option.id)).to.deep.equal([
     "relevance", "total_views,desc", "avg_views,desc", "avg_views_today,desc",
