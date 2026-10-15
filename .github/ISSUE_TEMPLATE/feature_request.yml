@@ -1,0 +1,31 @@
+name: Feature or source request
+description: Suggest an improvement or request a source extension.
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check existing requests first and describe the problem you want to solve.
+        Issues are public. Share only public links and remove private account details, credentials, and access tokens.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What is missing or difficult, and which app or extension is affected?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed improvement
+      description: Describe the behavior you would like. Mention alternatives if useful.
+    validations:
+      required: true
+  - type: input
+    id: source-link
+    attributes:
+      label: Source or reference link (optional)
+      description: For a new source, include its public website. Do not include login details or token-bearing links.
+      placeholder: "https://example.com/"
+    validations:
+      required: false
