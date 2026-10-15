@@ -381,6 +381,27 @@ void test("workflow preserves full static gates, non-PR publication and credenti
   assert.ok(!workflow.includes("pull_request_target"));
 });
 
+void test("live sweeps use schedule/manual and PR events while pushes retain static checks", () => {
+  const readWorkflow = (name) =>
+    readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8");
+  const events = (workflow) =>
+    [...workflow.match(/^on:\s*\n([\s\S]*?)(?=^\S)/m)[1].matchAll(/^ {2}([a-z_]+):/gm)]
+      .map((match) => match[1])
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const live = readWorkflow("live-tests.yaml");
+  assert.deepEqual(events(live), ["pull_request", "schedule", "workflow_dispatch"]);
+  assert.match(live, /cron: "17,47 \* \* \* \*"/);
+  const checks = readWorkflow("test.yaml");
+  assert.deepEqual(events(checks), ["pull_request", "push", "workflow_dispatch"]);
+  assert.match(checks, /  push:\n    branches:\n      - "0\.9\/stable"/);
+  assert.match(checks, /    paths-ignore:\n      - "README\.md"\n      - "reports\/\*\*"/);
+  assert.match(checks, /run: npm test/);
+  const deploy = readWorkflow("bundle-deploy.yaml");
+  assert.deepEqual(events(deploy), ["push", "workflow_dispatch"]);
+  assert.match(deploy, /run: npm run bundle/);
+  assert.doesNotMatch(deploy, /test:extensions/);
+});
+
 void test("cross-source, path-alias and dynamic dependencies invalidate source-only selection", () => {
   const dir = mkdtempSync(join(tmpdir(), "source-dependencies-"));
   const put = (path, content) => {

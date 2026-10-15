@@ -29,9 +29,13 @@ first/middle/last reader image bytes. Covers retain their source-provided URLs.
 
 ## Extension health
 
-All extensions are checked every 30 minutes at minutes 17 and 47 (UTC), and on
-relevant source or configuration pushes to `0.9/stable`. Click a run link for full
-logs and downloadable results.
+Full live sweeps run every 30 minutes at minutes 17 and 47 (UTC), and on manual
+dispatch. GitHub may delay scheduled runs. Pull requests run live checks for
+affected sources; shared or uncertain changes require the full live suite.
+Merges do not start another live run. Full static checks and bundles still run on
+pull requests and relevant `0.9/stable` pushes; publication remains independent.
+The status below records the last full sweep and its tested commit, not a pass
+for newer commits. Click a run link for logs and downloadable results.
 
 <!-- LIVE_TEST_STATUS:START -->
 
@@ -346,12 +350,13 @@ unless `PROXY_URL` is set on the container. The test runner uses Node's environm
 proxy support. Keep the environment's Node CA trust configuration. TLS
 verification stays enabled in the browser.
 
-The **Live Extension Tests** workflow also runs on PRs that affect extensions or
-the test setup, and can be started manually from the Actions tab. Every completed
-scheduled run on the default branch updates only the marked README status section
-and `reports/live-tests-history.json`, including failed tests and setup errors.
-PR runs publish their results in the job summary and artifacts without editing the
-README. Full reports, CLI output, and browser logs are retained for seven days.
+The **Live Extension Tests** workflow can be started manually from the Actions
+tab. Scheduled and manual full runs on the default branch update only the marked
+README status section and `reports/live-tests-history.json`, including failed
+tests and setup errors. PR results remain in the job summary and artifacts, with
+unselected sources explicitly identified, without editing README/history or
+publishing extensions. Reports, CLI output, and browser logs are retained for
+seven days.
 
 Stop the test service when finished:
 

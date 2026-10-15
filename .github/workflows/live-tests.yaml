@@ -4,15 +4,6 @@ on:
   schedule:
     - cron: "17,47 * * * *"
   workflow_dispatch:
-  push:
-    branches:
-      - "0.9/stable"
-    paths:
-      - "src/**"
-      - "scripts/**"
-      - "compose*.yaml"
-      - "package*.json"
-      - ".github/workflows/live-tests.yaml"
   pull_request:
 
 permissions:
