@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-10-15T05:08:17.455Z",
+  "buildTime": "2026-10-15T05:33:52.183Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.92",
     "types": "1.0.0-alpha.92"
@@ -12,7 +12,7 @@
     {
       "name": "Hijala",
       "description": "Extension that pulls content from en-hijala.com.",
-      "version": "0.0.1-alpha.2",
+      "version": "0.0.1-alpha.3",
       "icon": "icon.png",
       "language": "en",
       "contentRating": "MATURE",
