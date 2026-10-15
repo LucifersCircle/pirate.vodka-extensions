@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-10-15T00:00:39.156Z",
+  "buildTime": "2026-10-15T01:41:27.657Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.92",
     "types": "1.0.0-alpha.92"
@@ -54,6 +54,30 @@
         }
       ],
       "id": "Kagane"
+    },
+    {
+      "name": "Mangasushi",
+      "description": "Native Mangasushi catalog, search and reader. NSFW exclusion is on by default; unclassified titles are hidden.",
+      "version": "0.0.1-alpha.1",
+      "icon": "icon.png",
+      "language": "en",
+      "contentRating": "ADULT",
+      "capabilities": [
+        1,
+        4,
+        64,
+        32,
+        16
+      ],
+      "badges": [],
+      "developers": [
+        {
+          "name": "LucifersCircle",
+          "website": "https://pirate.vodka",
+          "github": "https://github.com/LucifersCircle"
+        }
+      ],
+      "id": "MangaSushi"
     },
     {
       "name": "VortexScans",
