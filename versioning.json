@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-10-15T06:02:32.865Z",
+  "buildTime": "2026-10-15T06:10:19.040Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.92",
     "types": "1.0.0-alpha.92"
@@ -82,7 +82,7 @@
     {
       "name": "ManhwaNex",
       "description": "Native ManhwaNex catalog, search and reader. NSFW exclusion is on by default; unclassified titles are hidden.",
-      "version": "0.0.1-alpha.2",
+      "version": "0.0.1-alpha.3",
       "icon": "icon.png",
       "language": "en",
       "contentRating": "ADULT",
