@@ -63,6 +63,11 @@ const rejects = async (operation: () => Promise<unknown>, pattern: RegExp) => {
 };
 const ids = (items: DiscoverSectionItem[]) =>
   items.map((item) => ("mangaId" in item ? item.mangaId : item.name));
+// The canonical taxonomy archive is not a per-title detail request.
+const isSeriesDetailRequest = (request: Pick<Request, "url">): boolean => {
+  const path = new globalThis.URL(request.url).pathname;
+  return path.startsWith("/series/") && path !== "/series/";
+};
 const bytes = async (pages: string[]) => {
   const evidence: { page: number; status: number; bytes: number }[] = [];
   for (const url of new Set([
@@ -144,6 +149,12 @@ export async function runTests(logger: TestLogger) {
   const suite = new TestSuite("Hijala tests", logger);
   suite.test("defaults: fresh persistent state", async () => {
     Application.setState(undefined, "Hijala.preferences");
+    for (const path of ["/series", "/series/", "/series/?page=1", "/series-other/title"]) {
+      expect(isSeriesDetailRequest({ url: `${BASE_URL}${path}` })).to.equal(false);
+    }
+    for (const path of ["/series/mimosa", "/series/mimosa/chapter-56"]) {
+      expect(isSeriesDetailRequest({ url: `${BASE_URL}${path}` })).to.equal(true);
+    }
   });
   registerDefaultTests(suite, Hijala, sourceInfo);
   let settings: HijalaSettingsForm;
@@ -239,11 +250,7 @@ export async function runTests(logger: TestLogger) {
         expect(
           probe.requests.filter((request) => request.url.includes("perPage=100")).length,
         ).to.equal(Math.ceil(fullCatalog.size / 100));
-        expect(
-          probe.requests.some((request) =>
-            new globalThis.URL(request.url).pathname.startsWith("/series/"),
-          ),
-        ).to.equal(false);
+        expect(probe.requests.some(isSeriesDetailRequest)).to.equal(false);
         expect(cold).to.equal(3 + Math.ceil(fullCatalog.size / 100));
         const warm = await Promise.all(
           sections.map((section) => source.getDiscoverSectionItems(section)),
@@ -389,11 +396,7 @@ export async function runTests(logger: TestLogger) {
             probe.requests,
           );
           expect([...result.ids].sort()).to.deep.equal(expected);
-          expect(
-            probe.requests.some((request) =>
-              new globalThis.URL(request.url).pathname.startsWith("/series/"),
-            ),
-          ).to.equal(false);
+          expect(probe.requests.some(isSeriesDetailRequest)).to.equal(false);
           evidence.push({
             kind,
             pages: result.pages,
@@ -464,11 +467,7 @@ export async function runTests(logger: TestLogger) {
             ),
           ).to.deep.equal(physical.map((_page, index) => index + 1));
           expect(physical.length).to.be.greaterThan(Math.ceil(posts.length / 20));
-          expect(
-            probe.requests.some((request) =>
-              new globalThis.URL(request.url).pathname.startsWith("/series/"),
-            ),
-          ).to.equal(false);
+          expect(probe.requests.some(isSeriesDetailRequest)).to.equal(false);
           evidence.push({
             kind,
             physicalPages: physical.length,
@@ -789,11 +788,7 @@ export async function runTests(logger: TestLogger) {
               repeatedRequests: 0,
             });
           }
-          expect(
-            probe.requests.some((request) =>
-              new globalThis.URL(request.url).pathname.startsWith("/series/"),
-            ),
-          ).to.equal(false);
+          expect(probe.requests.some(isSeriesDetailRequest)).to.equal(false);
         } finally {
           probe.unregisterInterceptor();
         }
