@@ -85,5 +85,5 @@ export const catalogUrl = (
     .join("&")}`;
 };
 
-export const feedUrl = (section: string, page: number): string =>
-  `${API_URL}/api/posts?page=${page}&perPage=${PAGE_SIZE}&searchTerm=&isNovel=false&tag=${section === "latest" || section === "updates" ? "latestUpdate" : section}`;
+export const feedUrl = (section: string, page: number, latestTag = "latestUpdate"): string =>
+  `${API_URL}/api/posts?page=${page}&perPage=${PAGE_SIZE}&searchTerm=&isNovel=false&tag=${section === "latest" || section === "updates" ? latestTag : section}`;

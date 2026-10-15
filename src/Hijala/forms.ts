@@ -24,6 +24,20 @@ import {
   type SeriesMetadata,
 } from "./models";
 
+let revision = 0;
+export const preferenceRevision = (): number => revision;
+const savePreferences = (value: Partial<Preferences> | undefined): void => {
+  revision++;
+  Application.setState(value, "Hijala.preferences");
+  Application.invalidateDiscoverSections();
+};
+
+// These are source genre labels, not a four-category content taxonomy.
+export const blockedGenre = (name: string): boolean =>
+  /^(mature|adult|smut|hentai|erotica|pornographic|pornography|ecchi|suggestive)$/i.test(
+    name.trim(),
+  );
+
 export const readFilters = (metadata?: Metadata): SearchFilters => {
   const data = (metadata ?? {}) as Partial<SearchFilters>;
   return {
@@ -47,6 +61,7 @@ export const readFilters = (metadata?: Metadata): SearchFilters => {
 export const preferences = (): Preferences => {
   const saved = Application.getState("Hijala.preferences") as Partial<Preferences> | undefined;
   return {
+    excludeNSFW: saved?.excludeNSFW ?? true,
     hidePaid: saved?.hidePaid ?? true,
     sections: saved?.sections ?? SECTIONS.map((section) => section.id),
     types: saved?.types ?? [...TYPES],
@@ -58,7 +73,9 @@ export const matchesPreferences = (item: { metadata?: unknown }, saved: Preferen
   const data = item.metadata as SeriesMetadata;
   return (
     !data.novel &&
-    (!data.type || saved.types.includes(data.type)) &&
+    saved.types.includes(data.type) &&
+    (!saved.excludeNSFW || (data.classified && !data.blocked)) &&
+    (!saved.excludedGenres.length || data.classified) &&
     !data.genres.some((id) => saved.excludedGenres.includes(id)) &&
     (!saved.hidePaid || !data.paid)
   );
@@ -95,6 +112,21 @@ export class HijalaSettingsForm extends Form {
   override getSections() {
     const saved = preferences();
     return [
+      Section(
+        {
+          id: "contentSafety",
+          header: "Content safety",
+          footer:
+            "Uses source genre labels, including Mature, Ecchi, Adult and Smut, not a four-category rating. Missing or invalid genre metadata is hidden by default. Labels may be incomplete and do not guarantee image content. Applies to Discover, Search, details, chapters and reading.",
+        },
+        [
+          ToggleRow("excludeNSFW", {
+            title: "Exclude NSFW content",
+            value: saved.excludeNSFW,
+            onValueChange: Application.Selector(this as HijalaSettingsForm, "setExcludeNSFW"),
+          }),
+        ],
+      ),
       Section({ id: "preferences", header: "Hijala" }, [
         SelectRow("types", {
           title: "Content types",
@@ -141,16 +173,19 @@ export class HijalaSettingsForm extends Form {
   }
 
   async setHidePaid(value: boolean) {
-    Application.setState({ ...preferences(), hidePaid: value }, "Hijala.preferences");
-    Application.invalidateDiscoverSections();
+    savePreferences({ ...preferences(), hidePaid: value });
+    this.reloadForm();
+  }
+
+  async setExcludeNSFW(value: boolean) {
+    savePreferences({ ...preferences(), excludeNSFW: value });
     this.reloadForm();
   }
 
   async setTypes(value: string[]) {
     const types = TYPES.filter((type) => value.includes(type));
     if (!types.length) throw new Error("Select at least one content type.");
-    Application.setState({ ...preferences(), types }, "Hijala.preferences");
-    Application.invalidateDiscoverSections();
+    savePreferences({ ...preferences(), types });
     this.reloadForm();
   }
 
@@ -158,8 +193,7 @@ export class HijalaSettingsForm extends Form {
     const excludedGenres = this.genres
       .filter((genre) => value.includes(genre.id))
       .map((genre) => genre.id);
-    Application.setState({ ...preferences(), excludedGenres }, "Hijala.preferences");
-    Application.invalidateDiscoverSections();
+    savePreferences({ ...preferences(), excludedGenres });
     this.reloadForm();
   }
 
@@ -168,14 +202,12 @@ export class HijalaSettingsForm extends Form {
       (section) => section.id,
     );
     if (!sections.length) throw new Error("Select at least one Discover section.");
-    Application.setState({ ...preferences(), sections }, "Hijala.preferences");
-    Application.invalidateDiscoverSections();
+    savePreferences({ ...preferences(), sections });
     this.reloadForm();
   }
 
   async reset() {
-    Application.setState(undefined, "Hijala.preferences");
-    Application.invalidateDiscoverSections();
+    savePreferences(undefined);
     this.reloadForm();
   }
 }
