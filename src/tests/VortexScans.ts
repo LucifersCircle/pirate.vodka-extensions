@@ -91,6 +91,53 @@ const isQuery = (request: Request): boolean => {
   return url.origin + url.pathname === `${DOMAIN_API}/query`;
 };
 
+// Independent public API oracle for the unchanged multi-layout HTML reader.
+// Numeric chapter IDs come only from the same native chapter-list response.
+type ReaderIdentity = { id?: number; slug: string; number: number; postId: number; postSlug: string };
+type OracleChapter = {
+  id: number; slug: string; number: number; mangaPostId: number; price: number;
+  mangaPost: { id?: number; slug: string }; chapterStatus?: string;
+  isLocked: boolean; isAccessible: boolean; isLockedByCoins?: boolean;
+  isPermanentlyLocked?: boolean | number; isShortLinkLocked?: boolean;
+  images?: { url: string; order: number }[];
+};
+function assertPublicChapter(chapter: OracleChapter, expected: ReaderIdentity, detail = false): void {
+  expect(chapter).to.be.an("object");
+  expect(Number.isSafeInteger(chapter.id) && chapter.id > 0, "source chapter ID").to.equal(true);
+  if (expected.id !== undefined) expect(chapter.id).to.equal(expected.id);
+  expect(chapter.slug).to.equal(expected.slug);
+  expect(chapter.number).to.equal(expected.number);
+  expect(chapter.mangaPostId).to.equal(expected.postId);
+  expect(chapter.mangaPost.slug).to.equal(expected.postSlug);
+  if (chapter.mangaPost.id !== undefined) expect(chapter.mangaPost.id).to.equal(expected.postId);
+  if (chapter.chapterStatus !== undefined) expect(chapter.chapterStatus).to.equal("PUBLIC");
+  expect(chapter.price, "public free oracle chapter").to.equal(0);
+  expect(chapter.isLocked).to.equal(false);
+  expect(chapter.isAccessible).to.equal(true);
+  expect(chapter.isPermanentlyLocked).to.be.oneOf([false, 0]);
+  expect(chapter.isShortLinkLocked).to.equal(false);
+  if (chapter.isLockedByCoins !== undefined) expect(chapter.isLockedByCoins).to.equal(false);
+  if (detail) {
+    expect(chapter.mangaPost.id).to.equal(expected.postId);
+    expect(chapter.chapterStatus).to.equal("PUBLIC");
+    expect(chapter.isLockedByCoins).to.equal(false);
+  }
+}
+function orderedOraclePages(chapter: OracleChapter): string[] {
+  expect(chapter.images).to.be.an("array").and.not.empty;
+  expect(chapter.images!.length).to.be.at.most(2000);
+  const images = [...chapter.images!].sort((left, right) => left.order - right.order);
+  images.forEach((image, index) => {
+    expect(image.order, "complete unique source page order").to.equal(index);
+    const url = new globalThis.URL(image.url);
+    expect(url.protocol).to.equal("https:");
+    expect(url.hostname).not.to.be.empty;
+    expect(url.username + url.password).to.equal("");
+  });
+  expect(new Set(images.map((image) => image.url)).size).to.equal(images.length);
+  return images.map((image) => image.url);
+}
+
 export async function runTests(logger: TestLogger) {
   const suite = new TestSuite("VortexScans tests", logger);
   const extension = VortexScans as typeof VortexScans & VortexScansImplementation;
@@ -227,9 +274,39 @@ export async function runTests(logger: TestLogger) {
     const response = probe.responses.find(({ request }) => request.url.endsWith(`/series/${slug}/${chapters[0].chapterId}`));
     expect(response).not.to.equal(undefined);
     const $ = cheerio.load(response!.body);
-    const pages = [...new Set($('section[aria-label*="comic pages"] img[src]').map((_, image) => $(image).attr("src")!).get())];
-    expect(pages).not.to.be.empty;
-    expect(reader.pages).to.deep.equal(pages);
+    logger.log("readerInput", {
+      mangaId: source.mangaId, chapterId: chapters[0].chapterId, chapNum: chapters[0].chapNum,
+      readerPath: new globalThis.URL(response!.request.url).pathname, nativePages: reader.pages.length,
+      layout: { seoImages: $('section[aria-label*="comic pages"] img[src]').length,
+        indexedImages: $("[data-image-index]").length, documentImages: $("img[src]").length,
+        astroIslands: $("astro-island").length },
+    });
+    const postId = Number(source.mangaId.split(/[:/|]/)[0]);
+    expect(Number.isSafeInteger(postId) && postId > 0).to.equal(true);
+    const listResponse = probe.responses.find(({ request }) => {
+      const url = new globalThis.URL(request.url);
+      return url.origin + url.pathname === `${DOMAIN_API}/chapters` && url.searchParams.get("postId") === String(postId);
+    });
+    expect(listResponse, "same native chapter-list response").not.to.equal(undefined);
+    const raw = JSON.parse(listResponse!.body) as { post: { chapters: OracleChapter[] } };
+    const selected = raw.post.chapters.filter((chapter) => chapter.slug === chapters[0].chapterId);
+    expect(selected, "unique source chapter slug").to.have.length(1);
+    const identity: ReaderIdentity = { slug: chapters[0].chapterId, number: chapters[0].chapNum, postId, postSlug: slug! };
+    assertPublicChapter(selected[0], identity);
+    identity.id = selected[0].id;
+    expect(raw.post.chapters.filter((chapter) => chapter.id === identity.id), "unique source chapter ID").to.have.length(1);
+    logger.log("readerOracleInput", { ...identity, publicListAccess: true, oracleRequests: 1 });
+    const [oracleResponse, oracleBody] = await Application.scheduleRequest({
+      url: `${DOMAIN_API}/chapter?chapterId=${identity.id}`, method: "GET",
+    });
+    expect(oracleResponse.status).to.equal(200);
+    const oracle = JSON.parse(Application.arrayBufferToUTF8String(oracleBody)) as { chapter: OracleChapter };
+    assertPublicChapter(oracle.chapter, identity, true);
+    const pages = orderedOraclePages(oracle.chapter);
+    logger.log("readerOracle", { chapterId: oracle.chapter.id, postId: oracle.chapter.mangaPostId,
+      chapterStatus: oracle.chapter.chapterStatus, publicAccess: true, sourcePages: pages.length,
+      firstPagePath: new globalThis.URL(pages[0]).pathname, lastPagePath: new globalThis.URL(pages.at(-1)!).pathname });
+    expect(reader.pages, "HTML reader equals independent ordered public API manifest").to.deep.equal(pages);
     expect(new Set(reader.pages).size).to.equal(reader.pages.length);
     const imageEvidence: { page: number; bytes: number; contentLength?: number; contentEncoding?: string; format: string }[] = [];
     for (const url of new Set([reader.pages[0], reader.pages.at(-1)!])) {
