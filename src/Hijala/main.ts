@@ -237,7 +237,7 @@ export class HijalaExtension implements ExtensionImpl<typeof Config> {
 
   private async effectiveQuery(query: SearchQuery<Metadata>, saved: Preferences) {
     const excludedGenres = saved.excludeNSFW
-      ? parseGenreOptions(await this.text(`${BASE_URL}/series`))
+      ? parseGenreOptions(await this.text(`${BASE_URL}/series/`))
           .filter((genre) => blockedGenre(genre.title))
           .map((genre) => genre.id)
       : [];
@@ -383,11 +383,11 @@ export class HijalaExtension implements ExtensionImpl<typeof Config> {
   }
 
   async getAdvancedSearchForm(query: SearchQuery<Metadata>) {
-    return new HijalaSearchForm(query, parseGenreOptions(await this.text(`${BASE_URL}/series`)));
+    return new HijalaSearchForm(query, parseGenreOptions(await this.text(`${BASE_URL}/series/`)));
   }
 
   async getSettingsForm() {
-    return new HijalaSettingsForm(parseGenreOptions(await this.text(`${BASE_URL}/series`)));
+    return new HijalaSettingsForm(parseGenreOptions(await this.text(`${BASE_URL}/series/`)));
   }
 
   async getMangaDetails(mangaId: string) {
