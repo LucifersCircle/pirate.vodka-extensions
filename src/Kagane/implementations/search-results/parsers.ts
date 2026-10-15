@@ -104,7 +104,7 @@ export function buildSearchFilters(
     {
       type: "multiselect",
       id: "statuses",
-      title: "Status",
+      title: "Upload Status",
       options: PUBLICATION_STATUS_OPTIONS,
       value: {},
       allowExclusion: false,

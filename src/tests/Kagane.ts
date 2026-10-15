@@ -20,6 +20,7 @@ import { CUSTOM_HIDDEN_TAGS_KEY } from "../Kagane/implementations/shared/tag-opt
 type Capture = [Response, ArrayBuffer];
 class Probe extends PaperbackInterceptor {
   readonly captures = new Map<string, Capture>();
+  readonly firstDetails = new Map<string, Capture>();
   override async interceptRequest(request: Request): Promise<Request> {
     return request;
   }
@@ -30,8 +31,25 @@ class Probe extends PaperbackInterceptor {
   ): Promise<ArrayBuffer> {
     if (request.url.startsWith(`${API_URL}/api/v2/`) && response.status === 200)
       this.captures.set(request.url, [response, data]);
+    if (response.status === 200 && /^\/api\/v2\/series\/[^/]+$/.test(new globalThis.URL(request.url).pathname) && !this.firstDetails.has(request.url))
+      this.firstDetails.set(request.url, [response, data]);
     return data;
   }
+}
+
+// Compare with the exact first detail response consumed by the native detail call.
+export function assertKaganePublicationStatus(manga: SourceManga, capture: Capture) {
+  const raw = JSON.parse(Application.arrayBufferToUTF8String(capture[1]));
+  const expectedLabel = (value: unknown) => {
+    const entry = typeof value === "string" ? [
+      ["ongoing", "Ongoing"], ["completed", "Completed"],
+      ["hiatus", "Hiatus"], ["abandoned", "Cancelled"],
+    ].find(([name]) => name === value.trim().toLowerCase()) : undefined;
+    return entry?.[1] ?? "Unknown";
+  };
+  expect(manga.mangaInfo.status, "native publication status").to.equal(expectedLabel(raw.publication_status));
+  const upload = expectedLabel(raw.upload_status);
+  expect(manga.mangaInfo.additionalInfo?.["Upload status"], "explicit upload progress").to.equal(upload === "Unknown" ? undefined : upload);
 }
 
 // Use only the already-resolved native reader URLs. No new manifest or metadata
@@ -85,6 +103,13 @@ export async function assertKaganeReaderImageBytes(sourceManga: SourceManga, cha
 // Actual taxonomy/search response seeds, replayed only at the native request edge.
 export async function assertKaganeTagFilters(tags: TagDto[], capture: Capture) {
   const source = Kagane as typeof Kagane & KaganeImplementation;
+  const statusFilter = (await source.getSearchFilters()).find((filter) => filter.id === "statuses");
+  if (statusFilter?.type !== "multiselect") throw new Error("Missing native upload-status filter");
+  expect(statusFilter.title).to.equal("Upload Status");
+  expect(statusFilter.options).to.deep.equal([
+    { id: "Ongoing", value: "Ongoing" }, { id: "Completed", value: "Completed" },
+    { id: "Abandoned", value: "Cancelled" }, { id: "Hiatus", value: "Hiatus" },
+  ]);
   const tag = tags.find((entry) => /^[A-Za-z][A-Za-z ]+$/.test(entry.tag_name));
   if (!tag) throw new Error("No actual Kagane tag seed");
   const nameIds = tags.filter((entry) => entry.tag_name.trim().toLowerCase() === tag.tag_name.trim().toLowerCase()).map((entry) => entry.id);
@@ -101,6 +126,9 @@ export async function assertKaganeTagFilters(tags: TagDto[], capture: Capture) {
   };
   const search = (metadata: unknown) => source.getSearchResults({ title: "", metadata: metadata as SearchFilterValue[] });
   try {
+    await search([{ id: "statuses", value: { Completed: "included" } }]);
+    expect(bodies.at(-1)?.upload_status, "saved upload-status request field").to.deep.equal(["Completed"]);
+    expect(bodies.at(-1)?.publication_status, "no silently substituted publication filter").to.equal(undefined);
     for (const metadata of [
       [{ id: "tags_text", value: "__kagane_unknown_filter__" }],
       [{ id: "tags_text", value: "-__kagane_unknown_filter__" }],
@@ -355,6 +383,9 @@ export async function runTests(logger: TestLogger) {
     const chapters = suite.state["ChapterProviding.getChapters"] as Chapter[] | undefined;
     const reader = suite.state["ChapterProviding.getChapterDetails"] as ChapterDetails | undefined;
     if (!manga || !chapters?.[0] || !reader) throw new Error("No successful native Kagane reader sample");
+    const detail = probe.firstDetails.get(`${API_URL}/api/v2/series/${manga.mangaId}`);
+    if (!detail) throw new Error("No intercepted native Kagane detail response");
+    assertKaganePublicationStatus(manga, detail);
     logger.log("readerImageEvidence", await assertKaganeReaderImageBytes(manga, chapters[0], reader));
   });
   suite.test("Books Count uses descending native counts; saved sorts preserve filters and reject stale names", async () => {

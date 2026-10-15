@@ -31,6 +31,7 @@ export function parseMangaDetails(
     .filter((person) => /artist|art/i.test(person.role))
     .map((person) => person.name);
   const tagGroups = buildTagGroups(data);
+  const uploadStatus = mapPublicationStatus(data.upload_status);
 
   return {
     mangaId,
@@ -41,7 +42,8 @@ export function parseMangaDetails(
       synopsis: buildSynopsis(data, sourceName),
       author: joinUnique(authors),
       artist: joinUnique(artists),
-      status: mapPublicationStatus(data.upload_status),
+      status: mapPublicationStatus(data.publication_status),
+      additionalInfo: uploadStatus !== "Unknown" ? { "Upload status": uploadStatus } : undefined,
       contentRating: getPaperbackBookContentRating(data),
       tagGroups,
       shareUrl: `${BASE_URL}/series/${mangaId}`,
