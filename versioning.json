@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-10-15T04:49:22.143Z",
+  "buildTime": "2026-10-15T05:08:17.455Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.92",
     "types": "1.0.0-alpha.92"
@@ -58,7 +58,7 @@
     {
       "name": "Mangasushi",
       "description": "Native Mangasushi catalog, search and reader. NSFW exclusion is on by default; unclassified titles are hidden.",
-      "version": "0.0.1-alpha.5",
+      "version": "0.0.1-alpha.6",
       "icon": "icon.png",
       "language": "en",
       "contentRating": "ADULT",
@@ -72,7 +72,7 @@
       "badges": [],
       "developers": [
         {
-          "name": "LucifersCircle",
+          "name": "Lucifers Circle",
           "website": "https://pirate.vodka",
           "github": "https://github.com/LucifersCircle"
         }
@@ -82,7 +82,7 @@
     {
       "name": "ManhwaNex",
       "description": "Native ManhwaNex catalog, search and reader. NSFW exclusion is on by default; unclassified titles are hidden.",
-      "version": "0.0.1-alpha.1",
+      "version": "0.0.1-alpha.2",
       "icon": "icon.png",
       "language": "en",
       "contentRating": "ADULT",
@@ -96,7 +96,7 @@
       "badges": [],
       "developers": [
         {
-          "name": "LucifersCircle",
+          "name": "Lucifers Circle",
           "website": "https://pirate.vodka",
           "github": "https://github.com/LucifersCircle"
         }
