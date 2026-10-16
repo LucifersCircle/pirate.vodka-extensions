@@ -56,6 +56,7 @@ import {
   readDropdownFilter,
   readMultiselectFilter,
   readHomeSectionSort,
+  readNumericRanges,
 } from "./parsers";
 
 export class SearchProvider {
@@ -87,6 +88,8 @@ export class SearchProvider {
     metadata?: { page?: number },
     sortingOption?: SortingOption,
   ): Promise<PagedResults<SearchResultItem>> {
+    // Discovery owns its body, but malformed injected range inputs must still fail locally.
+    readNumericRanges(query.metadata);
     const homeSectionSort = readHomeSectionSort(query.metadata);
     const selectedSort = homeSectionSort ?? sortingOption?.id ?? "relevance";
     if (/^series_name(?:,|$)/.test(selectedSort)) {
@@ -187,8 +190,10 @@ export async function buildSearchBody(
   metadata: KaganeMetadata,
   contentRatings: KaganeContentRating[] = getContentRatingSettings(),
 ): Promise<Record<string, unknown>> {
+  const ranges = readNumericRanges(query.metadata);
   const filters = query.metadata ?? [];
   const body: Record<string, unknown> = {
+    ...ranges,
     ...buildContentRatingFilter(contentRatings),
     content_lang: getContentLanguages(),
   };

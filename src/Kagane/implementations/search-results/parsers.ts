@@ -52,6 +52,45 @@ export function readInputFilter(filters: SearchFilterValue[], filterId: string):
   return typeof entry?.value === "string" ? entry.value : "";
 }
 
+type NumericRange = { min?: number; max?: number };
+
+/** Validate native text inputs before any metadata, tag or search request. */
+export function readNumericRanges(filters?: SearchFilterValue[]): Record<string, NumericRange> {
+  if (filters === undefined) return {};
+  if (!Array.isArray(filters)) throw invalidNumericRange();
+  const body: Record<string, NumericRange> = {};
+  for (const [field, floor, ceiling] of [
+    ["current_books", 0, 2147483647],
+    ["start_year", 1, 9999],
+  ] as const) {
+    const range: NumericRange = {};
+    for (const side of ["min", "max"] as const) {
+      const entries = filters.filter((filter) => filter?.id === `${field}_${side}`);
+      if (entries.length > 1) throw invalidNumericRange();
+      if (!entries.length) continue;
+      const value = entries[0].value;
+      if (typeof value !== "string") throw invalidNumericRange();
+      const text = value.trim();
+      if (!text) continue;
+      if (!/^[0-9]+$/.test(text)) throw invalidNumericRange();
+      const number = Number(text);
+      if (!Number.isSafeInteger(number) || number < floor || number > ceiling)
+        throw invalidNumericRange();
+      range[side] = number;
+    }
+    if (range.min !== undefined && range.max !== undefined && range.min > range.max)
+      throw invalidNumericRange();
+    if (Object.keys(range).length) body[field] = range;
+  }
+  return body;
+}
+
+function invalidNumericRange(): Error {
+  return new Error(
+    "Invalid Kagane numeric range. Use whole chapter counts 0–2147483647 or start years 1–9999, with minimum no greater than maximum.",
+  );
+}
+
 export function buildSearchFilters(
   metadata: KaganeMetadata,
   displayMode: string,
@@ -101,6 +140,28 @@ export function buildSearchFilters(
       ],
       value: "true",
     },
+    ...(
+      [
+        [
+          "current_books_min",
+          "Minimum chapters",
+          "Uploaded Kagane chapter entries, not highest chapter number (optional)",
+        ],
+        [
+          "current_books_max",
+          "Maximum chapters",
+          "Uploaded Kagane chapter entries, not highest chapter number (optional)",
+        ],
+        ["start_year_min", "Earliest start year", "1–9999 (optional)"],
+        ["start_year_max", "Latest start year", "1–9999 (optional)"],
+      ] as const
+    ).map(([id, title, placeholder]) => ({
+      type: "input" as const,
+      id,
+      title,
+      placeholder,
+      value: "",
+    })),
     {
       type: "multiselect",
       id: "statuses",
