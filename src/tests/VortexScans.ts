@@ -173,6 +173,23 @@ function comparableReaderPage(input: string): string {
   return parts[1] + path.replace(/\/{2,}/g, "/") + (parts[3] ?? "") + (parts[4] ?? "");
 }
 
+// Diagnostics are not URL equivalence. Keep only a known public image origin and
+// numeric page/split shape; never emit credentials, queries, fragments or opaque
+// path identifiers. Unknown/ambiguous URLs remain redacted, not normalized.
+function readerPageDiagnostic(input: string | undefined) {
+  if (input === undefined) return { present: false, path: undefined };
+  const shape = { present: true, queryRedacted: input.includes("?"), fragmentRedacted: input.includes("#") };
+  const publicOrigin = "https://storage.vortexscans.org";
+  const raw = input.split(/[?#]/)[0];
+  if (!raw.startsWith(`${publicOrigin}/`) || Array.from(raw).some((char) => char === "\\" || char.charCodeAt(0) <= 32 || char.charCodeAt(0) === 127))
+    return { ...shape, origin: "[redacted]", path: "[redacted]" };
+  const path = raw.slice(publicOrigin.length);
+  const page = /^\/+upload\/+series\/+[A-Za-z0-9_-]+\/+[A-Za-z0-9_-]+\/+(page-\d{1,6}(?:_\d{1,6})*)_\d{10,16}-\d{1,10}\.(webp|jpe?g|png|gif|avif)$/.exec(path);
+  return { ...shape, origin: publicOrigin,
+    path: page ? `/upload/series/[redacted]/[redacted]/${page[1]}_[redacted].${page[2]}` : "[redacted]",
+    literalSlashRuns: (path.match(/\/{2,}/g) ?? []).length };
+}
+
 type ReaderProof = { mangaId: string; chapterId: string; completePages: number; literalSlashAliases: number; rawImageRequests: number };
 
 export async function runTests(logger: TestLogger) {
@@ -455,9 +472,21 @@ export async function runTests(logger: TestLogger) {
     const literalSlashAliases = pages.filter((url, index) => url !== comparablePages[index]).length;
     evidence.log("readerOracle", { chapterId: oracle.chapter.id, postId: oracle.chapter.mangaPostId,
       chapterStatus: oracle.chapter.chapterStatus, publicAccess: true, sourcePages: pages.length,
-      firstPagePath: new globalThis.URL(pages[0]).pathname, lastPagePath: new globalThis.URL(pages.at(-1)!).pathname,
+      firstPagePath: readerPageDiagnostic(pages[0]).path, lastPagePath: readerPageDiagnostic(pages.at(-1)).path,
       literalSlashAliases });
     expect(new Set(comparablePages).size, "no source pages collapse into duplicates").to.equal(pages.length);
+    // Record before Chai truncates array values in String(error). Reuse only the
+    // consumed manifests; this log must not fetch or change either page array.
+    evidence.log("readerManifestComparison", {
+      nativeCount: reader.pages.length, apiCount: pages.length,
+      pages: Array.from({ length: Math.max(reader.pages.length, pages.length) }, (_, index) => {
+        let nativeComparable: string | undefined;
+        try { if (reader.pages[index] !== undefined) nativeComparable = comparableReaderPage(reader.pages[index]); } catch { /* The unchanged strict assertion below still rejects this URL. */ }
+        return { index, native: readerPageDiagnostic(reader.pages[index]), api: readerPageDiagnostic(pages[index]),
+          equal: nativeComparable !== undefined && nativeComparable === comparablePages[index],
+          nativeApiIndex: nativeComparable === undefined ? -1 : comparablePages.indexOf(nativeComparable) };
+      }),
+    });
     expect(reader.pages.map(comparableReaderPage), "HTML reader equals independent ordered public API manifest; literal pathname slash runs only").to.deep.equal(comparablePages);
     expect(new Set(reader.pages).size).to.equal(reader.pages.length);
     const imageEvidence: { page: number; bytes: number; contentLength?: number; contentEncoding?: string; format: string }[] = [];
@@ -517,7 +546,7 @@ export async function runTests(logger: TestLogger) {
         while (firstMismatch < bytes.length && firstMismatch < rawBytes.length && bytes[firstMismatch] === rawBytes[firstMismatch]) firstMismatch++;
         if (firstMismatch === bytes.length && firstMismatch === rawBytes.length) firstMismatch = -1;
         pairs.scope(String(rawImageRequests)).log("comparison", { page: reader.pages.indexOf(url) + 1,
-          rawPath: new globalThis.URL(rawUrl).pathname, nativePath: new globalThis.URL(url).pathname,
+          rawPath: readerPageDiagnostic(rawUrl).path, nativePath: readerPageDiagnostic(url).path,
           rawBytes: rawBytes.length, nativeBytes: bytes.length, firstMismatch });
         expect(rawBytes.length, "raw published/native image body length").to.equal(bytes.length);
         expect(firstMismatch, "raw published/native entire image body first mismatch (-1 means equal)").to.equal(-1);
