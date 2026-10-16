@@ -51,16 +51,23 @@ export class SearchProvider {
     sortingOption?: SortingOption,
   ): Promise<PagedResults<SearchResultItem>> {
     const contentContext = JSON.stringify(contentSettings());
-    let page =
-      metadata?.contentContext && metadata.contentContext !== contentContext
-        ? 1
-        : (metadata?.page ?? 1);
     const filters = query.metadata ?? [];
     const homeSection = readHomeSectionFilter(filters);
 
     if (homeSection?.kind === "collection") {
       return this.getCollectionResults(homeSection.slug);
     }
+
+    if (metadata != null && (typeof metadata !== "object" || Array.isArray(metadata)))
+      throw new Error("Invalid VortexScans search cursor. Reload this page.");
+    // A changed content policy has always restarted pagination, even when the
+    // discarded cursor's page is malformed. Validate only the selected page.
+    let page =
+      metadata?.contentContext && metadata.contentContext !== contentContext
+        ? 1
+        : (metadata?.page ?? 1);
+    if (!Number.isSafeInteger(page) || page < 1)
+      throw new Error("Invalid VortexScans search cursor. Reload this page.");
 
     if (homeSection?.kind === "latest" || homeSection?.kind === "new") {
       return this.getTaggedResults(
@@ -126,6 +133,9 @@ export class SearchProvider {
         ? page * PAGE_SIZE < data.totalCount
         : (data.posts?.length ?? 0) >= PAGE_SIZE;
 
+      if (hasNext && !Number.isSafeInteger(page + 1))
+        throw new Error("Invalid VortexScans search cursor. Reload this page.");
+
       if (results.length || !hasNext)
         return {
           items: results,
@@ -170,6 +180,8 @@ export class SearchProvider {
       const items = parseSearchResults(data);
 
       const hasNext = (data.posts?.length ?? 0) >= PAGE_SIZE;
+      if (hasNext && !Number.isSafeInteger(page + 1))
+        throw new Error("Invalid VortexScans search cursor. Reload this page.");
       if (items.length || !hasNext)
         return {
           items,

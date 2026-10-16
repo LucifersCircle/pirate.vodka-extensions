@@ -659,6 +659,77 @@ export async function assertKaganeLiveNumericRanges() {
   }
 }
 
+// Exercise native callbacks and round-trip their emitted metadata through JSON,
+// reusing one consumed response only at the request edge (no provider calls).
+export async function assertKaganePagination(capture: Capture, source = Kagane as typeof Kagane & KaganeImplementation) {
+  const schedule = Application.scheduleRequest;
+  const raw = JSON.parse(Application.arrayBufferToUTF8String(capture[1]));
+  const requests: Request[] = [];
+  let replay = { ...raw, last: false };
+  Application.scheduleRequest = async (request) => {
+    requests.push(request);
+    expect(new globalThis.URL(request.url).pathname, "pagination replay only uses bulk search").to.equal("/api/v2/search/series");
+    return [capture[0], new TextEncoder().encode(JSON.stringify(replay)).buffer as ArrayBuffer];
+  };
+  const sections = await source.getDiscoverSections();
+  const callbacks = [
+    (metadata: unknown) => source.getSearchResults({ title: "" }, metadata as { page?: number }),
+    ...["latest", "recently-added"].map((id) => (metadata: unknown) => source.getDiscoverSectionItems(sections.find((section) => section.id === id)!, metadata as { page?: number })),
+  ];
+  const roundTrip = (value: unknown) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+  const malformed = [false, true, 0, 2, "", "2", [], [2],
+    ...[false, true, "", "2", "bad", [], [2], {}, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, 1e100].map((page) => ({ page }))];
+  // Nonfinite runtime numbers serialize to null; test their raw rejection separately.
+  const invalid = [...malformed.map(roundTrip), ...[NaN, Infinity, -Infinity].map((page) => ({ page }))];
+  try {
+    const rejectCallbacks = [...callbacks,
+      (metadata: unknown) => source.getSearchResults({ title: "", metadata: [{ id: "tags_text", value: "requires taxonomy" }] }, metadata as { page?: number }),
+      (metadata: unknown) => source.getDiscoverSectionItems(sections.find((section) => section.id === "popular")!, metadata as { page?: number }),
+    ];
+    for (const invoke of rejectCallbacks) for (const value of invalid) {
+      const before = requests.length;
+      let error: unknown;
+      try { await invoke(value); } catch (caught) { error = caught; }
+      expect(String(error), "malformed cursor rejected by source").to.match(/Invalid Kagane pagination/);
+      expect(requests.length, "invalid cursor rejected before all HTTP").to.equal(before);
+    }
+    for (const invoke of callbacks) {
+      const baseline = await invoke(undefined);
+      expect(baseline.metadata).to.deep.equal({ page: 2 });
+      const body = requests.at(-1)!.body;
+      for (const metadata of [null, {}, Object.create(null), { page: 1 }, { page: null }, { page: undefined }, { unrelated: true }, { unrelated: true, page: null }, roundTrip({ page: undefined }), roundTrip({ page: NaN })]) {
+        expect(await invoke(metadata), "ordinary first-page compatibility").to.deep.equal(baseline);
+        expect(new globalThis.URL(requests.at(-1)!.url).searchParams.get("page")).to.equal("0");
+        expect(requests.at(-1)!.body).to.equal(body);
+      }
+      // Use the callback's own cursor, not a fabricated page-two marker.
+      expect((await invoke(roundTrip(baseline.metadata))).metadata).to.deep.equal({ page: 3 });
+      expect(new globalThis.URL(requests.at(-1)!.url).searchParams.get("page")).to.equal("1");
+      expect(requests.at(-1)!.body).to.equal(body);
+      for (const metadata of [Object.assign(Object.create(null), { page: 2 }), { page: 2, context: "ignored legacy field" }, { page: 2147483648 }]) {
+        expect((await invoke(metadata)).metadata).to.deep.equal({ page: metadata.page + 1 });
+        expect(new globalThis.URL(requests.at(-1)!.url).searchParams.get("page")).to.equal(String(metadata.page - 1));
+      }
+      // The numeric limit is JavaScript's safe-integer boundary, not a provider cap.
+      replay = { ...raw, last: true };
+      expect((await invoke({ page: Number.MAX_SAFE_INTEGER })).metadata).to.equal(undefined);
+      expect(new globalThis.URL(requests.at(-1)!.url).searchParams.get("page")).to.equal(String(Number.MAX_SAFE_INTEGER - 1));
+      for (const content of [raw.content, []]) {
+        replay = { ...raw, content, last: false };
+        const before = requests.length;
+        let error: unknown;
+        try { await invoke({ page: Number.MAX_SAFE_INTEGER }); } catch (caught) { error = caught; }
+        expect(String(error)).to.match(/Kagane pagination exceeds the safe page range/);
+        expect(requests.length - before, "no unsafe cursor or additional page request").to.equal(1);
+      }
+      replay = { ...raw, last: false };
+    }
+    return { malformedJSONCases: malformed.length, malformedRuntimeCases: invalid.length - malformed.length, callbackPaths: rejectCallbacks.length, replayRequests: requests.length };
+  } finally {
+    Application.scheduleRequest = schedule;
+  }
+}
+
 export async function runTests(logger: TestLogger) {
   const suite = new TestSuite("Kagane tests", logger);
   const probe = new Probe("kagane-language-probe");
@@ -697,6 +768,11 @@ export async function runTests(logger: TestLogger) {
     const search = [...probe.captures].find(([url]) => url.includes("/api/v2/search/series"))?.[1];
     if (!search) throw new Error("No actual Kagane search response for closed native range probes");
     await assertKaganeNumericRanges(search);
+  });
+  suite.test("Native pagination rejects malformed cursors before HTTP and preserves first pages and safe continuations", async () => {
+    const search = [...probe.captures].find(([url]) => url.includes("/api/v2/search/series"))?.[1];
+    if (!search) throw new Error("No consumed Kagane search response for pagination replay");
+    logger.log("paginationEvidence", await assertKaganePagination(search));
   });
   suite.test("Optional listing type/rating defaults, persistence, exact subtitles and toggle reloads reuse consumed bulk rows", async () => {
     const search = [...probe.captures].find(([url]) => url.includes("/api/v2/search/series"))?.[1];
