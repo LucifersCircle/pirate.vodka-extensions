@@ -22,6 +22,7 @@ import {
   PAGE_SIZE,
   type VortexPost,
   type VortexQueryResponse,
+  type VortexChaptersResponse,
 } from "../VortexScans/implementations/shared/models.js";
 import { serializedProperty } from "../VortexScans/implementations/discover-section/page-data.js";
 import { parseHome } from "../VortexScans/implementations/discover-section/home.js";
@@ -299,6 +300,73 @@ export async function runTests(logger: TestLogger) {
     }
     expect(pages[1]).not.to.deep.equal(pages[0]);
     logger.log("latestChipContinuations", { pages: [1, 2], counts: pages.map((items) => items.length) });
+  });
+
+  suite.test("metadata: explicit counts are not latest numbers and missing values stay absent", async () => {
+    const seed = probe.responses.find(({ request }) => isQuery(request))!;
+    expect(seed, "same native catalog response").not.to.equal(undefined);
+    const raw = JSON.parse(seed.body) as VortexQueryResponse;
+    const post = raw.posts.find((item) => item.chapters?.length && !item.isNovel)!;
+    expect(post).not.to.equal(undefined);
+    const schedule = Application.scheduleRequest, before = probe.requests.length;
+    try {
+      for (const [count, number, expected] of [
+        [90, 132, "90 Chapters"], [6, 5, "6 Chapters"],
+        [undefined, 1.5, "Ch. 1.5"], [0, undefined, "0 Chapters"],
+        [undefined, undefined, undefined], [undefined, 0, "Ch. 0"],
+      ] as const) {
+        const copy = { ...post, _count: count === undefined ? undefined : { chapters: count },
+          chapters: number === undefined ? [] : [{ ...post.chapters[0], number }] };
+        const replay: typeof Application.scheduleRequest = async (request) => {
+          if (!isQuery(request)) throw new Error(`Unexpected metadata replay route: ${request.url}`);
+          return [{ ...seed.response, url: request.url }, buffer({ posts: [copy], totalCount: 1 })];
+        };
+        Application.scheduleRequest = replay;
+        if (Application.scheduleRequest !== replay) throw new Error("Native runtime does not allow replacing Application.scheduleRequest");
+        const result = await extension.getSearchResults({ title: "" });
+        expect(cards(result.items)).to.deep.equal(expectedCards([copy]));
+        expect(result.items[0].subtitle).to.equal(expected);
+      }
+      expect(probe.requests.length).to.equal(before);
+    } finally { Application.scheduleRequest = schedule; }
+  });
+
+  suite.test("metadata: chapter subtitles retain decimals and genuine text with exact native references", async () => {
+    const source = suite.state["MangaProviding.getMangaDetails"] as SourceManga;
+    const seed = probe.responses.find(({ request }) => {
+      const url = new globalThis.URL(request.url);
+      return url.origin + url.pathname === `${DOMAIN_API}/chapters`;
+    })!;
+    expect(seed, "same native chapter-list response").not.to.equal(undefined);
+    const raw = JSON.parse(seed.body) as VortexChaptersResponse, chapter = raw.post.chapters.find((item) => !item.isLocked)!;
+    expect(chapter).not.to.equal(undefined);
+    const schedule = Application.scheduleRequest, before = probe.requests.length;
+    try {
+      for (const [number, title, expected] of [
+        [1.5, "Chapter 1 Remake", "Chapter 1 Remake"], [1.5, "Chapter 1.5", ""],
+        [1.5, "Ch. 1.5: Remake", "Remake"], [1.5, "1.5 - A &amp; B", "A & B"],
+        [1, "Chapter 1.5: Remake", "Chapter 1.5: Remake"],
+        [1.5, "Chapter 1.50: Remake", "Remake"], [1.5, "Chapter 1.5.1", "Chapter 1.5.1"],
+        [1.5, "Chapter 1.5th", "Chapter 1.5th"], [1.5, "The Remake", "The Remake"],
+        [1, "Chapter 1: -2 HP", "-2 HP"], [1, "Chapter 1: —Forever—", "—Forever—"],
+        [1, "Chapter 1 - -2 HP", "-2 HP"],
+        [1, "1-2 Punch", "1-2 Punch"], [1, "Chapter 1–2", "Chapter 1–2"],
+      ] as const) {
+        const replay: typeof Application.scheduleRequest = async (request) => {
+          const url = new globalThis.URL(request.url);
+          if (url.origin + url.pathname !== `${DOMAIN_API}/chapters`) throw new Error(`Unexpected chapter replay route: ${request.url}`);
+          return [{ ...seed.response, url: request.url }, buffer({ ...raw, post: { ...raw.post,
+            chapters: [{ ...chapter, number, title }] } })];
+        };
+        Application.scheduleRequest = replay;
+        if (Application.scheduleRequest !== replay) throw new Error("Native runtime does not allow replacing Application.scheduleRequest");
+        const result = await extension.getChapters(source);
+        expect(result).to.have.length(1); expect(result[0].sourceManga).to.equal(source);
+        expect(result[0].chapterId).to.equal(chapter.slug); expect(result[0].chapNum).to.equal(number);
+        expect(result[0].title).to.equal(expected);
+      }
+      expect(probe.requests.length).to.equal(before);
+    } finally { Application.scheduleRequest = schedule; }
   });
 
   const verifyReader = async (source: SourceManga, chapters: Chapter[], reader: ChapterDetails, evidence: TestLogger, responses = probe.responses): Promise<ReaderProof> => {
