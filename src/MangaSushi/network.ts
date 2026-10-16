@@ -54,11 +54,35 @@ const uniqueFields = (value: string): Map<string, string> => {
   }
   return fields;
 };
+// Inspect the actual ArrayBuffer slot, not a spoofable prototype/tag. This
+// accepts genuine buffers supplied from another native JavaScript realm too.
+const bufferLength = (value: unknown): number | undefined => {
+  try {
+    return Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength")?.get?.call(value) as
+      | number
+      | undefined;
+  } catch {
+    return undefined;
+  }
+};
+// Native Request permits ArrayBuffer bodies. Our POSTs are percent-encoded
+// ASCII forms (or the empty chapter body), so decode only those exact bytes.
+// Arbitrary objects, non-ASCII bytes and altered bodies cannot match a pending request.
+const metadataBody = (request: Request): string | undefined => {
+  const body = request.body;
+  if (body === undefined || typeof body === "string") return body;
+  if (bufferLength(body) === undefined) throw new Error("Unsupported Mangasushi metadata body.");
+  const bytes = new Uint8Array(body as ArrayBuffer);
+  if (bytes.some((byte) => byte > 0x7f))
+    throw new Error("Unsupported Mangasushi metadata body encoding.");
+  return Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+};
 const metadataRoute = (request: Request): "document" | "fragment" => {
   const url = sourceURL(request.url);
+  const body = metadataBody(request);
   const identity = "[a-zA-Z0-9][a-zA-Z0-9%_-]*";
   if (/%2f|%5c|%00/i.test(url.pathname)) throw new Error("Invalid Mangasushi metadata path.");
-  if (request.method === "GET" && request.body === undefined) {
+  if (request.method === "GET" && body === undefined) {
     if (url.pathname === "/") {
       if (!url.search) return "document";
       const fields = uniqueFields(url.search);
@@ -77,11 +101,11 @@ const metadataRoute = (request: Request): "document" | "fragment" => {
         new RegExp(`^/manga/${identity}/(?:${identity}/)?$`).test(url.pathname))
     )
       return "document";
-  } else if (request.method === "POST" && typeof request.body === "string" && !url.search) {
-    if (new RegExp(`^/manga/${identity}/ajax/chapters/$`).test(url.pathname) && request.body === "")
+  } else if (request.method === "POST" && typeof body === "string" && !url.search) {
+    if (new RegExp(`^/manga/${identity}/ajax/chapters/$`).test(url.pathname) && body === "")
       return "fragment";
     if (url.pathname === "/wp-admin/admin-ajax.php") {
-      const fields = uniqueFields(request.body);
+      const fields = uniqueFields(body);
       const template = fields.get("template");
       const kind = template === "madara-core/content/content-search" ? "search" : "archive";
       if (
@@ -109,7 +133,7 @@ const fingerprint = (request: Request): string => {
     sourceURL(request.url).href,
     request.method,
     request.body === undefined,
-    request.body ?? "",
+    metadataBody(request) ?? "",
   ]);
 };
 const isPendingText = (request: Request): boolean => {
@@ -162,8 +186,23 @@ export class MangaSushiInterceptor extends PaperbackInterceptor {
   override async interceptRequest(request: Request): Promise<Request> {
     const textRequest = isPendingText(request);
     if (!textRequest) {
-      if (request.method !== "GET" || request.body !== undefined)
-        throw new Error("Unsupported Mangasushi image request.");
+      if (request.method !== "GET" || request.body !== undefined) {
+        const method =
+          request.method === "GET" ? "GET" : request.method === "POST" ? "POST" : "other";
+        const body =
+          request.body === undefined
+            ? "absent"
+            : typeof request.body === "string"
+              ? "string"
+              : bufferLength(request.body) !== undefined
+                ? "ArrayBuffer"
+                : request.body !== null && typeof request.body === "object"
+                  ? "object"
+                  : "other";
+        throw new Error(
+          `Unsupported Mangasushi image request (no matching pending metadata; method=${method}; body=${body}).`,
+        );
+      }
       authorizeImage(request.url);
     }
     request.headers = {
