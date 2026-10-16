@@ -4,7 +4,7 @@
 import { ContentRating, SourceIntents, type ExtensionInfo } from "@paperback/types";
 export default {
   name: "MangaStash",
-  version: "0.0.1-alpha.1",
+  version: "0.0.1-alpha.2",
   icon: "icon.png",
   language: "en",
   description:

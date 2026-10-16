@@ -3,7 +3,7 @@
 
 import { RATINGS, type Preferences, type Rating } from "./models";
 import { preferences, PREFERENCES, nativeAllowed } from "./forms";
-import { imageURL, validId } from "./urls";
+import { chapterURL, imageURL, validId } from "./urls";
 export const IMAGE_STORE = "MangaStash.images",
   OBSERVATIONS = "MangaStash.classifications";
 export const IMAGE_LIFETIME = 24 * 60 * 60 * 1000;
@@ -72,7 +72,15 @@ const grants = (): Grant[] => {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw) || raw.length > LIMIT)
     throw new Error("Invalid MangaStash image authorization.");
-  return raw.filter((g): g is Grant => {
+  const valid = raw.filter((g): g is Grant => {
+    if (g && g.chapter !== undefined) {
+      try {
+        if (typeof g.chapter !== "string") throw new Error();
+        chapterURL(g.chapter, g.id);
+      } catch {
+        throw new Error("Invalid MangaStash saved reader image role.");
+      }
+    }
     if (
       !g ||
       typeof g.url !== "string" ||
@@ -90,6 +98,22 @@ const grants = (): Grant[] => {
       return false;
     }
   });
+  const roles = new Map<string, Grant[]>();
+  for (const grant of valid) {
+    const sameURL = roles.get(grant.url) ?? [];
+    if (
+      sameURL.some(
+        (other) =>
+          other.id !== grant.id ||
+          other.chapter === grant.chapter ||
+          (other.chapter !== undefined && grant.chapter !== undefined),
+      )
+    )
+      throw new Error("Conflicting or duplicate MangaStash saved image roles.");
+    sameURL.push(grant);
+    roles.set(grant.url, sameURL);
+  }
+  return valid;
 };
 export const issueImages = (
   urls: string[],
@@ -111,24 +135,39 @@ export const issueImages = (
   const all = grants();
   for (const url of urls) {
     imageURL(url, id, chapter);
-    const old = all.findIndex((g) => g.url === url);
+    if (
+      all.some(
+        (g) =>
+          g.url === url &&
+          (g.id !== id ||
+            (g.chapter !== undefined && chapter !== undefined && g.chapter !== chapter)),
+      )
+    )
+      throw new Error("Conflicting MangaStash image ownership.");
+    // One advertised image can independently be a cover and a verified reader page.
+    // Reissuing either role must not erase the other role's identity or fixed time.
+    const old = all.findIndex((g) => g.url === url && g.id === id && g.chapter === chapter);
+    const issued = old >= 0 ? all[old] : { url, id, chapter, rating, at, revision: saved.revision };
     if (old >= 0) all.splice(old, 1);
-    all.push({ url, id, chapter, rating, at, revision: saved.revision });
+    all.push(issued);
   }
   Application.setState(all.slice(-LIMIT), IMAGE_STORE);
 };
 export const authorizeImage = (url: string): Grant => {
   const saved = preferences(),
-    grant = grants().find((g) => g.url === url),
-    current = grant ? observations().find((o) => o.id === grant.id) : undefined;
-  if (
-    !grant ||
-    grant.revision !== saved.revision ||
-    !current ||
-    !nativeAllowed(grant.rating) ||
-    !nativeAllowed(current.rating) ||
-    (saved.onlySafe && (grant.rating !== "safe" || current.rating !== "safe"))
-  )
+    matching = grants().filter((g) => g.url === url),
+    current = matching.length ? observations() : [],
+    grant = matching.find((g) => {
+      const evidence = current.find((o) => o.id === g.id);
+      return (
+        g.revision === saved.revision &&
+        evidence !== undefined &&
+        nativeAllowed(g.rating) &&
+        nativeAllowed(evidence.rating) &&
+        (!saved.onlySafe || (g.rating === "safe" && evidence.rating === "safe"))
+      );
+    });
+  if (!grant)
     throw new Error(
       "MangaStash image authorization is missing, expired or revoked. Reload the title or chapter.",
     );

@@ -14,6 +14,7 @@ import {
 import { expect } from "chai";
 import * as cheerio from "cheerio";
 import { MangaStash, MangaStashExtension } from "../MangaStash/main.js";
+import info from "../MangaStash/pbconfig.js";
 import {
   MangaStashSearchForm,
   MangaStashSettingsForm,
@@ -28,6 +29,7 @@ import {
   IMAGE_STORE,
   OBSERVATIONS,
   authorizeImage,
+  issueImages,
   observe,
 } from "../MangaStash/images.js";
 import { MangaStashInterceptor } from "../MangaStash/network.js";
@@ -87,7 +89,7 @@ export async function runTests(logger: TestLogger) {
     home = "",
     detail = "",
     reader = "";
-  let cursor: Metadata | undefined;
+  let cursor: Metadata | undefined, catalogChapterCover: string | undefined;
   const browseQuery = {
     title: "",
     metadata: { genre: ["action"], language: ["EN"], rating: "safe" },
@@ -102,6 +104,7 @@ export async function runTests(logger: TestLogger) {
     expect(typeof Headers).to.equal("undefined");
     expect(typeof URLSearchParams).to.equal("undefined");
     expect(preferences().onlySafe).to.equal(false);
+    expect(info.version).to.equal("0.0.1-alpha.2");
     expect((await MangaStash.getSettingsForm()).getSections()).not.to.be.empty;
   });
   suite.test("home: exact same-response complete sequences and legitimate overlap", async () => {
@@ -150,6 +153,80 @@ export async function runTests(logger: TestLogger) {
     expect(await MangaStash.getSortingOptions({ title: "Ayashimon" })).to.deep.equal([]);
     expect(await MangaStash.getSortingOptions({ title: "" })).to.deep.equal(SORTS);
   });
+  suite.test(
+    "catalog: exact advertised covers retain ownership and issued URL provenance",
+    async () => {
+      const url = searchURL(""),
+        result = await MangaStash.getSearchResults({ title: "" }),
+        html = probe.responses.get(url)!,
+        $ = cheerio.load(html),
+        rows = $(".series-grid > a.series-card").toArray(),
+        advertised = rows.map((e) => {
+          const row = $(e),
+            image = row.find("img").first(),
+            set = image.attr("srcset") || image.attr("data-srcset"),
+            selected = set
+              ? set
+                  .split(",")
+                  .map((v) => v.trim().split(/\s+/))
+                  .sort((a, b) => parseFloat(b[1]) - parseFloat(a[1]))[0][0]
+              : image.attr("data-src") || image.attr("src")!;
+          return {
+            id: row.attr("href")!.replace(/^\/|\/$/g, ""),
+            image: selected.startsWith("/") ? BASE_URL + selected : selected,
+          };
+        });
+      expect(result.items.map((i) => ({ id: i.mangaId, image: i.imageUrl }))).to.deep.equal(
+        advertised,
+      );
+      catalogChapterCover = result.items.find((i) =>
+        /\/content\/[^/]+\/chapter-\d+(?:\.\d+)?\//.test(i.imageUrl),
+      )?.imageUrl;
+      const interceptor = new MangaStashInterceptor("MangaStash.catalog-cover-check"),
+        before = probe.requests.length;
+      for (const item of result.items)
+        expect(
+          (await interceptor.interceptRequest({ url: item.imageUrl, method: "GET" })).url,
+        ).to.equal(item.imageUrl);
+      expect(probe.requests.length).to.equal(before);
+      const first = advertised[0];
+      for (const bad of [
+        `${BASE_URL}/content/${first.id}-foreign/chapter-1/001.webp`,
+        `${BASE_URL}/content/${first.id.toUpperCase()}/chapter-1/001.webp`,
+        `${BASE_URL}/content/${first.id}/chapter-1/../001.webp`,
+        `${BASE_URL}/content/${first.id}/chapter-1/%2e%2e/001.webp`,
+        `${BASE_URL}/content/${first.id}/chapter-1%2f001.webp`,
+        `${BASE_URL}/content/${first.id}/chapter-1/%30%30%31.webp`,
+        `${BASE_URL}/content/${first.id}/chapter-1/001.webp?extra=1`,
+        `${BASE_URL}/content/${first.id}/chapter-1/001.webp/extra`,
+        `${BASE_URL}/content/${first.id}/chapter-other/001.webp`,
+        `${BASE_URL}/content/${first.id}/chapter-1/001.svg`,
+        `https://mangastash.org.evil.example/content/${first.id}/chapter-1/001.webp`,
+      ]) {
+        const changed = cheerio.load(html),
+          image = changed(".series-grid > a.series-card").first().find("img").first();
+        image
+          .removeAttr("srcset")
+          .removeAttr("data-srcset")
+          .removeAttr("data-src")
+          .attr("src", bad);
+        expect(() => parseCatalog(changed.html(), url)).to.throw(/MangaStash/);
+        await rejects(
+          () => interceptor.interceptRequest({ url: bad, method: "GET" }),
+          /authorization|Invalid|Wrong/,
+        );
+      }
+      await rejects(
+        () =>
+          interceptor.interceptRequest({
+            url: `${BASE_URL}/content/${first.id}/chapter-1/unissued.webp`,
+            method: "GET",
+          }),
+        /authorization/,
+      );
+      expect(probe.requests.length).to.equal(before);
+    },
+  );
   suite.test("browse: exact declared controls and preserved real page-two scope", async () => {
     const first = await MangaStash.getSearchResults(browseQuery, undefined, SORTS[3]);
     expect(first.items).not.to.be.empty;
@@ -362,6 +439,34 @@ export async function runTests(logger: TestLogger) {
         expect(Array.from(body.subarray(body.length - 2))).to.deep.equal([0xff, 0xd9]);
         bytes.push({ url, bytes: data.byteLength });
       }
+      if (catalogChapterCover && !urls.has(catalogChapterCover)) {
+        const [response, data] = await Application.scheduleRequest({
+          url: catalogChapterCover,
+          method: "GET",
+        });
+        expect(response.status).to.equal(200);
+        expect(data.byteLength).to.be.greaterThan(1000);
+        const type = response.headers["content-type"],
+          body = new Uint8Array(data);
+        if (/^image\/webp(?:;|$)/i.test(type)) {
+          expect(Array.from(body.subarray(0, 4))).to.deep.equal([82, 73, 70, 70]);
+          expect(Array.from(body.subarray(8, 12))).to.deep.equal([87, 69, 66, 80]);
+          expect(new DataView(data).getUint32(4, true) + 8).to.equal(data.byteLength);
+        } else {
+          expect(type).to.match(/^image\/jpe?g(?:;|$)/i);
+          expect(Array.from(body.subarray(0, 2))).to.deep.equal([0xff, 0xd8]);
+          expect(Array.from(body.subarray(body.length - 2))).to.deep.equal([0xff, 0xd9]);
+        }
+        logger.log("advertisedChapterCoverBytes", {
+          url: catalogChapterCover,
+          bytes: data.byteLength,
+          type,
+        });
+      } else
+        logger.log(
+          "advertisedChapterCoverBytes",
+          "Unexercised: no additional chapter-page cover advertised in this catalog response.",
+        );
       logger.log("sampledImageBytes", bytes);
       const before = probe.requests.length,
         interceptor = new MangaStashInterceptor("MangaStash.image-callback-check");
@@ -408,6 +513,91 @@ export async function runTests(logger: TestLogger) {
         /expired/,
       );
       Application.setState(stored, IMAGE_STORE);
+    },
+  );
+  suite.test(
+    "images: overlapping cover and reader roles retain independent fixed grants",
+    async () => {
+      const saved = Application.getState(IMAGE_STORE),
+        evidence = Application.getState(OBSERVATIONS),
+        policy = preferences(),
+        url = pages[0],
+        before = probe.requests.length,
+        readerGrant = authorizeImage(url),
+        coverAt = Date.now();
+      try {
+        issueImages([url], chapter.sourceManga.mangaId, "safe", policy, coverAt);
+        const roles = (
+          Application.getState(IMAGE_STORE) as { url: string; chapter?: string; at: number }[]
+        ).filter((g) => g.url === url);
+        expect(roles.length).to.equal(2);
+        expect(roles.find((g) => g.chapter === chapter.chapterId)?.at).to.equal(readerGrant.at);
+        expect(roles.find((g) => g.chapter === undefined)?.at).to.equal(coverAt);
+        issueImages([url], chapter.sourceManga.mangaId, "unknown", policy, Date.now());
+        expect(
+          (
+            Application.getState(IMAGE_STORE) as { url: string; chapter?: string; rating: string }[]
+          ).find((g) => g.url === url && g.chapter === undefined)?.rating,
+        ).to.equal("safe");
+        expect(
+          (
+            Application.getState(IMAGE_STORE) as { url: string; chapter?: string; at: number }[]
+          ).find((g) => g.url === url && g.chapter === undefined)?.at,
+        ).to.equal(coverAt);
+        Application.setState([{ ...roles[0], chapter: "" }], IMAGE_STORE);
+        expect(() => authorizeImage(url)).to.throw(/reader image role/);
+        Application.setState([...roles, roles[0]], IMAGE_STORE);
+        expect(() => authorizeImage(url)).to.throw(/duplicate/);
+        Application.setState(
+          [
+            ...roles,
+            {
+              ...roles.find((g) => g.chapter !== undefined)!,
+              chapter: chapter.chapterId + "-other",
+            },
+          ],
+          IMAGE_STORE,
+        );
+        expect(() => authorizeImage(url)).to.throw(/Conflicting/);
+        Application.setState(roles, IMAGE_STORE);
+        const interceptor = new MangaStashInterceptor("MangaStash.overlapping-cover-check");
+        const issued = JSON.stringify(Application.getState(IMAGE_STORE));
+        expect((await interceptor.interceptRequest({ url, method: "GET" })).url).to.equal(url);
+        expect(JSON.stringify(Application.getState(IMAGE_STORE))).to.equal(issued);
+        expect(() =>
+          issueImages(
+            [url],
+            chapter.sourceManga.mangaId,
+            "safe",
+            policy,
+            Date.now(),
+            chapter.chapterId + "-other",
+          ),
+        ).to.throw(/Conflicting/);
+        Application.setState(
+          roles.map((g) => ({
+            ...g,
+            at: g.chapter === undefined ? Date.now() - IMAGE_LIFETIME - 1 : g.at,
+          })),
+          IMAGE_STORE,
+        );
+        expect(authorizeImage(url).chapter).to.equal(chapter.chapterId);
+        Application.setState(
+          roles.map((g) => ({
+            ...g,
+            at: g.chapter === undefined ? g.at : Date.now() - IMAGE_LIFETIME - 1,
+          })),
+          IMAGE_STORE,
+        );
+        expect(authorizeImage(url).chapter).to.equal(undefined);
+        Application.setState({ ...policy, revision: policy.revision + 1 }, PREFERENCES);
+        expect(() => authorizeImage(url)).to.throw(/revoked/);
+        expect(probe.requests.length).to.equal(before);
+      } finally {
+        Application.setState(policy, PREFERENCES);
+        Application.setState(saved, IMAGE_STORE);
+        Application.setState(evidence, OBSERVATIONS);
+      }
     },
   );
   suite.test(
