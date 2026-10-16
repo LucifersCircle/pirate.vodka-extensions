@@ -23,7 +23,13 @@ import {
   type Preferences,
   type Rating,
 } from "./models";
-import { MangaStashSearchForm, MangaStashSettingsForm, preferences, nativeAllowed } from "./forms";
+import {
+  MangaStashSearchForm,
+  MangaStashSettingsForm,
+  InvalidSettingsError,
+  preferences,
+  nativeAllowed,
+} from "./forms";
 import {
   chapterURL,
   continuation,
@@ -57,7 +63,13 @@ export class MangaStashExtension implements ExtensionImpl<typeof Config> {
   private pending = new Map<string, Promise<Cached>>();
   private revision = -1;
   async initialise() {
-    preferences();
+    try {
+      preferences();
+    } catch (error) {
+      if (!(error instanceof InvalidSettingsError)) throw error;
+    }
+    // Even invalid preferences must leave the settings recovery form reachable.
+    // Every catalog, reader and image callback still validates policy before use.
     this.interceptor.registerInterceptor();
     Application.setRedirectHandler(Application.Selector(this.interceptor, "handleRedirect"));
     this.rateLimiter.registerInterceptor();

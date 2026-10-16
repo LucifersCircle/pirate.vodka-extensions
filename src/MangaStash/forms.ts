@@ -21,8 +21,57 @@ import {
   nativeRating,
 } from "./models";
 import { readFilters } from "./urls";
+import { readStoredState, settingsShape, writeStoredState } from "./state";
 export const PREFERENCES = "MangaStash.preferences";
 export const NATIVE_POLICY = "MangaStash.nativeRatingPolicy";
+export class InvalidSettingsError extends Error {
+  constructor(key = PREFERENCES) {
+    super(
+      `MangaStash settings are invalid (${key === PREFERENCES ? "preferences" : "image grants"}: ${settingsShape(key)}). Open source settings to reset.`,
+    );
+  }
+}
+let highestRevision = 0;
+const rememberRevision = (value: unknown): number => {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 1)
+    highestRevision = Math.max(highestRevision, value);
+  return highestRevision;
+};
+const nextRevision = (): number => {
+  // Recovery reads only numeric epoch evidence, never treats malformed policy as valid.
+  let saved: unknown, issued: unknown;
+  try {
+    saved = readStoredState(PREFERENCES);
+  } catch {
+    /* Explicit reset can replace invalid JSON. */
+  }
+  try {
+    issued = readStoredState("MangaStash.images");
+  } catch {
+    /* Grants are revoked below. */
+  }
+  if (saved && typeof saved === "object")
+    rememberRevision((saved as Partial<Preferences>).revision);
+  if (Array.isArray(issued)) for (const grant of issued) rememberRevision(grant?.revision);
+  const revision = highestRevision + 1;
+  if (!Number.isSafeInteger(revision)) throw new Error("MangaStash policy revision exhausted.");
+  return revision;
+};
+const nativePolicy = (): string => {
+  if (
+    typeof Application.filterMatureTitles !== "boolean" ||
+    typeof Application.filterAdultTitles !== "boolean"
+  )
+    throw new Error("MangaStash requires the native Paperback content policy.");
+  return JSON.stringify([Application.filterMatureTitles, Application.filterAdultTitles]);
+};
+const savePreferences = (value: Preferences, native: string): Preferences => {
+  writeStoredState(value, PREFERENCES);
+  Application.setState(native, NATIVE_POLICY);
+  writeStoredState([], "MangaStash.images");
+  rememberRevision(value.revision);
+  return value;
+};
 // The pinned host exposes independent filters for its Mature and Adult item ratings.
 // Unknown is mapped to Mature compatibility, never silently treated as explicit Adult.
 export const nativeAllowed = (rating: Rating): boolean => {
@@ -34,51 +83,64 @@ export const nativeAllowed = (rating: Rating): boolean => {
   );
 };
 export const preferences = (): Preferences => {
-  if (
-    typeof Application.filterMatureTitles !== "boolean" ||
-    typeof Application.filterAdultTitles !== "boolean"
-  )
-    throw new Error("MangaStash requires the native Paperback content policy.");
-  const native = JSON.stringify([Application.filterMatureTitles, Application.filterAdultTitles]);
+  const native = nativePolicy();
   const previousNative = Application.getState(NATIVE_POLICY);
-  const saved = Application.getState(PREFERENCES) as Preferences | undefined;
-  if (saved === undefined || saved === null) {
-    // A partial settings reset cannot revive grants from the previous policy epoch.
-    const old = Application.getState("MangaStash.images");
-    const highest = Array.isArray(old)
-      ? old.reduce((n, e) => Math.max(n, Number.isSafeInteger(e?.revision) ? e.revision : 0), 0)
-      : 0;
-    const revision = highest + 1;
-    if (!Number.isSafeInteger(revision)) throw new Error("MangaStash policy revision exhausted.");
-    const value = { onlySafe: false, revision };
-    Application.setState(value, PREFERENCES);
-    Application.setState(native, NATIVE_POLICY);
-    Application.setState([], "MangaStash.images");
-    return value;
+  let saved: Preferences | undefined | null;
+  try {
+    saved = readStoredState(PREFERENCES) as Preferences | undefined | null;
+  } catch {
+    throw new InvalidSettingsError();
   }
+  if (saved === undefined || saved === null)
+    return savePreferences({ onlySafe: false, revision: nextRevision() }, native);
   if (
     typeof saved !== "object" ||
     Array.isArray(saved) ||
     typeof saved.onlySafe !== "boolean" ||
     !Number.isSafeInteger(saved.revision) ||
-    saved.revision < 1
+    saved.revision < 1 ||
+    saved.revision < highestRevision
   )
-    throw new Error("MangaStash settings are invalid; reset source settings.");
+    throw new InvalidSettingsError();
+  rememberRevision(saved.revision);
   if (previousNative !== native) {
-    const issued = Application.getState("MangaStash.images");
+    let issued: unknown;
+    try {
+      issued = readStoredState("MangaStash.images");
+    } catch {
+      throw new InvalidSettingsError("MangaStash.images");
+    }
     const changed = previousNative !== undefined || (Array.isArray(issued) && issued.length > 0);
-    const revision = saved.revision + (changed ? 1 : 0);
-    if (!Number.isSafeInteger(revision)) throw new Error("MangaStash policy revision exhausted.");
-    const value = { onlySafe: saved.onlySafe, revision };
-    Application.setState(value, PREFERENCES);
-    Application.setState(native, NATIVE_POLICY);
-    if (changed) Application.setState([], "MangaStash.images");
-    return value;
+    return savePreferences(
+      { onlySafe: saved.onlySafe, revision: changed ? nextRevision() : saved.revision },
+      native,
+    );
   }
   return { onlySafe: saved.onlySafe, revision: saved.revision };
 };
 export class MangaStashSettingsForm extends Form {
   override getSections() {
+    let saved: Preferences;
+    try {
+      saved = preferences();
+    } catch (error) {
+      if (!(error instanceof InvalidSettingsError)) throw error;
+      return [
+        Section(
+          {
+            id: "recovery",
+            header: "MangaStash settings need recovery",
+            footer: `${error.message} Reset restores the source default and revokes saved image access. Paperback’s Mature and Adult filters and retained source warnings are unchanged.`,
+          },
+          [
+            ButtonRow("reset", {
+              title: "Reset settings",
+              onSelect: Application.Selector(this as MangaStashSettingsForm, "reset"),
+            }),
+          ],
+        ),
+      ];
+    }
     return [
       Section(
         {
@@ -93,7 +155,7 @@ export class MangaStashSettingsForm extends Form {
             title: "Only explicitly Safe titles",
             subtitle:
               "Off by default. Only titles explicitly labeled Safe by MangaStash are allowed when enabled; unlabeled listings are excluded.",
-            value: preferences().onlySafe,
+            value: saved.onlySafe,
             onValueChange: Application.Selector(this as MangaStashSettingsForm, "setOnlySafe"),
           }),
           ButtonRow("reset", {
@@ -106,15 +168,16 @@ export class MangaStashSettingsForm extends Form {
   }
   async setOnlySafe(value: boolean) {
     if (typeof value !== "boolean") throw new Error("Invalid MangaStash content setting.");
-    const revision = preferences().revision + 1;
-    if (!Number.isSafeInteger(revision)) throw new Error("MangaStash policy revision exhausted.");
-    Application.setState({ onlySafe: value, revision }, PREFERENCES);
-    Application.setState([], "MangaStash.images");
+    preferences();
+    savePreferences({ onlySafe: value, revision: nextRevision() }, nativePolicy());
     Application.invalidateDiscoverSections();
     this.reloadForm();
   }
   async reset() {
-    await this.setOnlySafe(false);
+    const native = nativePolicy();
+    savePreferences({ onlySafe: false, revision: nextRevision() }, native);
+    Application.invalidateDiscoverSections();
+    this.reloadForm();
   }
 }
 export class MangaStashSearchForm extends AdvancedSearchForm {

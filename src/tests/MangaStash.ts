@@ -23,6 +23,7 @@ import {
   NATIVE_POLICY,
   nativeAllowed,
 } from "../MangaStash/forms.js";
+import { readStoredState } from "../MangaStash/state.js";
 import { BASE_URL, CONTROLS, SECTIONS, SORTS, nativeRating } from "../MangaStash/models.js";
 import {
   IMAGE_LIFETIME,
@@ -95,7 +96,8 @@ export async function runTests(logger: TestLogger) {
     metadata: { genre: ["action"], language: ["EN"], rating: "safe" },
   };
   suite.test("initialisation: official host and explicit compatibility default", async () => {
-    Application.setState({ onlySafe: false, revision: 1 }, PREFERENCES);
+    Application.setState(undefined, PREFERENCES);
+    Application.setState(undefined, NATIVE_POLICY);
     Application.setState([], IMAGE_STORE);
     Application.setState([], OBSERVATIONS);
     await MangaStash.initialise();
@@ -104,8 +106,35 @@ export async function runTests(logger: TestLogger) {
     expect(typeof Headers).to.equal("undefined");
     expect(typeof URLSearchParams).to.equal("undefined");
     expect(preferences().onlySafe).to.equal(false);
-    expect(info.version).to.equal("0.0.1-alpha.2");
+    expect(info.version).to.equal("0.0.1-alpha.3");
+    expect(typeof Application.getState(PREFERENCES)).to.equal("string");
     expect((await MangaStash.getSettingsForm()).getSections()).not.to.be.empty;
+  });
+  suite.test("settings: serialized lifecycle and explicit recovery retain strict policy", async () => {
+    const before = probe.requests.length;
+    await settings.setOnlySafe(true);
+    const persisted = Application.getState(PREFERENCES);
+    expect(typeof persisted).to.equal("string");
+    const parsed = JSON.parse(persisted as string);
+    expect(parsed.onlySafe).to.equal(true);
+    // Re-enter through the host state boundary and a fresh source/form instance.
+    Application.setState(JSON.parse(JSON.stringify(persisted)), PREFERENCES);
+    const reloaded = new MangaStashExtension();
+    expect(preferences().onlySafe).to.equal(true);
+    expect((await reloaded.getSettingsForm()).getSections()).not.to.be.empty;
+    Application.setState(parsed, PREFERENCES); // Valid legacy object stays supported.
+    expect(preferences().onlySafe).to.equal(true);
+    for (const invalid of ["null", "{}", { onlySafe: "false", revision: parsed.revision }]) {
+      Application.setState(invalid, PREFERENCES);
+      expect(settings.getSections()[0].id).to.equal("recovery");
+      await rejects(() => reloaded.getDiscoverSections(), /settings are invalid/);
+      expect(Application.getState(PREFERENCES)).to.equal(invalid);
+    }
+    await settings.reset();
+    expect(preferences().onlySafe).to.equal(false);
+    expect(preferences().revision).to.be.greaterThan(parsed.revision);
+    expect(readStoredState(IMAGE_STORE)).to.deep.equal([]);
+    expect(probe.requests.length).to.equal(before);
   });
   suite.test("home: exact same-response complete sequences and legitimate overlap", async () => {
     expect(await MangaStash.getDiscoverSections()).to.deep.equal(SECTIONS);
@@ -488,8 +517,8 @@ export async function runTests(logger: TestLogger) {
           /authorization|Invalid|Wrong/,
         );
       }
-      const stored = Application.getState(IMAGE_STORE) as { at: number }[];
-      const evidence = Application.getState(OBSERVATIONS) as { at: number }[];
+      const stored = readStoredState(IMAGE_STORE) as { at: number }[];
+      const evidence = readStoredState(OBSERVATIONS) as { at: number }[];
       const dayOld = Date.now() - 23 * 60 * 60 * 1000;
       Application.setState(
         stored.map((g) => ({ ...g, at: dayOld })),
@@ -518,8 +547,7 @@ export async function runTests(logger: TestLogger) {
   suite.test(
     "images: overlapping cover and reader roles retain independent fixed grants",
     async () => {
-      const saved = Application.getState(IMAGE_STORE),
-        evidence = Application.getState(OBSERVATIONS),
+      const evidence = Application.getState(OBSERVATIONS),
         policy = preferences(),
         url = pages[0],
         before = probe.requests.length,
@@ -528,7 +556,7 @@ export async function runTests(logger: TestLogger) {
       try {
         issueImages([url], chapter.sourceManga.mangaId, "safe", policy, coverAt);
         const roles = (
-          Application.getState(IMAGE_STORE) as { url: string; chapter?: string; at: number }[]
+          readStoredState(IMAGE_STORE) as { url: string; chapter?: string; at: number }[]
         ).filter((g) => g.url === url);
         expect(roles.length).to.equal(2);
         expect(roles.find((g) => g.chapter === chapter.chapterId)?.at).to.equal(readerGrant.at);
@@ -536,12 +564,12 @@ export async function runTests(logger: TestLogger) {
         issueImages([url], chapter.sourceManga.mangaId, "unknown", policy, Date.now());
         expect(
           (
-            Application.getState(IMAGE_STORE) as { url: string; chapter?: string; rating: string }[]
+            readStoredState(IMAGE_STORE) as { url: string; chapter?: string; rating: string }[]
           ).find((g) => g.url === url && g.chapter === undefined)?.rating,
         ).to.equal("safe");
         expect(
           (
-            Application.getState(IMAGE_STORE) as { url: string; chapter?: string; at: number }[]
+            readStoredState(IMAGE_STORE) as { url: string; chapter?: string; at: number }[]
           ).find((g) => g.url === url && g.chapter === undefined)?.at,
         ).to.equal(coverAt);
         Application.setState([{ ...roles[0], chapter: "" }], IMAGE_STORE);
@@ -594,8 +622,8 @@ export async function runTests(logger: TestLogger) {
         expect(() => authorizeImage(url)).to.throw(/revoked/);
         expect(probe.requests.length).to.equal(before);
       } finally {
-        Application.setState(policy, PREFERENCES);
-        Application.setState(saved, IMAGE_STORE);
+        // Revoked grants must not be revived by restoring the older policy epoch.
+        await settings.setOnlySafe(policy.onlySafe);
         Application.setState(evidence, OBSERVATIONS);
       }
     },

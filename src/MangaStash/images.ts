@@ -4,6 +4,7 @@
 import { RATINGS, type Preferences, type Rating } from "./models";
 import { preferences, PREFERENCES, nativeAllowed } from "./forms";
 import { chapterURL, imageURL, validId } from "./urls";
+import { readStoredState, writeStoredState } from "./state";
 export const IMAGE_STORE = "MangaStash.images",
   OBSERVATIONS = "MangaStash.classifications";
 export const IMAGE_LIFETIME = 24 * 60 * 60 * 1000;
@@ -24,16 +25,16 @@ const fresh = (at: unknown): at is number =>
   at <= Date.now() &&
   at + IMAGE_LIFETIME > Date.now();
 const observations = (): Observation[] => {
-  const raw = Application.getState(OBSERVATIONS);
+  const raw = readStoredState(OBSERVATIONS);
   if (raw === undefined || raw === null || (Array.isArray(raw) && !raw.length)) {
-    const issued = Application.getState(IMAGE_STORE);
+    const issued = readStoredState(IMAGE_STORE);
     if (Array.isArray(issued) && issued.length) {
       const saved = preferences();
       const revision = saved.revision + 1;
       if (!Number.isSafeInteger(revision)) throw new Error("MangaStash policy revision exhausted.");
-      Application.setState({ ...saved, revision }, PREFERENCES);
-      Application.setState([], IMAGE_STORE);
-      Application.setState([], OBSERVATIONS);
+      writeStoredState({ ...saved, revision }, PREFERENCES);
+      writeStoredState([], IMAGE_STORE);
+      writeStoredState([], OBSERVATIONS);
       throw new Error(
         "MangaStash classification evidence was lost; reload for a fresh source response.",
       );
@@ -64,11 +65,11 @@ export const observe = (id: string, rating: Rating, at: number): Rating => {
   const value = warning ? prior : prior && prior.at > at ? prior : { id, rating, at };
   const remaining = all.filter((v) => v.id !== id);
   remaining.push(value);
-  Application.setState(remaining.slice(-LIMIT), OBSERVATIONS);
+  writeStoredState(remaining.slice(-LIMIT), OBSERVATIONS);
   return value.rating;
 };
 const grants = (): Grant[] => {
-  const raw = Application.getState(IMAGE_STORE);
+  const raw = readStoredState(IMAGE_STORE);
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw) || raw.length > LIMIT)
     throw new Error("Invalid MangaStash image authorization.");
@@ -151,7 +152,7 @@ export const issueImages = (
     if (old >= 0) all.splice(old, 1);
     all.push(issued);
   }
-  Application.setState(all.slice(-LIMIT), IMAGE_STORE);
+  writeStoredState(all.slice(-LIMIT), IMAGE_STORE);
 };
 export const authorizeImage = (url: string): Grant => {
   const saved = preferences(),
