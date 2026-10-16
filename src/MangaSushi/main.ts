@@ -123,10 +123,6 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
   private remember(item: CatalogItem) {
     const evidence = this.evidence.get(item.metadata);
     if (!evidence) throw new Error("Mangasushi metadata has no source evidence.");
-    if (!this.observed.has(item.metadata)) {
-      observeImageEvidence(item.mangaId, isAllowed(item.metadata), evidence);
-      this.observed.add(item.metadata);
-    }
     const previous = this.cache.get(item.mangaId);
     const previousEvidence = previous ? this.evidence.get(previous.data) : undefined;
     if (
@@ -137,7 +133,27 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
           !item.metadata.adult))
     )
       return;
-    this.cache.set(item.mangaId, { data: item.metadata, expires: evidence.at + 5 * 60 * 1000 });
+    // Preserve the released non-sliding warning window before publishing the
+    // effective classification. A later response must not silently erase it.
+    const warning =
+      previous?.data.adult &&
+      previous.expires > Date.now() &&
+      previousEvidence?.generation === evidence.generation;
+    const data = warning
+      ? this.inheritEvidence({ ...item.metadata, adult: true }, item.metadata)
+      : item.metadata;
+    if (!this.observed.has(item.metadata)) {
+      const accepted = observeImageEvidence(item.mangaId, isAllowed(data), evidence);
+      // A delayed warning rejected by the shared ordering must not seed a new
+      // local warning window and later turn into fresh contrary evidence.
+      if (!accepted && data.adult) return;
+      this.observed.add(item.metadata);
+      this.observed.add(data);
+    }
+    this.cache.set(item.mangaId, {
+      data,
+      expires: warning ? previous.expires : evidence.at + 5 * 60 * 1000,
+    });
   }
   private observeWarnings(items: CatalogItem[], expected?: CatalogItem[]) {
     for (const item of items) {

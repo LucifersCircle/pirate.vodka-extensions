@@ -1178,6 +1178,54 @@ export async function runTests(logger: TestLogger) {
       }
     },
   );
+  suite.test("metadata: rejected delayed warnings cannot seed a new local warning window", async () => {
+    await settings.setExcludeNSFW(true);
+    const target = "lonely-attack-on-the-different-world";
+    const query = { title: "Lonely Attack on the Different World" };
+    const newer = new (MangaSushi.constructor as new () => typeof MangaSushi)();
+    await newer.initialise();
+    const probe = new DiscoveryProbe("MangaSushi.rejected-warning-order-test");
+    let arrived!: () => void, release!: () => void;
+    const ready = new Promise<void>((resolve) => { arrived = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let mutated = false;
+    probe.gate = async (request, data) => {
+      if (mutated || request.url !== searchUrl(query, true)) return data;
+      const $ = cheerio.load(Application.arrayBufferToUTF8String(data));
+      const row = $(".c-tabs-item__content").filter(
+        (_index, node) => $(node).find(`.post-title a[href="${seriesUrl(target)}"]`).length > 0,
+      );
+      expect(row).to.have.length(1);
+      row.append('<span class="adult-content">Adult content</span>');
+      mutated = true;
+      arrived();
+      await held;
+      return encodeHTML($.html());
+    };
+    probe.registerInterceptor();
+    const pending = MangaSushi.getSearchResults(query);
+    void pending.catch(() => undefined);
+    try {
+      await Promise.race([
+        ready,
+        pending.then(() => { throw new Error("Search completed without the delayed warning gate."); }),
+      ]);
+      const safe = await newer.getSearchResults(query);
+      expect(ids(safe.items)).to.include(target);
+      release();
+      expect(ids((await pending).items)).not.to.include(target);
+      // The ignored old warning must not turn into new contrary evidence when
+      // this same instance receives another genuinely fresh safe response.
+      expect(ids((await MangaSushi.getSearchResults(query)).items)).to.include(target);
+      expect(probe.requests).to.have.length(3);
+    } finally {
+      release();
+      await pending.catch(() => undefined);
+      probe.unregisterInterceptor();
+      await MangaSushi.initialise();
+      await settings.setExcludeNSFW(true);
+    }
+  });
   suite.test(
     "genres: Cooking archive is genuinely empty without metadata or catalog scans",
     async () => {

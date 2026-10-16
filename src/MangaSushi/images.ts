@@ -137,7 +137,7 @@ export const observeImageEvidence = (
   id: string,
   allowed: boolean,
   evidence: ImageEvidence,
-): void => {
+): boolean => {
   const value = ledger(),
     previous = value.titles.get(id);
   if (value.missing || evidence.generation !== value.generation)
@@ -148,7 +148,7 @@ export const observeImageEvidence = (
     (previous && previous.sequence > evidence.sequence) ||
     (!previous && evidence.sequence <= value.discardedThrough)
   )
-    return;
+    return false;
   const blockedThrough = Math.max(previous?.blockedThrough ?? 0, allowed ? 0 : evidence.sequence);
   value.titles.delete(id);
   value.titles.set(id, {
@@ -158,6 +158,7 @@ export const observeImageEvidence = (
     firstSequence: previous?.firstSequence ?? value.discardedThrough + 1,
   });
   saveLedger(value);
+  return true;
 };
 export const imageEvidenceAllowed = (id: string, evidence?: ImageEvidence): boolean => {
   const title = ledger().titles.get(id);
