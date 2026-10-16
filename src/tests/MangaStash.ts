@@ -106,7 +106,7 @@ export async function runTests(logger: TestLogger) {
     expect(typeof Headers).to.equal("undefined");
     expect(typeof URLSearchParams).to.equal("undefined");
     expect(preferences().onlySafe).to.equal(false);
-    expect(info.version).to.equal("0.0.1-alpha.4");
+    expect(info.version).to.equal("0.0.1-alpha.5");
     expect(typeof Application.getState(PREFERENCES)).to.equal("string");
     expect((await MangaStash.getSettingsForm()).getSections()).not.to.be.empty;
   });
@@ -154,7 +154,12 @@ export async function runTests(logger: TestLogger) {
   suite.test("home: exact same-response complete sequences and legitimate overlap", async () => {
     expect(await MangaStash.getDiscoverSections()).to.deep.equal(SECTIONS);
     const results = [];
-    for (const section of SECTIONS) results.push(await MangaStash.getDiscoverSectionItems(section));
+    for (const [index, section] of SECTIONS.entries())
+      results.push(await MangaStash.getDiscoverSectionItems(section, [undefined, null, {}][index]));
+    const loaded = probe.requests.length;
+    for (const metadata of [undefined, null, {}])
+      expect(await MangaStash.getDiscoverSectionItems(SECTIONS[0], metadata)).to.deep.equal(results[0]);
+    expect(probe.requests.length).to.equal(loaded);
     home = probe.responses.get(BASE_URL + "/")!;
     const parsed = parseHome(home),
       $ = cheerio.load(home);
@@ -189,7 +194,11 @@ export async function runTests(logger: TestLogger) {
     expect(distinctHomeSections(duplicates).map((s) => s.id)).to.deep.equal(["popular", "latest"]);
   });
   suite.test("search: q-only native results preserve explicit Safe", async () => {
-    const result = await MangaStash.getSearchResults({ title: "Ayashimon" });
+    const result = await MangaStash.getSearchResults({ title: "Ayashimon" }, null);
+    const loaded = probe.requests.length;
+    for (const metadata of [undefined, null, {}])
+      expect(await MangaStash.getSearchResults({ title: "Ayashimon" }, metadata)).to.deep.equal(result);
+    expect(probe.requests.length).to.equal(loaded);
     expect(result.items.some((i) => i.mangaId === "ayashimon")).to.equal(true);
     expect(result.items.find((i) => i.mangaId === "ayashimon")?.contentRating).to.equal(
       ContentRating.EVERYONE,
@@ -345,6 +354,8 @@ export async function runTests(logger: TestLogger) {
         /Unknown/,
       );
       await rejects(() => MangaStash.getSearchResults({ title: "" }, cursor), /stale/);
+      for (const invalid of [false, 0, "", [], { page: 1 }, { context: "" }])
+        await rejects(() => MangaStash.getSearchResults({ title: "" }, invalid), /pagination/);
       for (const c of [
         { ...(cursor as object), next: BASE_URL + "/browse/?genre[]=comedy&page=2" },
         { ...(cursor as object), seen: ["../bad"] },
@@ -827,7 +838,8 @@ export async function runTests(logger: TestLogger) {
       () => MangaStash.getChapterDetails("chapter-25.6" as unknown as Chapter),
       /native Chapter/,
     );
-    await rejects(() => MangaStash.getDiscoverSectionItems(SECTIONS[0], {}), /finite snapshots/);
+    for (const invalid of [false, 0, "", [], { page: 1 }])
+      await rejects(() => MangaStash.getDiscoverSectionItems(SECTIONS[0], invalid), /finite snapshots/);
     expect(probe.requests.length).to.equal(before);
     expect(() => imageURL(BASE_URL + "/content/covers/thumbnails/other.jpg", "ayashimon")).to.throw(
       /owner/,
