@@ -245,6 +245,7 @@ the extensions you want in Paperback.
 
 - [Hijala](src/Hijala)
 - [Kagane](src/Kagane)
+- [MangaStash](src/MangaStash)
 - [MangaSushi](src/MangaSushi)
 - [ManhwaNex](src/ManhwaNex)
 - [VortexScans](src/VortexScans)
@@ -386,6 +387,49 @@ Implementation: [`src/Hijala`](src/Hijala).
 
 Implementation: [`src/Kagane`](src/Kagane). Existing GPL copyright and attribution
 are retained in the source files.
+
+</details>
+
+<details>
+<summary>MangaStash</summary>
+
+[MangaStash](https://mangastash.org/) is a native Paperback source.
+
+**Discover and search**
+
+- Popular This Month, New Additions and Latest Updates retain the website's
+  distinct feeds. Catalog browsing uses the site's declared filters and sorts;
+  title search uses its separate search endpoint rather than silently ignoring
+  unsupported combinations.
+- Pagination retains the original query scope, canonical IDs and source order.
+  Covers use the largest candidate actually advertised in each response, without
+  guessed image rewrites or a detail request for every card.
+
+**Details and reader**
+
+- Source titles, synopsis, classifications and the complete available chapter
+  inventory retain their canonical routes. Decimal chapter identities are not
+  reconstructed from a rounded chapter number.
+- Ordered public-reader images preserve the source's credit pages as well as
+  reading pages. Reader ownership and issued image URLs are checked before use.
+- Unavailable bulk chapter dates are omitted rather than invented.
+
+**Settings and limitations**
+
+- Paperback has no Unknown or Suggestive item rating. Unclassified items use an
+  explained Mature compatibility fallback; a genuine Suggestive source label is
+  also mapped conservatively to Mature, without inventing a Safe classification.
+  Paperback's own Mature and Adult filters remain in force for catalogs, saved
+  readers and image requests.
+- The optional extra source exclusion is **off by default**. Enabling it requires
+  verified Safe metadata; unclassified home/catalog cards cannot bypass that
+  choice. A wholly blocked feed explains the policy limitation instead of
+  pretending the provider returned no titles.
+- Home/catalog cards do not consistently supply individual age ratings. No
+  demographic or review score is treated as an age classification, and no
+  per-card requests are added just to infer one. Source access restrictions remain.
+
+Implementation: [`src/MangaStash`](src/MangaStash).
 
 </details>
 
