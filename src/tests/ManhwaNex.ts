@@ -74,6 +74,34 @@ export async function runTests(logger: TestLogger) {
     expect(parseCatalog(home, "popular").items).not.to.be.empty;
     expect(parseCatalog(home, "latest").items).not.to.be.empty;
   });
+  suite.test("discovery: unprovable duplication preserves descriptors without relaxing row validation", async () => {
+    const pages = (ManhwaNex as unknown as { pages: Map<string, { data: string; expires: number }> }).pages;
+    const url = `${BASE_URL}/`, original = pages.get(url)!;
+    expect(original?.data).to.equal(home);
+    const expected = [...SECTIONS, ...parseHomeCategories(home).map(({ id, title }) => ({ id, title, type: SECTIONS[1].type }))];
+    const count = probe.requests.length, saved = preferences();
+    const cases: [string, (page: ReturnType<typeof cheerio.load>) => unknown, "popular" | "latest"][] = [
+      ["empty Popular widget", ($) => $(".widget-manga-popular-slider .slider__item").remove(), "popular"],
+      ["missing Popular widget", ($) => $(".widget-manga-popular-slider").remove(), "popular"],
+      ["malformed Popular cover", ($) => $(".widget-manga-popular-slider .slider__item").first().find("img").remove(), "popular"],
+      ["empty Latest widget", ($) => $(".page-item-detail.manga").remove(), "latest"],
+      ["malformed Latest cover", ($) => $(".page-item-detail.manga").first().find("img").remove(), "latest"],
+    ];
+    try {
+      for (const [label, change, kind] of cases) {
+        const $ = cheerio.load(home); change($); const html = $.html();
+        pages.set(url, { ...original, data: html });
+        expect(() => parseCatalog(html, kind), label).to.throw(/catalog layout changed|invalid image URL/);
+        expect(await ManhwaNex.getDiscoverSections(), label).to.deep.equal(expected);
+        await rejects(() => ManhwaNex.getDiscoverSectionItems(SECTIONS[kind === "popular" ? 0 : 1]), /catalog layout changed|invalid image URL/);
+      }
+      const invalid = cheerio.load(home); invalid("li.menu-item-object-wp-manga-genre > a").first().attr("href", "https://other.test/manga-genre/action/");
+      pages.set(url, { ...original, data: invalid.html() });
+      await rejects(() => ManhwaNex.getDiscoverSections(), /invalid home category/);
+      expect(probe.requests).to.have.length(count);
+      expect(preferences()).to.deep.equal(saved);
+    } finally { pages.set(url, original); }
+  });
   suite.test("discovery: two cold requests and zero warm without per-card lookups", async () => {
     await settings.setExcludeNSFW(true); probe.requests.length = 0;
     const popular = await ManhwaNex.getDiscoverSectionItems(SECTIONS[0]);
@@ -164,9 +192,15 @@ export async function runTests(logger: TestLogger) {
       { id: "popular", url: `${BASE_URL}/`, kind: "popular", evidence: "latest", marker: "warning", modes: [true] },
       { id: "latest", url: `${BASE_URL}/`, kind: "latest", evidence: "popular", marker: "warning", modes: [true] },
     ] as const;
+    const scenarioSection = async (id: string) => {
+      const section = (await ManhwaNex.getDiscoverSections()).find((entry) => entry.id === id)
+        ?? (id === "popular" ? SECTIONS[0] : undefined);
+      if (!section) throw new Error(`The native conflict-probe section ${id} is missing.`);
+      return section;
+    };
     for (const scenario of scenarios) for (const exclude of scenario.modes) {
       await settings.setExcludeNSFW(true); probe.responses.clear();
-      const baselineSection = (await ManhwaNex.getDiscoverSections()).find((entry) => entry.id === scenario.id)!;
+      const baselineSection = await scenarioSection(scenario.id);
       const baseline = await ManhwaNex.getDiscoverSectionItems(baselineSection);
       const evidenceIds = ids(parseCatalog(probe.responses.get(scenario.url)!, scenario.evidence, false, scenario.url).items);
       const searchableIds = ids((await ManhwaNex.getSearchResults({ title: "" })).items);
@@ -223,7 +257,7 @@ export async function runTests(logger: TestLogger) {
           void readerPending.catch(() => undefined);
           await Promise.race([arrivedReader, readerPending]); expect(readerHeld).to.equal(true);
         }
-        const section = (await ManhwaNex.getDiscoverSections()).find((entry) => entry.id === scenario.id)!;
+        const section = await scenarioSection(scenario.id);
         sectionPending = ManhwaNex.getDiscoverSectionItems(section);
         void sectionPending.catch(() => undefined);
         const cache = (ManhwaNex as unknown as { cache: Map<string, { data: ReturnType<typeof emptyMetadata>; expires: number }> }).cache;
