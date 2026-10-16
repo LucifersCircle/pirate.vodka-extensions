@@ -14,6 +14,23 @@ import { buildMangaId, getVortexGenres } from "../shared/utils";
 import { parseHomepageItems, parsePopularTodayItems } from "./parsers";
 import { HOME_PAGE_SIZE, homeHTML, parseHome, type HomePost } from "./home";
 
+// The native metadata contract includes null; empty JSON records also mean no cursor.
+// Nonempty or malformed values retain the existing continuation handling.
+const firstPage = (metadata: unknown): boolean => {
+  if (metadata == null) return true;
+  if (typeof metadata !== "object" || Array.isArray(metadata) || Reflect.ownKeys(metadata).length)
+    return false;
+  const prototype = Object.getPrototypeOf(metadata);
+  if (prototype === null) return true;
+  const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")?.value;
+  return (
+    Object.getPrototypeOf(prototype) === null &&
+    typeof constructor === "function" &&
+    constructor.prototype === prototype &&
+    Function.prototype.toString.call(constructor) === Function.prototype.toString.call(Object)
+  );
+};
+
 const DISCOVER_SECTIONS: DiscoverSection[] = [
   { id: "featured", title: "Featured", type: DiscoverSectionType.prominentCarousel },
   { id: "popular-today", title: "Popular Today", type: DiscoverSectionType.prominentCarousel },
@@ -63,18 +80,20 @@ export class DiscoverProvider {
 
   async getDiscoverSectionItems(
     section: DiscoverSection,
-    metadata?: Metadata,
+    metadata?: Metadata | null,
   ): Promise<PagedResults<DiscoverSectionItem>> {
     return withContentSettings(() => this.fetchDiscoverSectionItems(section, metadata));
   }
   private async fetchDiscoverSectionItems(
     section: DiscoverSection,
-    metadata?: Metadata,
+    metadata?: Metadata | null,
   ): Promise<PagedResults<DiscoverSectionItem>> {
     switch (section.id) {
       case "featured":
         return {
-          items: metadata ? [] : parseHomepageItems(parseHome(await homeHTML()).featured, true),
+          items: firstPage(metadata)
+            ? parseHomepageItems(parseHome(await homeHTML()).featured, true)
+            : [],
         };
       case "popular-today":
         return this.getPopularTodayItems();
@@ -85,7 +104,9 @@ export class DiscoverProvider {
       case "collections":
         return this.getCollectionItems();
       case "most-popular":
-        return { items: metadata ? [] : parseHomepageItems(parseHome(await homeHTML()).popular) };
+        return {
+          items: firstPage(metadata) ? parseHomepageItems(parseHome(await homeHTML()).popular) : [],
+        };
       case "genres":
         return this.getGenreItems();
       default:
@@ -128,11 +149,13 @@ export class DiscoverProvider {
     return { items, metadata: undefined };
   }
 
-  private async getLatestItems(metadata?: Metadata): Promise<PagedResults<DiscoverSectionItem>> {
+  private async getLatestItems(
+    metadata?: Metadata | null,
+  ): Promise<PagedResults<DiscoverSectionItem>> {
     type Cursor = { home: "latest"; page: number; seen: string[]; contentContext: string };
     const contentContext = JSON.stringify(contentSettings());
     const cursor = metadata as Partial<Cursor> | undefined;
-    if (!cursor) {
+    if (firstPage(metadata)) {
       const posts = parseHome(await homeHTML()).latest;
       const items = parseHomepageItems(posts);
       if (!items.length && posts.length === HOME_PAGE_SIZE)
@@ -156,6 +179,9 @@ export class DiscoverProvider {
       };
     }
     if (
+      !cursor ||
+      typeof cursor !== "object" ||
+      Array.isArray(cursor) ||
       cursor.home !== "latest" ||
       cursor.contentContext !== contentContext ||
       !Number.isSafeInteger(cursor.page) ||
