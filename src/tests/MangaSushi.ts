@@ -132,6 +132,8 @@ export async function runTests(logger: TestLogger) {
   const saved = Application.getState("MangaSushi.preferences");
   const suite = new TestSuite("MangaSushi tests", logger);
   let safeSource: SourceManga;
+  let safeDetailHTML = "";
+  let safeCatalogRelease = "";
   let sample: SourceManga;
   let sampleChapters: Chapter[];
   let issuedReaderPages: string[];
@@ -171,19 +173,30 @@ export async function runTests(logger: TestLogger) {
     sourceSearch = parseCatalog(html, "search", true);
   });
   suite.test("getSearchResults: native adult filter plus genre safety", async () => {
-    const result = await MangaSushi.getSearchResults({ title: "" });
-    expect(result.items).not.to.be.empty;
-    for (const item of result.items) {
-      expect(isAllowed(item.metadata)).to.equal(true);
-      expect(item.imageUrl).to.match(/^https:\/\//);
-      expect(item.metadata.genres.some((genre) => BLOCKED_GENRES.includes(genre.id))).to.equal(
-        false,
+    const probe = new DiscoveryProbe("MangaSushi.detail-metadata-test");
+    probe.registerInterceptor();
+    try {
+      const result = await MangaSushi.getSearchResults({ title: "" });
+      expect(result.items).not.to.be.empty;
+      for (const item of result.items) {
+        expect(isAllowed(item.metadata)).to.equal(true);
+        expect(item.imageUrl).to.match(/^https:\/\//);
+        expect(item.metadata.genres.some((genre) => BLOCKED_GENRES.includes(genre.id))).to.equal(
+          false,
+        );
+      }
+      expect(result.items.map((item) => item.mangaId)).to.deep.equal(
+        sourceSearch.items.filter((item) => isAllowed(item.metadata)).map((item) => item.mangaId),
       );
-    }
-    expect(result.items.map((item) => item.mangaId)).to.deep.equal(
-      sourceSearch.items.filter((item) => isAllowed(item.metadata)).map((item) => item.mangaId),
-    );
-    safeSource = await MangaSushi.getMangaDetails(result.items[0].mangaId);
+      const catalogHTML = probe.responses.find((entry) => entry.request.url === searchUrl({ title: "" }, true))?.html ?? "";
+      expect(catalogHTML, "Missing the search response consumed by native getSearchResults").not.to.be.empty;
+      const $catalog = cheerio.load(catalogHTML);
+      const row = $catalog(".c-tabs-item__content").filter((_, node) => $catalog(node).find(".post-title a").first().attr("href") === seriesUrl(result.items[0].mangaId));
+      expect(row.length, "Unique canonical search metadata row").to.equal(1);
+      safeCatalogRelease = row.find(".mg_release .summary-content").text().replace(/\s+/g, " ").trim();
+      safeSource = await MangaSushi.getMangaDetails(result.items[0].mangaId);
+      safeDetailHTML = probe.responses.find((entry) => entry.request.url === seriesUrl(safeSource.mangaId))?.html ?? "";
+    } finally { probe.unregisterInterceptor(); }
   });
   suite.test("getSearchResults: displayed smart punctuation resolves by exact ID", async () => {
     const quoted = sourceSearch.items.find((item) => /[‘’“”]/.test(item.title));
@@ -197,6 +210,22 @@ export async function runTests(logger: TestLogger) {
     expect(safeSource.mangaInfo.author).to.be.a("string").and.not.be.empty;
     expect(safeSource.mangaInfo.artist).to.be.a("string").and.not.be.empty;
     expect(safeSource.mangaInfo.tagGroups?.[0].tags).not.to.be.empty;
+    expect(safeDetailHTML, "Missing the detail response consumed by native getMangaDetails").not.to.be.empty;
+    const $ = cheerio.load(safeDetailHTML);
+    const normalized = (value: string) => value.replace(/\s+/g, " ").trim();
+    const field = (name: string) => normalized($(".profile-manga .post-content_item").filter((_, node) => normalized($(node).find(".summary-heading").text()).toLowerCase() === name).find(".summary-content").text());
+    expect(safeSource.mangaInfo.additionalInfo?.Type).to.equal(field("type") || undefined);
+    // The existing classification metadata takes precedence over detail-page release.
+    expect(safeSource.mangaInfo.additionalInfo?.Released).to.equal(safeCatalogRelease || field("release") || undefined);
+    const aggregate = $(".tab-summary .vote-details[typeof='AggregateRating']");
+    const scoreText = aggregate.find('[property="ratingValue"]').text().trim(), votesText = aggregate.find('[property="ratingCount"]').text().trim();
+    const score = Number(scoreText), votes = Number(votesText);
+    // The first safe search result is dynamic and may legitimately be unrated.
+    const rated = aggregate.length === 1 && ["ratingValue", "bestRating", "ratingCount"].every((property) => aggregate.find(`[property="${property}"]`).length === 1)
+      && aggregate.find('[property="bestRating"]').text().trim() === "5" && /^\d+(?:\.\d+)?$/.test(scoreText)
+      && /^[1-9]\d*$/.test(votesText) && Number.isFinite(score) && score > 0 && score <= 5 && Number.isSafeInteger(votes) && votes > 0;
+    expect(safeSource.mangaInfo.rating).to.equal(rated ? score / 5 : undefined);
+    expect(safeSource.mangaInfo.additionalInfo?.Score).to.equal(rated ? `★ ${score}/5 (${votes} ${votes === 1 ? "vote" : "votes"})` : undefined);
   });
   suite.test("getMangaDetails: unknown classification is blocked by default", async () => {
     await rejects(

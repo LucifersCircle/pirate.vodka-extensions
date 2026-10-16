@@ -5,6 +5,8 @@ search, details, chapters and readers. Available features depend on each website
 
 ## Extension health
 
+[![Live Extension Tests](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/workflows/live-tests.yaml/badge.svg?branch=0.9%2Fstable)](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/workflows/live-tests.yaml)
+
 Full live sweeps run every 30 minutes at minutes 17 and 47 (UTC), and on manual
 dispatch. GitHub may delay scheduled runs. Pull requests run live checks for
 affected sources; shared or uncertain changes require the full live suite.
