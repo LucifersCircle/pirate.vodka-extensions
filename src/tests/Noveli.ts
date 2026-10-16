@@ -142,8 +142,28 @@ const rejects = async (operation: () => Promise<unknown>, pattern: RegExp) => {
   expect(String(failure)).to.match(pattern);
 };
 // Source-local use of the existing native image contract: HTTP, MIME and real magic bytes.
-const assertCoverBytes = async (url: string) => {
-  const [response, data] = await Application.scheduleRequest({ url, method: "GET" });
+const assertCoverBytes = async (url: string, logger: TestLogger) => {
+  const [response, data] = await Application.scheduleRequest({ url, method: "GET" }).catch((error: unknown) => {
+    try {
+      const failure = error && typeof error === "object" ? error as { name?: unknown; cause?: unknown } : undefined;
+      const cause = failure?.cause && typeof failure.cause === "object" ? failure.cause as { code?: unknown } : undefined;
+      const names = ["Error", "TypeError", "RangeError", "SyntaxError", "AbortError", "TimeoutError", "AggregateError"];
+      const codes = ["ENOTFOUND", "EAI_AGAIN", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENETUNREACH", "EHOSTUNREACH", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT", "UND_ERR_SOCKET", "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "ERR_TLS_CERT_ALTNAME_INVALID", "ERR_SSL_WRONG_VERSION_NUMBER"];
+      let urlMD5: string | undefined;
+      try {
+        const target = new globalThis.URL(url);
+        const hash = Application.crypto_md5Hash(new TextEncoder().encode(target.origin + target.pathname).buffer as ArrayBuffer);
+        if (/^[a-f0-9]{32}$/i.test(hash)) urlMD5 = hash;
+      } catch { /* URL hashing is optional; never obscure the original failure. */ }
+      logger.log("coverFetchFailure", {
+        phase: "native-cover-request", name: "original-cover",
+        ...(urlMD5 ? { urlMD5 } : {}),
+        errorName: typeof failure?.name === "string" && names.includes(failure.name) ? failure.name : "other",
+        causeCode: typeof cause?.code === "string" && codes.includes(cause.code) ? cause.code : "unknown",
+      });
+    } catch { /* Diagnostic failures must not replace the original request error. */ }
+    throw error;
+  });
   expect(response.status).to.equal(200);
   expect(Object.entries(response.headers).find(([name]) => name.toLowerCase() === "content-type")?.[1]).to.match(/^image\//i);
   const bytes = new Uint8Array(data), magic = String.fromCharCode(...bytes.slice(0, 16));
@@ -384,7 +404,7 @@ export async function runTests(logger: TestLogger) {
     expect(source.mangaInfo.thumbnailUrl).to.equal(BASE + detail.cover_image);
     expect(source.mangaInfo.rating).to.equal(detail.rating / 5);
     expect(source.mangaInfo.contentRating).not.to.equal(ContentRating.EVERYONE);
-    await assertCoverBytes(source.mangaInfo.thumbnailUrl);
+    await assertCoverBytes(source.mangaInfo.thumbnailUrl, logger);
   });
   test("getChapters: complete source order, stable IDs and no invented dates or volumes", async () => {
     const saved = JSON.parse(JSON.stringify(source)) as SourceManga;

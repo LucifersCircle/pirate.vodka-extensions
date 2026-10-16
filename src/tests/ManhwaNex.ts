@@ -15,17 +15,44 @@ import { TestSuite } from "./suite.js";
 class RequestProbe extends PaperbackInterceptor {
   readonly requests: Request[] = [];
   readonly responses = new Map<string, string>();
+  requestCount = 0;
+  responseCount = 0;
+  lastRequest?: Request;
   gate?: (request: Request, data: ArrayBuffer) => Promise<ArrayBuffer>;
   override async interceptRequest(request: Request) {
-    if (request.url.startsWith(`${BASE_URL}/`)) this.requests.push(request);
+    if (request.url.startsWith(`${BASE_URL}/`)) {
+      this.requests.push(request); this.requestCount++; this.lastRequest = request;
+    }
     return request;
   }
   override async interceptResponse(request: Request, _response: Response, data: ArrayBuffer) {
     const result = this.gate ? await this.gate(request, data) : data;
-    if (request.url.startsWith(`${BASE_URL}/`)) this.responses.set(`${request.url}${typeof request.body === "string" ? request.body : ""}`, Application.arrayBufferToUTF8String(result));
+    if (request.url.startsWith(`${BASE_URL}/`)) {
+      this.responseCount++;
+      this.responses.set(`${request.url}${typeof request.body === "string" ? request.body : ""}`, Application.arrayBufferToUTF8String(result));
+    }
     return result;
   }
 }
+// Diagnostics expose only known public archive routes and fixed error identifiers.
+const archiveRequestDiagnostic = (request: Request | undefined) => {
+  if (!request) return undefined;
+  const route = request.url.split(/[?#]/, 1)[0], path = route.startsWith(`${BASE_URL}/`) ? route.slice(BASE_URL.length) : "";
+  const archive = /^\/manga-genre\/([a-z-]+)\/(?:page\/[1-9]\d{0,5}\/)?$/.exec(path);
+  return {
+    method: ["GET", "POST"].includes(request.method) ? request.method : "redacted",
+    route: path === "/" || path === "/wp-admin/admin-ajax.php" || (archive && GENRES.includes(archive[1])) ? route : "redacted",
+  };
+};
+const archiveErrorDiagnostic = (error: unknown) => {
+  const value = error && typeof error === "object" ? error as Record<string, unknown> : undefined;
+  const name = value?.name, cause = value?.cause;
+  const code = cause && typeof cause === "object" ? (cause as Record<string, unknown>).code : undefined;
+  return {
+    name: typeof name === "string" && ["Error", "TypeError", "RangeError", "SyntaxError", "AssertionError", "CloudflareError", "AbortError", "TimeoutError"].includes(name) ? name : "unknown",
+    causeCode: typeof code === "string" && ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT", "UND_ERR_SOCKET", "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "ERR_TLS_CERT_ALTNAME_INVALID"].includes(code) ? code : "unknown",
+  };
+};
 const rejects = async (operation: () => Promise<unknown>, pattern: RegExp) => {
   let failure: unknown;
   try { await operation(); } catch (error) { failure = error; }
@@ -128,18 +155,26 @@ export async function runTests(logger: TestLogger) {
     expect((await ManhwaNex.getDiscoverSectionItems(SECTIONS[0])).metadata).to.equal(undefined);
   });
   suite.test("categories: exact linked native archives, bounded lazy requests, distinct titles and terminal pagination", async () => {
+    const requestStart = probe.requestCount, responseStart = probe.responseCount;
+    let phase = "home-categories", categoryId: string | undefined, page: number | undefined, excludeNSFW: boolean | undefined;
+    try {
     const categories = parseHomeCategories(home);
     for (const exclude of [true, false]) {
+      phase = "settings"; excludeNSFW = exclude; categoryId = undefined; page = undefined;
       await settings.setExcludeNSFW(exclude); probe.requests.length = 0; probe.responses.clear();
+      phase = "home-descriptors";
       const sections = await ManhwaNex.getDiscoverSections();
       expect(probe.requests.map((request) => request.url)).to.deep.equal([`${BASE_URL}/`]);
       for (const category of categories) {
+        categoryId = GENRES.some((genre) => category.id === `genre:${genre}`) ? category.id : "redacted";
         const section = sections.find((entry) => entry.id === category.id)!;
         let cursor: Parameters<typeof ManhwaNex.getDiscoverSectionItems>[1], url = category.url, pages = 0;
         const seen: string[] = [], combined: string[] = [], expectedCombined: string[] = [];
         do {
+          phase = "cold-archive"; page = pages + 1;
           const count = probe.requests.length;
           const result = await ManhwaNex.getDiscoverSectionItems(section, cursor);
+          phase = "archive-validation";
           const requests = probe.requests.slice(count);
           expect(requests.filter((request) => request.method === "GET").map((request) => request.url)).to.deep.equal([url]);
           const batches = requests.filter((request) => request.method === "POST");
@@ -171,6 +206,7 @@ export async function runTests(logger: TestLogger) {
             expect(data.genres.some((genre) => `genre:${genre.id}` === section.id)).to.equal(true);
           }
           seen.push(...ids(raw.items)); combined.push(...ids(result.items)); expectedCombined.push(...expected); pages++;
+          phase = "warm-archive";
           const warmCount = probe.requests.length;
           expect(ids((await ManhwaNex.getDiscoverSectionItems(section, cursor)).items)).to.deep.equal(ids(result.items));
           expect(probe.requests).to.have.length(warmCount);
@@ -181,7 +217,20 @@ export async function runTests(logger: TestLogger) {
         expect(combined, `${section.title} retains every eligible archive title in native order`).to.deep.equal(expectedCombined);
       }
     }
+    phase = "settings-reset";
     await settings.reset();
+    } catch (error) {
+      try {
+        logger.log("categoryArchiveFailure", {
+          phase, categoryId, page, excludeNSFW,
+          requestCount: probe.requestCount - requestStart,
+          responseCount: probe.responseCount - responseStart,
+          lastRequest: archiveRequestDiagnostic(probe.requestCount > requestStart ? probe.lastRequest : undefined),
+          error: archiveErrorDiagnostic(error),
+        });
+      } catch { /* Observation must never replace the original test failure. */ }
+      throw error;
+    }
   });
   suite.test("categories: observed adult conflicts revoke direct and in-flight access without losing metadata", async () => {
     const category = parseHomeCategories(home).find((entry) => entry.id === "genre:action")!;
