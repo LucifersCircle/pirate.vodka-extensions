@@ -5,7 +5,11 @@ import type { DiscoverSection, DiscoverSectionItem, PagedResults, Request } from
 import { CloudflareError, DiscoverSectionType, URL } from "@paperback/types";
 
 import { fetchJSON } from "../../services/network";
-import { getContentRatingSettings, getShowSource } from "../settings-form/main";
+import {
+  getContentRatingSettings,
+  getShowSource,
+  getListingSubtitleSettings,
+} from "../settings-form/main";
 import {
   API_URL,
   HOME_SECTION_METADATA_ID,
@@ -110,7 +114,10 @@ async function mapSectionItems(
       .filter((item): item is DiscoverSectionItem => item !== undefined);
   }
 
-  return books.map((book) => mapSimpleDiscoverItem(book, metadata.sources, showSource));
+  const subtitleSettings = getListingSubtitleSettings();
+  return books.map((book) =>
+    mapSimpleDiscoverItem(book, metadata.sources, showSource, subtitleSettings),
+  );
 }
 
 async function safeDetails(

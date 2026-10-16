@@ -32,6 +32,7 @@ import {
   getHiddenTagCategories,
   getShowEdition,
   getShowSource,
+  getListingSubtitleSettings,
   getSourceDisplayMode,
   setChapterTitleMode,
   setContentLanguages,
@@ -42,6 +43,8 @@ import {
   setHiddenTagCategories,
   setShowEdition,
   setShowSource,
+  setShowSubtitleType,
+  setShowSubtitleRating,
   setSourceDisplayMode,
 } from "./main";
 
@@ -68,6 +71,15 @@ export class KaganeSettingsForm extends Form {
         ],
       ),
       Section("display", [this.showEditionRow(), this.showSourceRow(), this.chapterTitleModeRow()]),
+      Section(
+        {
+          id: "listing-subtitles",
+          header: "Listing Subtitles",
+          footer:
+            "Optional type and listing star rating in Recently Added (simple Discover) and search results. Does not change Latest Updates or Popular (Featured).",
+        },
+        [this.showSubtitleTypeRow(), this.showSubtitleRatingRow()],
+      ),
       Section("reader", [this.dataSaverRow()]),
     ];
   }
@@ -173,6 +185,22 @@ export class KaganeSettingsForm extends Form {
     return ToggleRow("show-source", props);
   }
 
+  showSubtitleTypeRow(): FormItemElement<unknown> {
+    return ToggleRow("show-subtitle-type", {
+      title: "Show Type in Subtitles",
+      value: getListingSubtitleSettings().showType,
+      onValueChange: Application.Selector(this as KaganeSettingsForm, "handleShowSubtitleType"),
+    });
+  }
+
+  showSubtitleRatingRow(): FormItemElement<unknown> {
+    return ToggleRow("show-subtitle-rating", {
+      title: "Show Listing Rating in Subtitles",
+      value: getListingSubtitleSettings().showRating,
+      onValueChange: Application.Selector(this as KaganeSettingsForm, "handleShowSubtitleRating"),
+    });
+  }
+
   chapterTitleModeRow(): FormItemElement<unknown> {
     const props: SelectRowProps = {
       title: "Chapter Title Format",
@@ -239,6 +267,18 @@ export class KaganeSettingsForm extends Form {
 
   async handleShowSource(value: boolean): Promise<void> {
     setShowSource(value);
+    this.reloadForm();
+  }
+
+  async handleShowSubtitleType(value: boolean): Promise<void> {
+    setShowSubtitleType(value);
+    Application.invalidateDiscoverSections();
+    this.reloadForm();
+  }
+
+  async handleShowSubtitleRating(value: boolean): Promise<void> {
+    setShowSubtitleRating(value);
+    Application.invalidateDiscoverSections();
     this.reloadForm();
   }
 

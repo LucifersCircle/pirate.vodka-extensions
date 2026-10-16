@@ -14,6 +14,8 @@ export const CONTENT_RATING_KEY = "kagane-content-rating";
 export const SOURCE_DISPLAY_MODE_KEY = "kagane-source-display-mode";
 export const SHOW_EDITION_KEY = "kagane-show-edition";
 export const SHOW_SOURCE_KEY = "kagane-show-source";
+export const SHOW_SUBTITLE_TYPE_KEY = "kagane-show-subtitle-type";
+export const SHOW_SUBTITLE_RATING_KEY = "kagane-show-subtitle-rating";
 export const DATA_SAVER_KEY = "kagane-data-saver";
 export const CHAPTER_TITLE_MODE_KEY = "kagane-chapter-title-mode";
 export const EXCLUDED_GENRES_KEY = "kagane-excluded-genres";
@@ -199,6 +201,8 @@ export interface KaganeSearchBook {
   age_rating?: string | null;
   is_pornographic?: boolean | null;
   current_books?: number;
+  format?: string | null;
+  rating?: number | null;
   start_year?: number | null;
   cover_image_id?: string | null;
   alternate_titles?: string[];

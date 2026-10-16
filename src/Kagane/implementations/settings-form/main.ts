@@ -13,6 +13,8 @@ import {
   LANGUAGE_OPTIONS,
   SHOW_EDITION_KEY,
   SHOW_SOURCE_KEY,
+  SHOW_SUBTITLE_TYPE_KEY,
+  SHOW_SUBTITLE_RATING_KEY,
   SOURCE_DISPLAY_MODE_KEY,
   type GenreDto,
   type KaganeContentRating,
@@ -24,6 +26,7 @@ import {
   HIDDEN_TAG_CATEGORIES_KEY,
 } from "../shared/tag-options";
 import { KaganeSettingsForm } from "./forms";
+import type { ListingSubtitleSettings } from "../shared/listing-subtitle";
 
 function readStringArray(key: string, fallback: string[], validIds?: Set<string>): string[] {
   const value = Application.getState(key);
@@ -87,6 +90,21 @@ export function getShowSource(): boolean {
 
 export function setShowSource(value: boolean): void {
   Application.setState(value, SHOW_SOURCE_KEY);
+}
+
+export function getListingSubtitleSettings(): ListingSubtitleSettings {
+  return {
+    showType: Application.getState(SHOW_SUBTITLE_TYPE_KEY) === true,
+    showRating: Application.getState(SHOW_SUBTITLE_RATING_KEY) === true,
+  };
+}
+
+export function setShowSubtitleType(value: boolean): void {
+  Application.setState(value, SHOW_SUBTITLE_TYPE_KEY);
+}
+
+export function setShowSubtitleRating(value: boolean): void {
+  Application.setState(value, SHOW_SUBTITLE_RATING_KEY);
 }
 
 export function getDataSaver(): boolean {

@@ -3,6 +3,7 @@
 
 import type { DiscoverSectionItem } from "@paperback/types";
 
+import { appendListingSubtitle, type ListingSubtitleSettings } from "../shared/listing-subtitle";
 import type { DetailsDto, KaganeSearchBook, SourceDto } from "../shared/models";
 import { getPaperbackBookContentRating } from "../shared/rating";
 import { buildImageUrl, joinUnique, parseKaganeDate } from "../shared/utils";
@@ -11,13 +12,18 @@ export function mapSimpleDiscoverItem(
   book: KaganeSearchBook,
   sources: SourceDto[],
   showSource: boolean,
+  subtitleSettings: ListingSubtitleSettings,
 ): DiscoverSectionItem {
   return {
     type: "simpleCarouselItem",
     mangaId: book.series_id,
     title: buildDisplayTitle(book, sources, showSource),
     imageUrl: buildImageUrl(book.cover_image_id),
-    subtitle: typeof book.current_books === "number" ? `${book.current_books} Chapters` : undefined,
+    subtitle: appendListingSubtitle(
+      typeof book.current_books === "number" ? `${book.current_books} Chapters` : undefined,
+      book,
+      subtitleSettings,
+    ),
     contentRating: getPaperbackBookContentRating(book),
   };
 }
