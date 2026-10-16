@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright © 2026 Lucifers Circle */
 
+import { checkImageURL } from "./images";
 import {
   ContentRating,
   type Chapter,
@@ -37,6 +38,7 @@ const imageUrl = (value?: string): string => {
   const url = (value ?? "").trim();
   if (!/^https:\/\/[^\s/?#]+\/[^\s]+$/.test(url) || /\/dflazy\.|^data:/i.test(url))
     throw new Error("Mangasushi returned an invalid image URL.");
+  checkImageURL(url);
   return url;
 };
 export const isAllowed = (data: SeriesMetadata): boolean =>

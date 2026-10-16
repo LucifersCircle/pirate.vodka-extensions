@@ -33,7 +33,7 @@ import {
   STATUSES,
   type Cursor,
 } from "../MangaSushi/models.js";
-import { fetchNext, fetchText, searchUrl } from "../MangaSushi/network.js";
+import { fetchNext, fetchText, MangaSushiInterceptor, searchUrl } from "../MangaSushi/network.js";
 import {
   chapterTitle,
   isAllowed,
@@ -45,6 +45,7 @@ import {
 } from "../MangaSushi/parsers.js";
 import { englishTitle, searchTitle } from "../MangaSushi/titles.js";
 import { TestSuite } from "./suite.js";
+import { sourceURL } from "../MangaSushi/urls.js";
 
 // Observe the real host requests and optionally hold a live response in flight.
 // No saved HTML, alternate parser, or replacement source implementation is used.
@@ -133,6 +134,7 @@ export async function runTests(logger: TestLogger) {
   let safeSource: SourceManga;
   let sample: SourceManga;
   let sampleChapters: Chapter[];
+  let issuedReaderPages: string[];
   let sourceSearch: ReturnType<typeof parseCatalog>;
   let home = "";
   const settings = new MangaSushiSettingsForm();
@@ -140,6 +142,18 @@ export async function runTests(logger: TestLogger) {
     Application.setState(undefined, "MangaSushi.preferences");
     await MangaSushi.initialise();
     expect(preferences().excludeNSFW).to.equal(true);
+  });
+  suite.test("URLs: native source parser preserves exact identities without host globals", async () => {
+    const url = `${BASE_URL}/?s=Hero's%20Return%20%252F&author=A%2BB%3DC`;
+    const parsed = sourceURL(url);
+    expect(parsed.pathname).to.equal("/");
+    expect(parsed.search).to.equal(url.slice(BASE_URL.length + 1));
+    expect(parsed.href).to.equal(url.replace("Hero's", "Hero%27s"));
+    for (const value of [
+      "http://mangasushi.org/", "https://mangasushi.org.evil/", "https://user@mangasushi.org/",
+      `${BASE_URL}:443/`, `${BASE_URL}/manga/../`, `${BASE_URL}/manga/%2e%2e/`,
+      `${BASE_URL}/manga/a\\b/`, `${BASE_URL}/#fragment`, `${BASE_URL}/manga/a b/`,
+    ]) expect(() => sourceURL(value)).to.throw(/Mangasushi/);
   });
   suite.test("getDiscoverSections: native section order", async () => {
     expect((await MangaSushi.getDiscoverSections()).map((section) => section.title)).to.deep.equal([
@@ -1164,6 +1178,54 @@ export async function runTests(logger: TestLogger) {
       }
     },
   );
+  suite.test("metadata: rejected delayed warnings cannot seed a new local warning window", async () => {
+    await settings.setExcludeNSFW(true);
+    const target = "lonely-attack-on-the-different-world";
+    const query = { title: "Lonely Attack on the Different World" };
+    const newer = new (MangaSushi.constructor as new () => typeof MangaSushi)();
+    await newer.initialise();
+    const probe = new DiscoveryProbe("MangaSushi.rejected-warning-order-test");
+    let arrived!: () => void, release!: () => void;
+    const ready = new Promise<void>((resolve) => { arrived = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let mutated = false;
+    probe.gate = async (request, data) => {
+      if (mutated || request.url !== searchUrl(query, true)) return data;
+      const $ = cheerio.load(Application.arrayBufferToUTF8String(data));
+      const row = $(".c-tabs-item__content").filter(
+        (_index, node) => $(node).find(`.post-title a[href="${seriesUrl(target)}"]`).length > 0,
+      );
+      expect(row).to.have.length(1);
+      row.append('<span class="adult-content">Adult content</span>');
+      mutated = true;
+      arrived();
+      await held;
+      return encodeHTML($.html());
+    };
+    probe.registerInterceptor();
+    const pending = MangaSushi.getSearchResults(query);
+    void pending.catch(() => undefined);
+    try {
+      await Promise.race([
+        ready,
+        pending.then(() => { throw new Error("Search completed without the delayed warning gate."); }),
+      ]);
+      const safe = await newer.getSearchResults(query);
+      expect(ids(safe.items)).to.include(target);
+      release();
+      expect(ids((await pending).items)).not.to.include(target);
+      // The ignored old warning must not turn into new contrary evidence when
+      // this same instance receives another genuinely fresh safe response.
+      expect(ids((await MangaSushi.getSearchResults(query)).items)).to.include(target);
+      expect(probe.requests).to.have.length(3);
+    } finally {
+      release();
+      await pending.catch(() => undefined);
+      probe.unregisterInterceptor();
+      await MangaSushi.initialise();
+      await settings.setExcludeNSFW(true);
+    }
+  });
   suite.test(
     "genres: Cooking archive is genuinely empty without metadata or catalog scans",
     async () => {
@@ -1771,6 +1833,7 @@ export async function runTests(logger: TestLogger) {
     for (const [index, page] of result.pages.entries())
       expect(page).to.match(new RegExp(`/${String(index).padStart(2, "0")}\\.jpg$`));
     await checkReaderImages(result.pages);
+    issuedReaderPages = result.pages;
   });
   suite.test("reader: duplicate pages and page-order gaps fail closed", async () => {
     const chapter = sampleChapters.find((item) => item.chapterId === "chapter-66-1")!;
@@ -1789,6 +1852,109 @@ export async function runTests(logger: TestLogger) {
     expect(result.pages.length).to.be.greaterThan(1);
     expect(new Set(result.pages).size).to.equal(result.pages.length);
     for (const page of result.pages) expect(page).to.match(/^https:\/\/\S+$/);
+  });
+  suite.test("metadata: ambiguous cursor fields and mutable final identity fail closed", async () => {
+    const schedule = Application.scheduleRequest;
+    let requests = 0;
+    Application.scheduleRequest = async () => {
+      requests++;
+      throw new Error("Unexpected native scheduler access.");
+    };
+    const vars = { post_type: "wp-manga", post_status: "publish", template: "search", s: "original" };
+    const cursor = { page: 1, template: "madara-core/content/content-search", vars };
+    try {
+      for (const key of ["post_type", "post_status", "template", "s"]) {
+        for (const value of [
+          { ...vars, [`${key}][0`]: "collision" },
+          { [`${key}][0`]: "collision", ...vars },
+        ]) await rejects(() => fetchNext({ ...cursor, vars: value }), /Conflicting Mangasushi metadata/);
+      }
+      for (const key of ["post_type\u0000alias", "post_status\n", "template]tail"]) {
+        await rejects(() => fetchNext({ ...cursor, vars: { ...vars, [key]: "invalid" } }), /metadata/);
+      }
+      expect(requests).to.equal(0);
+      Application.scheduleRequest = async (request) => {
+        request.url = `${BASE_URL}/manga/different-title/`;
+        return [
+          { url: request.url, status: 200, headers: { "content-type": "text/html" }, cookies: [] },
+          encodeHTML("<html></html>"),
+        ];
+      };
+      await rejects(() => fetchText(`${BASE_URL}/`), /metadata request is no longer pending/);
+    } finally { Application.scheduleRequest = schedule; }
+  });
+  suite.test("metadata: pending cloned requests and HTML response boundary", async () => {
+    const guard = new MangaSushiInterceptor("MangaSushi.metadata-proof-guard");
+    class MetadataProbe extends DiscoveryProbe {
+      override async interceptRequest(request: Request): Promise<Request> {
+        const clone = JSON.parse(JSON.stringify(request)) as Request;
+        clone.headers = Object.fromEntries(
+          Object.entries(clone.headers ?? {}).map(([key, value]) => [key.toUpperCase(), value]),
+        );
+        await guard.interceptRequest(clone);
+        clone.headers = Object.fromEntries(
+          Object.entries(clone.headers ?? {}).map(([key, value]) => [key.toUpperCase(), value]),
+        );
+        const returned = await guard.interceptRequest(clone);
+        for (const key of ["referer", "origin", "user-agent"])
+          expect(Object.keys(returned.headers ?? {}).filter((name) => name.toLowerCase() === key)).to.have.length(1);
+        await rejects(
+          () => guard.interceptRequest({ url: `${BASE_URL}/wp-content/uploads/unissued.jpg`, method: "GET" }),
+          /image|authorization/i,
+        );
+        return super.interceptRequest(returned);
+      }
+      override async interceptResponse(request: Request, response: Response, data: ArrayBuffer): Promise<ArrayBuffer> {
+        await guard.interceptResponse(request, response, data);
+        await rejects(
+          () => guard.interceptResponse(request, { ...response, url: `${BASE_URL}/wp-content/uploads/unissued.jpg` }, data),
+          /metadata/i,
+        );
+        await rejects(
+          () => guard.interceptResponse(request, response, encodeHTML("<svg></svg>")),
+          /metadata/i,
+        );
+        return super.interceptResponse(request, response, data);
+      }
+    }
+    const probe = new MetadataProbe("MangaSushi.metadata-proof");
+    probe.registerInterceptor();
+    try {
+      await fetchText(`${BASE_URL}/`);
+      expect(probe.requests).to.have.length(1);
+      expect(probe.responses).to.have.length(1);
+      await rejects(() => guard.interceptRequest(probe.requests[0]), /image|authorization/i);
+    } finally { probe.unregisterInterceptor(); }
+  });
+  suite.test("images: native issued URLs persist, reject mutation and expire without network requests", async () => {
+    const interceptor = new MangaSushiInterceptor("MangaSushi.image-proof");
+    const images = [sample.mangaInfo.thumbnailUrl, issuedReaderPages[0]];
+    const state = Application.getState("MangaSushi.issuedImages");
+    const probe = new DiscoveryProbe("MangaSushi.image-proof-observer");
+    probe.registerInterceptor();
+    try {
+      for (const url of images)
+        expect((await interceptor.interceptRequest({ url, method: "GET" })).url).to.equal(url);
+      for (const url of [
+        `${images[1]}?unissued=1`,
+        "https://mangasushi.org/wp-content/uploads/unissued.jpg",
+        "https://example.invalid/unissued.jpg",
+        seriesUrl(SAMPLE),
+      ]) await rejects(() => interceptor.interceptRequest({ url, method: "GET" }), /image|authorization/i);
+      const expired = JSON.parse(JSON.stringify(state)) as [string, { at: number; expires: number }][];
+      for (const [, grant] of expired) { grant.at -= 24 * 60 * 60 * 1000 + 1; grant.expires -= 24 * 60 * 60 * 1000 + 1; }
+      Application.setState(expired, "MangaSushi.issuedImages");
+      await rejects(() => interceptor.interceptRequest({ url: images[1], method: "GET" }), /expired|authorization/i);
+      expect(probe.requests).to.have.length(0);
+    } finally {
+      Application.setState(state, "MangaSushi.issuedImages");
+      probe.unregisterInterceptor();
+    }
+    const previous = preferences().excludeNSFW;
+    try {
+      await settings.setExcludeNSFW(!previous);
+      for (const url of images) await rejects(() => interceptor.interceptRequest({ url, method: "GET" }), /settings|authorization/i);
+    } finally { await settings.setExcludeNSFW(previous); }
   });
   suite.test("settings: stale library and cached metadata cannot bypass exclusion", async () => {
     await settings.setExcludeNSFW(false);
