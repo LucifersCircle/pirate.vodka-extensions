@@ -1,31 +1,7 @@
-## Available Extensions
+# Pirate Vodka Extensions for Paperback
 
-- Hijala
-- VortexScans
-- Kagane
-- Mangasushi
-- ManhwaNex
-
-## Hijala
-
-Version `0.0.1-alpha.4` follows the current Hijala website: Featured, Latest
-Releases, New, Most Popular and Latest Updates. Latest/New use verified source
-pagination; Popular uses the rendered first nine titles and chapter updates use
-actual source chapter identities. Stale Hot and homepage Genres rows are removed;
-all live genres remain available in advanced search and source settings.
-
-Latest and New are separate native rows for the site's tabs.
-
-Default-on persistent NSFW exclusion uses verified source genre labels, not an
-invented four-category rating or demographic guesses. Unknown classification is
-hidden by default, and explicit genre exclusions remain fail-closed after opt-out.
-Existing content types and paid-chapter hiding intersect those preferences across
-browsing, details, chapters and readers; protected chapters remain on the website.
-Bounded caches reused across callbacks avoid per-title metadata requests.
-
-Native checks preserve the exact supplied `SourceManga` reference, all source
-chapters and genuine decimal numbers, semantic titles, paid boundaries and real
-first/middle/last reader image bytes. Covers retain their source-provided URLs.
+Community-maintained extensions for Paperback 0.9, with source-specific Discover,
+search, details, chapters and readers. Available features depend on each website.
 
 ## Extension health
 
@@ -248,11 +224,25 @@ Tested commit: `d692df7`
 
 ## Installation
 
-To add these extensions to Paperback, install from [here]
+Add the repository from [read.pirate.vodka](https://read.pirate.vodka), then install
+the extensions you want in Paperback.
+
+## Available extensions
+
+- [Hijala](src/Hijala)
+- [Kagane](src/Kagane)
+- [MangaSushi](src/MangaSushi)
+- [ManhwaNex](src/ManhwaNex)
+- [VortexScans](src/VortexScans)
+
+Source settings and website access restrictions vary. Review each extension's
+settings; website content labels are not a guarantee of content safety.
 
 ## Contributing
 
-Make a pull request if you want to.
+Bug reports and focused pull requests are welcome. Include the affected source,
+steps to reproduce and relevant test results. Do not include credentials or
+private reading data.
 
 ## Development and tests
 
@@ -286,7 +276,65 @@ npm run test:extensions -- Hijala
 npm run test:extensions -- MangaSushi
 ```
 
-Mangasushi `0.0.1-alpha.7` uses the website's Popular Series slider and What's New
+Use the included FlareSolverr test image. Set `FLARESOLVERR_URL` to connect to
+another instance of that image; the default is `http://127.0.0.1:8191`.
+
+For a managed cloud environment with an outbound TLS proxy:
+
+```sh
+docker compose -f compose.yaml -f compose.proxy.yaml up -d --build --wait --wait-timeout 90
+```
+
+This mounts the public CA at `CODEX_PROXY_CERT` into the browser trust store and
+supplies it to the build. FlareSolverr uses Docker's configured HTTPS/HTTP proxy
+unless `PROXY_URL` is set on the container. The test runner uses Node's environment
+proxy support. Keep the environment's Node CA trust configuration. TLS
+verification stays enabled in the browser.
+
+The **Live Extension Tests** workflow can be started manually from the Actions
+tab. Scheduled and manual full runs on the default branch update only the marked
+README status section and `reports/live-tests-history.json`, including failed
+tests and setup errors. PR results remain in the job summary and artifacts, with
+unselected sources explicitly identified, without editing README/history or
+publishing extensions. Reports, CLI output, and browser logs are retained for
+seven days.
+
+Stop the test service when finished:
+
+```sh
+docker compose down
+```
+
+## Source-specific notes
+
+<details>
+<summary>Hijala</summary>
+
+Hijala follows the current Hijala website: Featured, Latest
+Releases, New, Most Popular and Latest Updates. Latest/New use verified source
+pagination; Popular uses the rendered first nine titles and chapter updates use
+actual source chapter identities. Stale Hot and homepage Genres rows are removed;
+all live genres remain available in advanced search and source settings.
+
+Latest and New are separate native rows for the site's tabs.
+
+Default-on persistent NSFW exclusion uses verified source genre labels, not an
+invented four-category rating or demographic guesses. Unknown classification is
+hidden by default, and explicit genre exclusions remain fail-closed after opt-out.
+Existing content types and paid-chapter hiding intersect those preferences across
+browsing, details, chapters and readers; protected chapters remain on the website.
+Bounded caches reused across callbacks avoid per-title metadata requests.
+
+Native checks preserve the exact supplied `SourceManga` reference, all source
+chapters and genuine decimal numbers, semantic titles, paid boundaries and real
+first/middle/last reader image bytes. Covers retain their source-provided URLs.
+
+</details>
+
+<details>
+<summary>MangaSushi</summary>
+
+MangaSushi uses the website's Popular Series slider and What's New
 feed, including native load-more pagination. A lightweight Genres chip row follows
 the homepage menu; each selected genre lazily opens its exact native archive,
 preserving source order and AJAX continuation without loading all archives. Its search mirrors the seven website sorts and the
@@ -337,40 +385,12 @@ Reader tests fetch the first and last images of sampled
 safe and decimal chapters and verify successful responses, image MIME types and
 image signatures. This does not replace testing the physical iOS app.
 
-Use the included FlareSolverr test image. Set `FLARESOLVERR_URL` to connect to
-another instance of that image; the default is `http://127.0.0.1:8191`.
+</details>
 
-For a managed cloud environment with an outbound TLS proxy:
+<details>
+<summary>ManhwaNex</summary>
 
-```sh
-docker compose -f compose.yaml -f compose.proxy.yaml up -d --build --wait --wait-timeout 90
-```
-
-This mounts the public CA at `CODEX_PROXY_CERT` into the browser trust store and
-supplies it to the build. FlareSolverr uses Docker's configured HTTPS/HTTP proxy
-unless `PROXY_URL` is set on the container. The test runner uses Node's environment
-proxy support. Keep the environment's Node CA trust configuration. TLS
-verification stays enabled in the browser.
-
-The **Live Extension Tests** workflow can be started manually from the Actions
-tab. Scheduled and manual full runs on the default branch update only the marked
-README status section and `reports/live-tests-history.json`, including failed
-tests and setup errors. PR results remain in the job summary and artifacts, with
-unselected sources explicitly identified, without editing README/history or
-publishing extensions. Reports, CLI output, and browser logs are retained for
-seven days.
-
-Stop the test service when finished:
-
-```sh
-docker compose down
-```
-
-[here]: https://read.pirate.vodka
-
-## ManhwaNex
-
-ManhwaNex `0.0.1-alpha.4` preserves the public website's Popular Series and Latest
+ManhwaNex preserves the public website's Popular Series and Latest
 Updates sections, canonical releases, native search filters, and reader pages.
 Website five-star scores are converted to Paperback's normalized 0–1 rating scale;
 unrated or invalid scores are omitted.
@@ -397,3 +417,5 @@ queries redirect to the homepage and report an error. Try a short title fragment
 or another author spelling. Alternative-title text is preserved without guessing
 translations or merging separate source entries. Only publicly listed chapters
 are returned, which may be a recent subset rather than every historical release.
+
+</details>

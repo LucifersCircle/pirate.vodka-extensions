@@ -1,5 +1,5 @@
-name: Feature or source request
-description: Suggest an improvement or request a source extension.
+name: Feature request
+description: Suggest an improvement to an existing extension or the repository.
 title: "[Feature] "
 body:
   - type: markdown
@@ -25,7 +25,7 @@ body:
     id: source-link
     attributes:
       label: Source or reference link (optional)
-      description: For a new source, include its public website. Do not include login details or token-bearing links.
+      description: Include a public link if useful. Do not include login details or token-bearing links.
       placeholder: "https://example.com/"
     validations:
       required: false
