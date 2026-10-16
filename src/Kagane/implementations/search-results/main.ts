@@ -113,7 +113,7 @@ export class SearchProvider {
     if (!SORTING_OPTIONS.some((option) => option.id === sort)) {
       throw new Error("Unknown Kagane sort. Choose another sort.");
     }
-    const page = metadata?.page ?? 1;
+    const page = readKaganePage(metadata);
     const contentRatings = getContentRatingSettings();
     const kaganeMetadata = await getKaganeMetadata();
     const bodyQuery = homeSectionSort ? { title: "", metadata: [] } : query;
@@ -156,6 +156,17 @@ export class SearchProvider {
   }
 }
 
+// Keep the native nullish first-page fallback and saved numeric cursors, without
+// coercing concrete page values or depending on the caller's object realm.
+export function readKaganePage(metadata: unknown): number {
+  const invalid = () => new Error("Invalid Kagane pagination. Refresh the listing.");
+  if (metadata == null) return 1;
+  if (typeof metadata !== "object" || Array.isArray(metadata)) throw invalid();
+  const page = (metadata as { page?: unknown }).page ?? 1;
+  if (typeof page !== "number" || !Number.isSafeInteger(page) || page < 1) throw invalid();
+  return page;
+}
+
 export async function fetchAllowedSearchPage(
   request: Request,
   firstPage: number,
@@ -184,6 +195,10 @@ export async function fetchAllowedSearchPage(
       .filter((book) => isContentRatingAllowed(book, contentRatings))
       .filter(hasCoverImage);
     const hasNextPage = data.last === false;
+    // A non-final page needs a representable next cursor, including filtered-page skips.
+    if (hasNextPage && page === Number.MAX_SAFE_INTEGER) {
+      throw new Error("Kagane pagination exceeds the safe page range. Refresh the listing.");
+    }
     if (books.length > 0 || data.last === true) return { books, page, hasNextPage };
 
     const fingerprint = JSON.stringify(content.map((book) => book?.series_id ?? book));

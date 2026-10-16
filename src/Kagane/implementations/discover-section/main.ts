@@ -21,7 +21,7 @@ import {
 } from "../shared/models";
 import { getKaganeContentRating, isContentRatingAllowed } from "../shared/rating";
 import { getKaganeGenres, getKaganeMetadata } from "../shared/utils";
-import { buildSearchBody, fetchAllowedSearchPage } from "../search-results/main";
+import { buildSearchBody, fetchAllowedSearchPage, readKaganePage } from "../search-results/main";
 import { mapChapterUpdateItem, mapFeaturedDiscoverItem, mapSimpleDiscoverItem } from "./parsers";
 
 const DISCOVER_SECTIONS: DiscoverSection[] = [
@@ -57,7 +57,7 @@ export class DiscoverProvider {
     if (section.id === "trending") return getTrendingItems();
     if (section.id === "genres") return getGenreItems();
 
-    const page = metadata?.page ?? 1;
+    const page = readKaganePage(metadata);
     const contentRatings = getContentRatingSettings();
     const sort = SORTS[section.id];
     if (!sort) {

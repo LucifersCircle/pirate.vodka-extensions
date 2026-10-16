@@ -363,6 +363,68 @@ export async function runTests(logger: TestLogger) {
     logger.log("latestChipContinuations", { pages: [1, 2], counts: pages.map((items) => items.length) });
   });
 
+  suite.test("search cursors: numeric boundaries preserve first pages, continuations and policy resets", async () => {
+    const seed = probe.responses.find(({ request }) => isQuery(request))!;
+    expect(seed, "same native catalog response").not.to.equal(undefined);
+    const raw = JSON.parse(seed.body) as VortexQueryResponse;
+    expect(raw.posts).to.have.length(PAGE_SIZE);
+    const schedule = Application.scheduleRequest, before = probe.requests.length;
+    const requests: Request[] = [];
+    let payload = raw;
+    const context = JSON.stringify(contentSettings());
+    const queryFor = (kind: string) => ({ title: "", metadata: kind === "search" ? [] : [{ id: "vortex-home-section", value: kind }] });
+    const invoke = (kind: string, metadata?: unknown) => extension.getSearchResults(queryFor(kind), metadata as Parameters<typeof extension.getSearchResults>[1]);
+    const lastPage = () => new globalThis.URL(requests.at(-1)!.url).searchParams.get("page");
+    try {
+      const replay: typeof Application.scheduleRequest = async (request) => {
+        const url = new globalThis.URL(request.url);
+        if (![`${DOMAIN_API}/query`, `${DOMAIN_API}/posts`].includes(url.origin + url.pathname))
+          throw new Error(`Unexpected cursor replay route: ${request.url}`);
+        requests.push(request);
+        // All branches consume the same response contract. Reuse this current
+        // native response; overflow controls below mutate only pagination data.
+        return [{ ...seed.response, url: request.url }, buffer(payload)];
+      };
+      Application.scheduleRequest = replay;
+      if (Application.scheduleRequest !== replay) throw new Error("Native runtime does not allow replacing Application.scheduleRequest");
+      for (const kind of ["search", "latest", "new"]) {
+        payload = { ...raw, totalCount: undefined };
+        const first = await invoke(kind);
+        expect(first.items).not.to.be.empty;
+        expect((first.metadata as Parameters<typeof extension.getSearchResults>[1])?.page).to.equal(2);
+        for (const metadata of [null, JSON.parse("{}"), Object.create(null), JSON.parse(JSON.stringify({ page: undefined })), JSON.parse('{"page":null}'), { page: 1 }]) {
+          expect(await invoke(kind, metadata)).to.deep.equal(first);
+          expect(lastPage()).to.equal("1");
+        }
+        const cursor = JSON.parse(JSON.stringify(first.metadata));
+        await invoke(kind, cursor);
+        expect(lastPage()).to.equal("2");
+        for (const metadata of [[], false, "2", { page: "bad" }, { page: "2" }, { page: 0 }, { page: -1 }, { page: 1.5 }, { page: true }, { page: Number.MAX_SAFE_INTEGER + 1 }, { ...cursor, page: "bad" }]) {
+          const count = requests.length;
+          await rejects(() => invoke(kind, metadata), /Invalid VortexScans search cursor/);
+          expect(requests.length).to.equal(count);
+        }
+        // Preserve reset precedence, not a new content-context schema binding.
+        await invoke(kind, { page: "bad", contentContext: "stale" });
+        expect(lastPage()).to.equal("1");
+        await invoke(kind, { page: 2, contentContext: context, sourceField: "compatible" });
+        expect(lastPage()).to.equal("2");
+        const lastSafe = await invoke(kind, { page: Number.MAX_SAFE_INTEGER - 1 });
+        expect((lastSafe.metadata as Parameters<typeof extension.getSearchResults>[1])?.page).to.equal(Number.MAX_SAFE_INTEGER);
+        for (const posts of [raw.posts, raw.posts.map((post) => ({ ...post, isNovel: true }))]) {
+          payload = { posts };
+          const count = requests.length;
+          await rejects(() => invoke(kind, { page: Number.MAX_SAFE_INTEGER }), /Invalid VortexScans search cursor/);
+          expect(requests.length).to.equal(count + 1);
+          expect(lastPage()).to.equal(String(Number.MAX_SAFE_INTEGER));
+        }
+        payload = { posts: [] };
+        expect(await invoke(kind, { page: Number.MAX_SAFE_INTEGER })).to.deep.equal({ items: [], metadata: undefined });
+      }
+      expect(probe.requests.length).to.equal(before);
+    } finally { Application.scheduleRequest = schedule; }
+  });
+
   suite.test("metadata: explicit counts are not latest numbers and missing values stay absent", async () => {
     const seed = probe.responses.find(({ request }) => isQuery(request))!;
     expect(seed, "same native catalog response").not.to.equal(undefined);
