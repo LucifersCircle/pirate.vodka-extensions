@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-10-16T15:32:30.476Z",
+  "buildTime": "2026-10-16T15:49:41.153Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.92",
     "types": "1.0.0-alpha.92"
@@ -57,7 +57,7 @@
     },
     {
       "name": "MangaStash",
-      "version": "0.0.1-alpha.3",
+      "version": "0.0.1-alpha.4",
       "icon": "icon.png",
       "language": "en",
       "description": "Native MangaStash catalog, search and reader. Unclassified and Suggestive titles use Mature compatibility; optional explicitly-Safe-only exclusion is off by default. Bulk chapter dates are unavailable.",
