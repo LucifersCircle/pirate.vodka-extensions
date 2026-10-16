@@ -1,0 +1,24 @@
+name: Extension request
+description: Request an extension for a website.
+title: "[Extension] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check existing requests first. Requests are reviewed for feasibility.
+        Issues are public. Do not share credentials, private account details, or token-bearing links.
+  - type: input
+    id: site
+    attributes:
+      label: Site URL
+      description: Public website URL for the requested extension.
+      placeholder: "https://example.com/"
+    validations:
+      required: true
+  - type: textarea
+    id: reason
+    attributes:
+      label: Reason (optional)
+      description: What would make this site a useful addition?
+    validations:
+      required: false
