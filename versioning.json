@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-10-16T08:45:54.268Z",
+  "buildTime": "2026-10-16T10:16:56.155Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.92",
     "types": "1.0.0-alpha.92"
@@ -54,6 +54,29 @@
         }
       ],
       "id": "Kagane"
+    },
+    {
+      "name": "MangaStash",
+      "version": "0.0.1-alpha.1",
+      "icon": "icon.png",
+      "language": "en",
+      "description": "Native MangaStash catalog, search and reader. Unclassified and Suggestive titles use Mature compatibility; optional explicitly-Safe-only exclusion is off by default. Bulk chapter dates are unavailable.",
+      "contentRating": "ADULT",
+      "capabilities": [
+        1,
+        4,
+        64,
+        32
+      ],
+      "badges": [],
+      "developers": [
+        {
+          "name": "Lucifers Circle",
+          "website": "https://pirate.vodka",
+          "github": "https://github.com/LucifersCircle"
+        }
+      ],
+      "id": "MangaStash"
     },
     {
       "name": "Mangasushi",
