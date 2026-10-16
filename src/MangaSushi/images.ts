@@ -2,7 +2,8 @@
 /* Copyright © 2026 Lucifers Circle */
 
 import { preferences } from "./forms";
-import { BASE_URL, type Preferences } from "./models";
+import { type Preferences } from "./models";
+import { sourceURL } from "./urls";
 
 const STORE = "MangaSushi.issuedImages";
 const LIFETIME = 24 * 60 * 60 * 1000;
@@ -182,13 +183,8 @@ type Grant = {
   evidence?: ImageEvidence;
 };
 export const checkImageURL = (value: string): void => {
-  const url = new URL(value);
+  const url = sourceURL(value);
   if (
-    url.protocol !== "https:" ||
-    url.origin !== BASE_URL ||
-    url.username ||
-    url.password ||
-    url.hash ||
     !url.pathname.startsWith("/wp-content/uploads/") ||
     url.href !== value ||
     /[\\\s]|%(?:2f|5c|00|25)|(?:^|\/)\.\.?\//i.test(url.pathname) ||

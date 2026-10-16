@@ -15,6 +15,7 @@ import {
 import { BASE_URL, SORTS, type Pagination } from "./models";
 import { readFilters } from "./forms";
 import { authorizeImage } from "./images";
+import { sourceURL } from "./urls";
 
 // The native Request contract has no request-purpose discriminator. Only exact
 // metadata requests currently scheduled by this source receive this exemption.
@@ -31,25 +32,14 @@ const hasControl = (value: string, html = false): boolean => {
   }
   return false;
 };
-const canonicalURL = (value: string): URL => {
-  const url = new URL(value);
-  if (
-    !value.startsWith(`${BASE_URL}/`) ||
-    url.origin !== BASE_URL ||
-    url.username ||
-    url.password ||
-    url.hash ||
-    value.includes("\\") ||
-    value.includes(" ") ||
-    hasControl(value) ||
-    value.slice(BASE_URL.length).split(/[?#]/)[0] !== url.pathname
-  )
-    throw new Error("Invalid Mangasushi metadata URL.");
-  return url;
-};
 const uniqueFields = (value: string): Map<string, string> => {
   const fields = new Map<string, string>();
-  for (const [key, item] of new URLSearchParams(value)) {
+  for (const pair of value.replace(/^\?/, "").split("&")) {
+    if (!pair) continue;
+    const separator = pair.indexOf("=");
+    const decode = (part: string): string => decodeURIComponent(part.replace(/\+/g, " "));
+    const key = decode(separator < 0 ? pair : pair.slice(0, separator));
+    const item = decode(separator < 0 ? "" : pair.slice(separator + 1));
     if (hasControl(key)) throw new Error("Invalid Mangasushi metadata parameter name.");
     if (fields.has(key)) throw new Error("Duplicate Mangasushi metadata parameter.");
     fields.set(key, item);
@@ -65,7 +55,7 @@ const uniqueFields = (value: string): Map<string, string> => {
   return fields;
 };
 const metadataRoute = (request: Request): "document" | "fragment" => {
-  const url = canonicalURL(request.url);
+  const url = sourceURL(request.url);
   const identity = "[a-zA-Z0-9][a-zA-Z0-9%_-]*";
   if (/%2f|%5c|%00/i.test(url.pathname)) throw new Error("Invalid Mangasushi metadata path.");
   if (request.method === "GET" && request.body === undefined) {
@@ -116,7 +106,7 @@ const metadataRoute = (request: Request): "document" | "fragment" => {
 const fingerprint = (request: Request): string => {
   metadataRoute(request);
   return JSON.stringify([
-    canonicalURL(request.url).href,
+    sourceURL(request.url).href,
     request.method,
     request.body === undefined,
     request.body ?? "",
@@ -131,7 +121,7 @@ const isPendingText = (request: Request): boolean => {
 };
 const validateTextResponse = (request: Request, response: Response, data: ArrayBuffer): string => {
   const kind = metadataRoute(request);
-  if (canonicalURL(response.url).href !== canonicalURL(request.url).href)
+  if (sourceURL(response.url).href !== sourceURL(request.url).href)
     throw new Error("Mangasushi metadata redirected to a different route.");
   const types = [
     response.mimeType,

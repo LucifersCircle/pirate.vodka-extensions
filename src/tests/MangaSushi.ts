@@ -45,6 +45,7 @@ import {
 } from "../MangaSushi/parsers.js";
 import { englishTitle, searchTitle } from "../MangaSushi/titles.js";
 import { TestSuite } from "./suite.js";
+import { sourceURL } from "../MangaSushi/urls.js";
 
 // Observe the real host requests and optionally hold a live response in flight.
 // No saved HTML, alternate parser, or replacement source implementation is used.
@@ -141,6 +142,18 @@ export async function runTests(logger: TestLogger) {
     Application.setState(undefined, "MangaSushi.preferences");
     await MangaSushi.initialise();
     expect(preferences().excludeNSFW).to.equal(true);
+  });
+  suite.test("URLs: native source parser preserves exact identities without host globals", async () => {
+    const url = `${BASE_URL}/?s=Hero's%20Return%20%252F&author=A%2BB%3DC`;
+    const parsed = sourceURL(url);
+    expect(parsed.pathname).to.equal("/");
+    expect(parsed.search).to.equal(url.slice(BASE_URL.length + 1));
+    expect(parsed.href).to.equal(url.replace("Hero's", "Hero%27s"));
+    for (const value of [
+      "http://mangasushi.org/", "https://mangasushi.org.evil/", "https://user@mangasushi.org/",
+      `${BASE_URL}:443/`, `${BASE_URL}/manga/../`, `${BASE_URL}/manga/%2e%2e/`,
+      `${BASE_URL}/manga/a\\b/`, `${BASE_URL}/#fragment`, `${BASE_URL}/manga/a b/`,
+    ]) expect(() => sourceURL(value)).to.throw(/Mangasushi/);
   });
   suite.test("getDiscoverSections: native section order", async () => {
     expect((await MangaSushi.getDiscoverSections()).map((section) => section.title)).to.deep.equal([
