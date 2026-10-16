@@ -236,13 +236,26 @@ export async function runTests(logger: TestLogger) {
     );
   });
   suite.test("getChapters and reader: accessible with default exclusion", async () => {
-    const chapters = await MangaSushi.getChapters(safeSource);
-    expect(chapters.length).to.be.greaterThan(0);
-    for (const chapter of chapters) expect(chapter.sourceManga).to.equal(safeSource);
-    const reader = await MangaSushi.getChapterDetails(chapters[0]);
-    if (!("pages" in reader)) throw new Error("Expected manga reader pages.");
-    expect(reader.pages.length).to.be.greaterThan(1);
-    await checkReaderImages(reader.pages);
+    const schedule = Application.scheduleRequest;
+    let binaryBodies = 0;
+    // Model the documented native ArrayBuffer representation of the source's
+    // actual empty POST body, through the real scheduler and interceptor chain.
+    Application.scheduleRequest = async (request) => {
+      if (request.method !== "POST") return schedule(request);
+      expect(request.body).to.equal("");
+      binaryBodies++;
+      return schedule({ ...request, body: encodeHTML(request.body as string) });
+    };
+    try {
+      const chapters = await MangaSushi.getChapters(safeSource);
+      expect(chapters.length).to.be.greaterThan(0);
+      for (const chapter of chapters) expect(chapter.sourceManga).to.equal(safeSource);
+      const reader = await MangaSushi.getChapterDetails(chapters[0]);
+      if (!("pages" in reader)) throw new Error("Expected manga reader pages.");
+      expect(reader.pages.length).to.be.greaterThan(1);
+      await checkReaderImages(reader.pages);
+      expect(binaryBodies).to.equal(1);
+    } finally { Application.scheduleRequest = schedule; }
   });
   suite.test(
     "getChapters and reader: cold-cache persisted records across three safe titles",
@@ -1578,6 +1591,27 @@ export async function runTests(logger: TestLogger) {
       const homepage = await fetchText(`${BASE_URL}/`);
       const probe = new DiscoveryProbe("MangaSushi.discovery-count-test");
       probe.registerInterceptor();
+      const schedule = Application.scheduleRequest;
+      let binaryRequest: Request | undefined;
+      const guard = new MangaSushiInterceptor("MangaSushi.binary-body-guard");
+      Application.scheduleRequest = async (request) => {
+        if (request.method !== "POST") return schedule(request);
+        if (typeof request.body !== "string") throw new Error("Expected source-issued form bytes.");
+        binaryRequest = { ...request, body: encodeHTML(request.body) };
+        // A compatible representation is not permission for altered bytes,
+        // arbitrary objects, another method or another source route.
+        for (const changed of [
+          { ...binaryRequest, body: encodeHTML(request.body + "&unissued=1") },
+          { ...binaryRequest, body: new Uint8Array([0xff]).buffer },
+          { ...binaryRequest, body: {} },
+          { ...binaryRequest, body: Object.create(ArrayBuffer.prototype) as object },
+          { ...binaryRequest, body: new Uint8Array(0) },
+          { ...binaryRequest, body: undefined },
+          { ...binaryRequest, method: "GET" },
+          { ...binaryRequest, url: `${BASE_URL}/manga/another-title/ajax/chapters/` },
+        ]) await rejects(() => guard.interceptRequest(changed), /image|metadata/);
+        return schedule(binaryRequest);
+      };
       try {
         const started = Date.now();
         const rows = await Promise.all(
@@ -1588,9 +1622,9 @@ export async function runTests(logger: TestLogger) {
           request.url.endsWith("/wp-admin/admin-ajax.php"),
         );
         expect(batch).not.to.equal(undefined);
-        if (typeof batch?.body !== "string")
-          throw new Error("Expected an encoded metadata batch body.");
-        const body = requestParameters(batch.body);
+        if (!(batch?.body instanceof ArrayBuffer))
+          throw new Error("Expected native binary metadata form bytes.");
+        const body = requestParameters(Application.arrayBufferToUTF8String(batch.body));
         expect(body.get("template")).to.equal("madara-core/content/content-search");
         expect(body.get("page")).to.equal("0");
         const adult = [...body.entries()].find(
@@ -1651,7 +1685,10 @@ export async function runTests(logger: TestLogger) {
           }
           if (section.id === "popular") expect(result.metadata).to.equal(undefined);
         }
+        expect(binaryRequest).not.to.equal(undefined);
+        await rejects(() => guard.interceptRequest(binaryRequest!), /image|metadata/);
       } finally {
+        Application.scheduleRequest = schedule;
         probe.unregisterInterceptor();
       }
     },
