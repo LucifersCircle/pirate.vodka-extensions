@@ -204,6 +204,8 @@ export async function runTests(logger: TestLogger) {
     suite,
     VortexScans as typeof VortexScans & VortexScansImplementation,
     sourceInfo,
+    // Keep the observed chapter-0 reader regression independent of changing search order.
+    { mangaProviding: { getMangaDetails: ["658:got-a-gallery-in-the-wild"] } },
   );
 
   suite.test("home: one cold response, no warm requests or per-title enrichment", async () => {
@@ -428,7 +430,7 @@ export async function runTests(logger: TestLogger) {
     } finally { Application.scheduleRequest = schedule; }
   });
 
-  const verifyReader = async (source: SourceManga, chapters: Chapter[], reader: ChapterDetails, evidence: TestLogger, responses = probe.responses): Promise<ReaderProof> => {
+  const verifyReader = async (source: SourceManga, chapters: Chapter[], reader: ChapterDetails, evidence: TestLogger, responses = probe.responses, expectedApiChapterId?: number): Promise<ReaderProof> => {
     expect(chapters).not.to.be.empty;
     for (const chapter of chapters) expect(chapter.sourceManga).to.equal(source);
     expect(reader.mangaId).to.equal(source.mangaId);
@@ -459,6 +461,7 @@ export async function runTests(logger: TestLogger) {
     const identity: ReaderIdentity = { slug: chapters[0].chapterId, number: chapters[0].chapNum, postId, postSlug: slug! };
     assertPublicChapter(selected[0], identity);
     identity.id = selected[0].id;
+    if (expectedApiChapterId !== undefined) expect(identity.id, "pinned native-list API chapter ID").to.equal(expectedApiChapterId);
     expect(raw.post.chapters.filter((chapter) => chapter.id === identity.id), "unique source chapter ID").to.have.length(1);
     evidence.log("readerOracleInput", { ...identity, publicListAccess: true, oracleRequests: 1 });
     const [oracleResponse, oracleBody] = await Application.scheduleRequest({
@@ -559,11 +562,18 @@ export async function runTests(logger: TestLogger) {
   };
 
   suite.test("original reader: native source references, complete pages and first/last image bytes", async () => {
+    const source658 = suite.state["MangaProviding.getMangaDetails"] as SourceManga;
+    const chapters658 = suite.state["ChapterProviding.getChapters"] as Chapter[];
+    expect(source658.mangaId, "pinned native reader title").to.equal("658:got-a-gallery-in-the-wild");
+    expect(chapters658[0]?.chapterId, "pinned first native chapter slug").to.equal("chapter-0");
+    expect(chapters658[0]?.chapNum, "pinned first native chapter number").to.equal(0);
     const dynamic = await verifyReader(
-      suite.state["MangaProviding.getMangaDetails"] as SourceManga,
-      suite.state["ChapterProviding.getChapters"] as Chapter[],
+      source658,
+      chapters658,
       suite.state["ChapterProviding.getChapterDetails"] as ChapterDetails,
       logger,
+      undefined,
+      32482,
     );
     const mangaId = "403:so-did-someone-force-you-to-become-the-heavenly-demon";
     const slug = "so-did-someone-force-you-to-become-the-heavenly-demon";
