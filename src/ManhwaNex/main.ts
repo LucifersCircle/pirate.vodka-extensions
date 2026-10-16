@@ -222,10 +222,24 @@ class ManhwaNexExtension implements ExtensionImpl<typeof Config> {
   }
   async getDiscoverSections() {
     const saved = this.saved();
-    const categories = parseHomeCategories(await this.page(`${BASE_URL}/`, saved));
+    const html = await this.page(`${BASE_URL}/`, saved);
+    const categories = parseHomeCategories(html);
+    // Hide only a whole finite row that repeats the same response's Latest prefix.
+    // The stable Popular callback remains available for previously saved sections.
+    let repeatsLatest = false;
+    try {
+      const popular = parseCatalog(html, "popular").items,
+        latest = parseCatalog(html, "latest").items;
+      repeatsLatest =
+        popular.length > 0 &&
+        popular.every((item, index) => item.mangaId === latest[index]?.mangaId);
+    } catch {
+      // Partial widgets cannot prove duplication. Keep the original descriptors;
+      // each row's resolver still validates its cards and reports parsing errors.
+    }
     this.ensureCurrent(saved);
     return [
-      ...SECTIONS,
+      ...SECTIONS.filter((section) => section.id !== "popular" || !repeatsLatest),
       ...categories.map(({ id, title }) => ({
         id,
         title,
