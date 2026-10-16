@@ -37,7 +37,7 @@ const rememberRevision = (value: unknown): number => {
     highestRevision = Math.max(highestRevision, value);
   return highestRevision;
 };
-const nextRevision = (): number => {
+const nextRevision = (floor = 0): number => {
   // Recovery reads only numeric epoch evidence, never treats malformed policy as valid.
   let saved: unknown, issued: unknown;
   try {
@@ -53,7 +53,7 @@ const nextRevision = (): number => {
   if (saved && typeof saved === "object")
     rememberRevision((saved as Partial<Preferences>).revision);
   if (Array.isArray(issued)) for (const grant of issued) rememberRevision(grant?.revision);
-  const revision = highestRevision + 1;
+  const revision = Math.max(highestRevision, floor) + 1;
   if (!Number.isSafeInteger(revision)) throw new Error("MangaStash policy revision exhausted.");
   return revision;
 };
@@ -85,9 +85,29 @@ export const nativeAllowed = (rating: Rating): boolean => {
 export const preferences = (): Preferences => {
   const native = nativePolicy();
   const previousNative = Application.getState(NATIVE_POLICY);
+  const raw = Application.getState(PREFERENCES);
+  // Some native legacy objects have a boolean revision. Never interpret it as an epoch.
+  // Only this observed two-field shape is migrated; explicit JSON remains strictly validated.
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const keys = Reflect.ownKeys(raw),
+      choice = Object.getOwnPropertyDescriptor(raw, "onlySafe"),
+      epoch = Object.getOwnPropertyDescriptor(raw, "revision");
+    if (
+      keys.length === 2 &&
+      typeof choice?.value === "boolean" &&
+      typeof epoch?.value === "boolean"
+    ) {
+      const now = Date.now();
+      if (!Number.isSafeInteger(now) || now < 1) throw new InvalidSettingsError();
+      return savePreferences({ onlySafe: choice.value, revision: nextRevision(now) }, native);
+    }
+  }
   let saved: Preferences | undefined | null;
   try {
-    saved = readStoredState(PREFERENCES) as Preferences | undefined | null;
+    saved = (typeof raw === "string" ? readStoredState(PREFERENCES) : raw) as
+      | Preferences
+      | undefined
+      | null;
   } catch {
     throw new InvalidSettingsError();
   }

@@ -106,7 +106,7 @@ export async function runTests(logger: TestLogger) {
     expect(typeof Headers).to.equal("undefined");
     expect(typeof URLSearchParams).to.equal("undefined");
     expect(preferences().onlySafe).to.equal(false);
-    expect(info.version).to.equal("0.0.1-alpha.3");
+    expect(info.version).to.equal("0.0.1-alpha.4");
     expect(typeof Application.getState(PREFERENCES)).to.equal("string");
     expect((await MangaStash.getSettingsForm()).getSections()).not.to.be.empty;
   });
@@ -124,7 +124,22 @@ export async function runTests(logger: TestLogger) {
     expect((await reloaded.getSettingsForm()).getSections()).not.to.be.empty;
     Application.setState(parsed, PREFERENCES); // Valid legacy object stays supported.
     expect(preferences().onlySafe).to.equal(true);
-    for (const invalid of ["null", "{}", { onlySafe: "false", revision: parsed.revision }]) {
+    const legacy = { onlySafe: true, revision: true };
+    Application.setState(legacy, PREFERENCES); // Exact native object shape observed on iOS.
+    Application.setState([{ revision: parsed.revision }], IMAGE_STORE);
+    const migrated = preferences();
+    expect(migrated.onlySafe).to.equal(true);
+    expect(migrated.revision).to.be.greaterThan(parsed.revision);
+    expect(typeof Application.getState(PREFERENCES)).to.equal("string");
+    expect(readStoredState(IMAGE_STORE)).to.deep.equal([]);
+    expect(preferences()).to.deep.equal(migrated);
+    for (const invalid of [
+      "null",
+      "{}",
+      JSON.stringify(legacy),
+      { onlySafe: "false", revision: parsed.revision },
+      { ...legacy, extra: true },
+    ]) {
       Application.setState(invalid, PREFERENCES);
       expect(settings.getSections()[0].id).to.equal("recovery");
       await rejects(() => reloaded.getDiscoverSections(), /settings are invalid/);
