@@ -24,6 +24,7 @@ import {
   getExcludedGenres,
   getHiddenTagCategories,
   getShowSource,
+  getListingSubtitleSettings,
   getSourceDisplayMode,
   resolveExcludedGenreIds,
 } from "../settings-form/main";
@@ -41,6 +42,7 @@ import {
   getPaperbackBookContentRating,
   isContentRatingAllowed,
 } from "../shared/rating";
+import { appendListingSubtitle, type ListingSubtitleSettings } from "../shared/listing-subtitle";
 import { HIDDEN_TAG_CATEGORIES } from "../shared/tag-options";
 import {
   buildPopularTagOptions,
@@ -134,7 +136,10 @@ export class SearchProvider {
     );
     const showSource = getShowSource();
 
-    const items = result.books.map((book) => mapSearchResult(book, sourceMap, showSource));
+    const subtitleSettings = getListingSubtitleSettings();
+    const items = result.books.map((book) =>
+      mapSearchResult(book, sourceMap, showSource, subtitleSettings),
+    );
 
     return {
       items,
@@ -335,6 +340,7 @@ function mapSearchResult(
   book: KaganeSearchBook,
   sources: Map<string, string>,
   showSource: boolean,
+  subtitleSettings: ListingSubtitleSettings,
 ): SearchResultItem {
   const sourceName = book.source_id ? sources.get(book.source_id) : undefined;
   const title =
@@ -348,7 +354,7 @@ function mapSearchResult(
     mangaId: book.series_id,
     title,
     imageUrl: buildImageUrl(book.cover_image_id),
-    subtitle: subtitles.join(" - "),
+    subtitle: appendListingSubtitle(subtitles.join(" - "), book, subtitleSettings),
     contentRating: getPaperbackBookContentRating(book),
   };
 }

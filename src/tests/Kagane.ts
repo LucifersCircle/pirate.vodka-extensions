@@ -6,15 +6,17 @@ import {
   type Response,
   type SourceManga,
   type SearchResultItem,
+  type DiscoverSectionItem,
   type TestLogger,
 } from "@paperback/types";
 import { expect } from "chai";
 import { TestSuite, registerDefaultTests } from "./suite.js";
 import { Kagane, type KaganeImplementation } from "../Kagane/main.js";
 import sourceInfo from "../Kagane/pbconfig.js";
-import { API_URL, CONTENT_LANGUAGES_KEY, HOME_SECTION_METADATA_ID } from "../Kagane/implementations/shared/models.js";
+import { API_URL, CONTENT_LANGUAGES_KEY, HOME_SECTION_METADATA_ID, SHOW_SUBTITLE_TYPE_KEY, SHOW_SUBTITLE_RATING_KEY } from "../Kagane/implementations/shared/models.js";
 import type { TagDto } from "../Kagane/implementations/shared/models.js";
 import type { SearchFilterValue } from "@paperback/types/lib/compat/0.8";
+import { appendListingSubtitle } from "../Kagane/implementations/shared/listing-subtitle.js";
 import { CUSTOM_HIDDEN_TAGS_KEY } from "../Kagane/implementations/shared/tag-options.js";
 
 type Capture = [Response, ArrayBuffer];
@@ -481,6 +483,108 @@ export async function assertKaganeNumericRanges(capture: Capture) {
   }
 }
 
+// Reuse one consumed bulk response at the native edge. No detail enrichment or
+// provider requests: settings must change newly mapped cards, not cached rendering.
+export async function assertKaganeListingSubtitles(capture: Capture, source = Kagane as typeof Kagane & KaganeImplementation) {
+  const raw = JSON.parse(Application.arrayBufferToUTF8String(capture[1]));
+  const schedule = Application.scheduleRequest, invalidate = Application.invalidateDiscoverSections;
+  const keys = [SHOW_SUBTITLE_TYPE_KEY, SHOW_SUBTITLE_RATING_KEY];
+  const saved = keys.map((key) => Application.getState(key));
+  let replay = { ...raw, last: true }, requests = 0, invalidations = 0;
+  Application.scheduleRequest = async (request) => {
+    requests++;
+    expect(new globalThis.URL(request.url).pathname, "only bulk listing replay; no N+1 detail/metadata").to.equal("/api/v2/search/series");
+    return [capture[0], new TextEncoder().encode(JSON.stringify(replay)).buffer as ArrayBuffer];
+  };
+  Application.invalidateDiscoverSections = () => { invalidations++; };
+  const expected = (row: Record<string, unknown>, search: boolean, type: boolean, rating: boolean) => {
+    const base = [typeof row.current_books === "number" ? `${row.current_books} Chapters` : undefined,
+      search && row.start_year ? String(row.start_year as number) : undefined].filter(Boolean).join(" - ");
+    const extra = [type && typeof row.format === "string" ? row.format.trim() : "",
+      rating && typeof row.rating === "number" && Number.isFinite(row.rating) && row.rating > 0 && row.rating <= 100 ? `★ ${(row.rating / 10).toFixed(1)}` : ""].filter(Boolean).join(" · ");
+    return extra ? [base, extra].filter(Boolean).join(" - ") : base || (search ? "" : undefined);
+  };
+  const check = (items: Array<SearchResultItem | DiscoverSectionItem>, search: boolean, type: boolean, rating: boolean) => {
+    expect(items.length, "nonempty native response-derived subtitle sample").to.be.greaterThan(0);
+    const rows = new Map<string, Record<string, unknown>>(replay.content.map((row: Record<string, unknown>) => [row.series_id, row]));
+    for (const item of items) {
+      if (!("mangaId" in item) || !("subtitle" in item)) throw new Error("Expected ordinary native listing card");
+      const row = rows.get(item.mangaId);
+      if (!row) throw new Error("Native listing lost exact consumed-response canonical identity");
+      expect(item.subtitle, `canonical ${item.mangaId} subtitle`).to.equal(expected(row, search, type, rating));
+    }
+  };
+  try {
+    for (const key of keys) Application.setState(undefined, key);
+    const sections = await source.getDiscoverSections();
+    const recent = sections.find((section) => section.id === "recently-added")!, latest = sections.find((section) => section.id === "latest")!;
+    const form = await source.getSettingsForm();
+    const subtitleSection = form.getSections().find((section) => section.id === "listing-subtitles");
+    expect(subtitleSection?.footer).to.match(/Recently Added.*simple Discover.*search results.*Does not change Latest Updates or Popular.*Featured/);
+    type Toggle = { type: string; value: boolean; onValueChange: string | ((value: boolean) => Promise<void>) };
+    const row = (id: string, current = form) => current.getSections().flatMap((section) => section.items).find((item) => item.id === id) as unknown as Toggle;
+    const toggle = async (id: string, value: boolean) => {
+      const item = row(id);
+      expect(item.type).to.equal("toggleRow");
+      await Application.SelectorRegistry.selector(item.onValueChange)(value);
+    };
+    expect(row("show-subtitle-type").value, "type defaults off").to.equal(false);
+    expect(row("show-subtitle-rating").value, "listing rating defaults off").to.equal(false);
+    const baselineSearch = await source.getSearchResults({ title: "" });
+    const baselineRecent = await source.getDiscoverSectionItems(recent);
+    const baselineLatest = await source.getDiscoverSectionItems(latest);
+    check(baselineSearch.items, true, false, false); check(baselineRecent.items, false, false, false);
+    for (const [type, rating] of [[false, false], [true, false], [false, true], [true, true], [false, false]]) {
+      const before = requests;
+      await toggle("show-subtitle-type", type); await toggle("show-subtitle-rating", rating);
+      expect(Application.getState(keys[0])).to.equal(type); expect(Application.getState(keys[1])).to.equal(rating);
+      const freshForm = await source.getSettingsForm();
+      expect(row("show-subtitle-type", freshForm).value).to.equal(type);
+      expect(row("show-subtitle-rating", freshForm).value).to.equal(rating);
+      const search = await source.getSearchResults({ title: "" }), discovery = await source.getDiscoverSectionItems(recent);
+      check(search.items, true, type, rating); check(discovery.items, false, type, rating);
+      const withoutSubtitle = (items: Array<SearchResultItem | DiscoverSectionItem>) => items.map((item) => { const { subtitle: _subtitle, ...rest } = item as SearchResultItem; return rest; });
+      expect(withoutSubtitle(search.items)).to.deep.equal(withoutSubtitle(baselineSearch.items));
+      expect(withoutSubtitle(discovery.items)).to.deep.equal(withoutSubtitle(baselineRecent.items));
+      expect(await source.getDiscoverSectionItems(latest), "Latest actual Vol/Ch labels untouched").to.deep.equal(baselineLatest);
+      expect(requests - before, "one bulk response per native mapping; toggles/form reload add no HTTP").to.equal(3);
+      if (!type && !rating) { expect(search).to.deep.equal(baselineSearch); expect(discovery).to.deep.equal(baselineRecent); }
+    }
+    expect(invalidations, "each subtitle handler invalidates Discover SDK cache").to.equal(10);
+    // Invalid legacy/non-boolean state never enables either optional feature.
+    for (const value of [undefined, null, "true", 1, [], {}]) {
+      for (const key of keys) Application.setState(value, key);
+      const current = await source.getSettingsForm();
+      expect(row("show-subtitle-type", current).value).to.equal(false);
+      expect(row("show-subtitle-rating", current).value).to.equal(false);
+    }
+    for (const key of keys) Application.setState(true, key);
+    const seed = raw.content.find((entry: { series_id: string }) => entry.series_id === baselineSearch.items[0].mangaId);
+    const cases = [
+      { format: " Manga ", rating: 85, current_books: 0, start_year: 2024 },
+      ...[undefined, null, 0, -1, 100.01, 0.01, 1, 85, 100, "85", true, {}, []].map((rating) => ({ format: "Manga", rating })),
+      ...[undefined, null, "", "  ", " Novel ", 42, true, {}, []].map((format) => ({ format, rating: 85 })),
+      { format: undefined, rating: undefined, current_books: undefined, start_year: undefined },
+      { format: "Manga", rating: 85, current_books: undefined, start_year: undefined },
+    ];
+    for (const values of cases) {
+      replay = { ...raw, last: true, content: [{ ...seed, ...values }] };
+      const before = requests;
+      check((await source.getSearchResults({ title: "" })).items, true, true, true);
+      check((await source.getDiscoverSectionItems(recent)).items, false, true, true);
+      expect(requests - before).to.equal(2);
+    }
+    // JSON cannot carry NaN/Infinity; verify those runtime-only guards directly.
+    for (const rating of [NaN, Infinity, -Infinity]) {
+      expect(appendListingSubtitle(undefined, { ...seed, format: undefined, rating }, { showType: true, showRating: true })).to.equal(undefined);
+    }
+    return { canonicalRows: baselineSearch.items.length, boundaryCases: cases.length, replayRequests: requests, discoverInvalidations: invalidations };
+  } finally {
+    Application.scheduleRequest = schedule; Application.invalidateDiscoverSections = invalidate;
+    keys.forEach((key, index) => Application.setState(saved[index], key));
+  }
+}
+
 // Inspect only bulk rows consumed by these native searches, with no detail lookups.
 export async function assertKaganeLiveNumericRanges() {
   const source = Kagane as typeof Kagane & KaganeImplementation;
@@ -573,6 +677,11 @@ export async function runTests(logger: TestLogger) {
     const search = [...probe.captures].find(([url]) => url.includes("/api/v2/search/series"))?.[1];
     if (!search) throw new Error("No actual Kagane search response for closed native range probes");
     await assertKaganeNumericRanges(search);
+  });
+  suite.test("Optional listing type/rating defaults, persistence, exact subtitles and toggle reloads reuse consumed bulk rows", async () => {
+    const search = [...probe.captures].find(([url]) => url.includes("/api/v2/search/series"))?.[1];
+    if (!search) throw new Error("No consumed Kagane search response for subtitle replay");
+    logger.log("listingSubtitleEvidence", await assertKaganeListingSubtitles(search));
   });
   suite.test("Live chapter-count and start-year bounds match consumed bulk rows", async () => {
     await assertKaganeLiveNumericRanges();
