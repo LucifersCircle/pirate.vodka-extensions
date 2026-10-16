@@ -86,9 +86,14 @@ export const SORTING_OPTIONS: SortingOption[] = [
   { id: "avg_views_today,desc", label: "Popular (Today)" },
   { id: "avg_views_week,desc", label: "Popular (Week)" },
   { id: "avg_views_month,desc", label: "Popular (Month)" },
-  { id: "updated_at,desc", label: "Latest" },
-  { id: "current_books,desc", label: "Books Count" },
-  { id: "created_at,desc", label: "Created At" },
+  { id: "updated_at,desc", label: "Updated newest" },
+  { id: "current_books,desc", label: "Chapter count ↓" },
+  { id: "created_at,desc", label: "Added newest" },
+  { id: "rating,desc", label: "Rating ↓" },
+  { id: "updated_at,asc", label: "Updated oldest" },
+  { id: "current_books,asc", label: "Chapter count ↑" },
+  { id: "created_at,asc", label: "Added oldest" },
+  { id: "rating,asc", label: "Rating ↑" },
 ];
 
 export const GENRE_OPTIONS = [
