@@ -56,6 +56,23 @@ import {
 } from "./parsers";
 import Config from "./pbconfig";
 
+// The native metadata contract includes null; empty JSON records also mean no cursor.
+// Nonempty or malformed values retain the existing continuation handling.
+const firstPage = (metadata: unknown): boolean => {
+  if (metadata == null) return true;
+  if (typeof metadata !== "object" || Array.isArray(metadata) || Reflect.ownKeys(metadata).length)
+    return false;
+  const prototype = Object.getPrototypeOf(metadata);
+  if (prototype === null) return true;
+  const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")?.value;
+  return (
+    Object.getPrototypeOf(prototype) === null &&
+    typeof constructor === "function" &&
+    constructor.prototype === prototype &&
+    Function.prototype.toString.call(constructor) === Function.prototype.toString.call(Object)
+  );
+};
+
 const MAX_CATALOG_ITEMS = 10_000;
 const MAX_CATALOG_PAGES = 1_000;
 const catalogId = (value: unknown): value is string => {
@@ -294,7 +311,7 @@ export class HijalaExtension implements ExtensionImpl<typeof Config> {
         );
       }
       // These are exact, bounded home snapshots. Catalog search is separate, not a fictitious page 2.
-      if (metadata) return { items: [] };
+      if (!firstPage(metadata)) return { items: [] };
       if (section.id === "featured")
         return { items: parseFeatured(html).filter((item) => matchesPreferences(item, saved)) };
       const full = await this.bulkMetadata();

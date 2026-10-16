@@ -161,6 +161,7 @@ export async function runTests(logger: TestLogger) {
   let home = "";
   let fullCatalog = new Map<string, Post>();
   let rows: Awaited<ReturnType<typeof Hijala.getDiscoverSectionItems>>[] = [];
+  let discoverySource: HijalaExtension | undefined;
   let sample: SourceManga, chapters: Chapter[];
 
   suite.test(
@@ -231,7 +232,7 @@ export async function runTests(logger: TestLogger) {
     async () => {
       await settings.setExcludeNSFW(false);
       await settings.setExcludeNSFW(true);
-      const source = new HijalaExtension(),
+      const source = (discoverySource = new HijalaExtension()),
         probe = new Probe("Hijala.discovery-count");
       probe.gate = async (request, data) => {
         if (request.url === `${BASE_URL}/`) home = Application.arrayBufferToUTF8String(data);
@@ -263,6 +264,32 @@ export async function runTests(logger: TestLogger) {
       }
     },
   );
+  suite.test("discover: empty first-page metadata reuses finite home snapshots", async () => {
+    // Reuse the previous discovery cache in full runs, with no extra provider calls.
+    const source = discoverySource ?? new HijalaExtension();
+    const probe = new Probe("Hijala.first-page-metadata");
+    const sections = SECTIONS.filter((item) => ["featured", "popular", "updates"].includes(item.id));
+    probe.registerInterceptor();
+    try {
+      const first = await Promise.all(sections.map((section) => source.getDiscoverSectionItems(section)));
+      const cold = probe.requests.length;
+      if (discoverySource) expect(cold).to.equal(0);
+      for (const metadata of [null, {}, Object.create(null)]) {
+        const repeated = await Promise.all(sections.map((section) => source.getDiscoverSectionItems(section, metadata)));
+        expect(repeated).to.deep.equal(first);
+        expect(probe.requests.length).to.equal(cold);
+      }
+      for (const section of sections) {
+        for (const metadata of [{ page: 2 }, [], false, 0, ""]) {
+          expect(await source.getDiscoverSectionItems(section, metadata)).to.deep.equal({ items: [] });
+        }
+      }
+      expect(first.every((row) => row.metadata === undefined)).to.equal(true);
+      expect(probe.requests.length).to.equal(cold);
+    } finally {
+      probe.unregisterInterceptor();
+    }
+  });
   suite.test(
     "discover: homepage order, covers and bounded snapshots match public source data",
     async () => {

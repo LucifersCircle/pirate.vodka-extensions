@@ -213,6 +213,12 @@ export async function runTests(logger: TestLogger) {
     const warm = await Promise.all(selected.map((section) => extension.getDiscoverSectionItems(section)));
     expect(warm).to.deep.equal(cold);
     expect(probe.requests.length).to.equal(warmStart);
+    // Reuse the same response for every native first-page representation.
+    for (const metadata of [null, {}, Object.create(null)]) {
+      const repeated = await Promise.all(selected.map((section) => extension.getDiscoverSectionItems(section, metadata)));
+      expect(repeated).to.deep.equal(cold);
+      expect(probe.requests.length).to.equal(warmStart);
+    }
     const browse = sections.find((section) => section.id === "release-filters")!;
     expect(browse.title).to.equal("Browse releases");
     expect((await extension.getDiscoverSectionItems(browse)).items).to.deep.equal(
@@ -261,9 +267,45 @@ export async function runTests(logger: TestLogger) {
     for (const id of ["featured", "most-popular"]) {
       expect(rows.get(id)!.metadata).to.equal(undefined);
       const section = (await extension.getDiscoverSections()).find((item) => item.id === id)!;
-      expect(await extension.getDiscoverSectionItems(section, { page: 2 })).to.deep.equal({ items: [] });
+      for (const metadata of [{ page: 2 }, [], false, 0, ""]) {
+        expect(await extension.getDiscoverSectionItems(section, metadata as Parameters<typeof extension.getDiscoverSectionItems>[1])).to.deep.equal({ items: [] });
+      }
     }
     expect(probe.requests.length).to.equal(before);
+  });
+
+  suite.test("legacy latest: empty first-page metadata and real cursor guards reuse cached home", async () => {
+    // This retained handler is not a current Browse row. Test compatibility from
+    // the existing home response, then stop a real continuation before network I/O.
+    const sections = await extension.getDiscoverSections();
+    expect(sections.some((section) => section.id === "latest-releases")).to.equal(false);
+    const section = { ...sections[0], id: "latest-releases" };
+    const before = probe.requests.length;
+    const first = await extension.getDiscoverSectionItems(section);
+    expect(first.items).not.to.be.empty;
+    for (const metadata of [null, {}, Object.create(null)])
+      expect(await extension.getDiscoverSectionItems(section, metadata)).to.deep.equal(first);
+    expect(probe.requests.length).to.equal(before);
+    const cursor = first.metadata;
+    if (!cursor || typeof cursor !== "object" || Array.isArray(cursor)) throw new Error("Expected the native legacy cursor");
+    for (const metadata of [[], false, 0, "", { ...cursor, page: 1 }, { ...cursor, contentContext: "stale" }, { ...cursor, seen: undefined }])
+      await rejects(() => extension.getDiscoverSectionItems(section, metadata as Parameters<typeof extension.getDiscoverSectionItems>[1]), /Invalid VortexScans homepage cursor/);
+    expect(probe.requests.length).to.equal(before);
+    const schedule = Application.scheduleRequest;
+    const requests: Request[] = [];
+    try {
+      Application.scheduleRequest = async (request) => {
+        requests.push(request);
+        throw new Error("Offline legacy continuation boundary");
+      };
+      await rejects(() => extension.getDiscoverSectionItems(section, cursor as Parameters<typeof extension.getDiscoverSectionItems>[1]), /Offline legacy continuation boundary/);
+      expect(requests.map(({ url, method }) => ({ url, method }))).to.deep.equal([{
+        url: `${DOMAIN_API}/posts?page=2&perPage=36&searchTerm=&isNovel=false&tag=latestUpdatePinned`, method: "GET",
+      }]);
+      expect(probe.requests.length).to.equal(before);
+    } finally {
+      Application.scheduleRequest = schedule;
+    }
   });
 
   suite.test("latest: Browse chip preserves native query, exact source order and page-two continuation", async () => {
