@@ -52,6 +52,22 @@ import { fetchText, MangaStashInterceptor } from "./network";
 import { issueImages, observe } from "./images";
 type Cached = { html: string; at: number };
 type Cursor = { context: string; next: string; seen: string[]; page: number };
+// The native metadata contract includes null; empty JSON records also mean no cursor.
+// Nonempty or malformed values still enter the strict continuation validator below.
+const firstPage = (metadata: unknown): boolean => {
+  if (metadata == null) return true;
+  if (typeof metadata !== "object" || Array.isArray(metadata) || Reflect.ownKeys(metadata).length)
+    return false;
+  const prototype = Object.getPrototypeOf(metadata);
+  if (prototype === null) return true;
+  const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")?.value;
+  return (
+    Object.getPrototypeOf(prototype) === null &&
+    typeof constructor === "function" &&
+    constructor.prototype === prototype &&
+    Function.prototype.toString.call(constructor) === Function.prototype.toString.call(Object)
+  );
+};
 export class MangaStashExtension implements ExtensionImpl<typeof Config> {
   private interceptor = new MangaStashInterceptor("MangaStash.site");
   private rateLimiter = new BasicRateLimiter("MangaStash.rate", {
@@ -164,7 +180,7 @@ export class MangaStashExtension implements ExtensionImpl<typeof Config> {
     metadata?: Metadata,
   ): Promise<PagedResults<DiscoverSectionItem>> {
     if (!SECTIONS.some((s) => s.id === section?.id)) throw new Error("Unknown MangaStash section.");
-    if (metadata !== undefined)
+    if (!firstPage(metadata))
       throw new Error("MangaStash homepage feeds are finite snapshots without pagination.");
     const saved = preferences(),
       response = await this.text(BASE_URL + "/", saved),
@@ -199,7 +215,7 @@ export class MangaStashExtension implements ExtensionImpl<typeof Config> {
     queryScope(initial);
     let url = initial,
       seen: string[] = [];
-    if (metadata !== undefined) {
+    if (!firstPage(metadata)) {
       const c = metadata as unknown as Cursor;
       if (
         !c ||
