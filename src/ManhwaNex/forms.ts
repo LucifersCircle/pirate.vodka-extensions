@@ -23,19 +23,37 @@ export const preferences = (): Preferences => {
 };
 export const readFilters = (metadata?: Metadata): SearchFilters => {
   const data = (metadata ?? {}) as Partial<SearchFilters>;
-  const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+  const invalid = (field: string): never => {
+    throw new Error(
+      `ManhwaNex saved ${field} filter is invalid; clear your search filters and retry.`,
+    );
+  };
+  if (typeof data !== "object" || Array.isArray(data)) invalid("search");
+  if (
+    data.genres != null &&
+    (!Array.isArray(data.genres) ||
+      [...data.genres].some((id) => typeof id !== "string" || !/^[a-z0-9-]+$/.test(id)))
+  )
+    invalid("genre");
+  if (
+    data.statuses != null &&
+    (!Array.isArray(data.statuses) ||
+      [...data.statuses].some((id) => !STATUSES.some((status) => status.id === id)))
+  )
+    invalid("status");
+  // SelectRow callbacks use arrays, but the form persists these single choices as strings.
+  if (data.condition != null && !["", "1"].includes(data.condition)) invalid("genre condition");
+  if (data.adult != null && !["", "0", "1"].includes(data.adult)) invalid("adult");
+  for (const key of ["author", "artist", "release"] as const)
+    if (data[key] != null && typeof data[key] !== "string") invalid(key);
   return {
-    genres: Array.isArray(data.genres)
-      ? data.genres.filter((id) => typeof id === "string" && /^[a-z0-9-]+$/.test(id))
-      : [],
-    condition: data.condition === "1" ? "1" : "",
-    author: text(data.author),
-    artist: text(data.artist),
-    release: text(data.release),
-    adult: ["0", "1"].includes(data.adult ?? "") ? data.adult! : "",
-    statuses: Array.isArray(data.statuses)
-      ? data.statuses.filter((id) => STATUSES.some((status) => status.id === id))
-      : [],
+    genres: [...(data.genres ?? [])],
+    condition: data.condition ?? "",
+    author: data.author?.trim() ?? "",
+    artist: data.artist?.trim() ?? "",
+    release: data.release?.trim() ?? "",
+    adult: data.adult ?? "",
+    statuses: [...(data.statuses ?? [])],
   };
 };
 export class ManhwaNexSettingsForm extends Form {

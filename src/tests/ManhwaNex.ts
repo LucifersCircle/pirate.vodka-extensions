@@ -2,11 +2,11 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright © 2026 Lucifers Circle */
 
-import { ContentRating, PaperbackInterceptor, type Chapter, type Request, type Response, type SourceManga, type TestLogger } from "@paperback/types";
+import { ContentRating, PaperbackInterceptor, type Chapter, type Metadata, type Request, type Response, type SourceManga, type TestLogger } from "@paperback/types";
 import { expect } from "chai";
 import * as cheerio from "cheerio";
 import { ManhwaNex } from "../ManhwaNex/main.js";
-import { ManhwaNexSearchForm, ManhwaNexSettingsForm, preferences } from "../ManhwaNex/forms.js";
+import { ManhwaNexSearchForm, ManhwaNexSettingsForm, preferences, readFilters } from "../ManhwaNex/forms.js";
 import { BASE_URL, GENRES, SECTIONS, SORTS, STATUSES, type CatalogItem } from "../ManhwaNex/models.js";
 import { fetchText, searchUrl, ManhwaNexInterceptor } from "../ManhwaNex/network.js";
 import { chapterTitle, emptyMetadata, imageUrl, isAllowed, parseCatalog, parseChapters, parseDetails, parseGenreOptions, parseHomeCategories, parseReader, seriesUrl, taxonomyId, validateCatalogUrl } from "../ManhwaNex/parsers.js";
@@ -395,6 +395,39 @@ export async function runTests(logger: TestLogger) {
     }
     const result = await ManhwaNex.getSearchResults({ title: "", metadata: { genres: ["action", "fantasy"], condition: "1" } });
     for (const item of result.items) for (const genre of ["action", "fantasy"]) expect(item.metadata.genres.some((tag) => tag.id === genre)).to.equal(true);
+  });
+  suite.test("advanced search: malformed saved filters fail before requests without losing valid constraints", async () => {
+    const invalid: Metadata[] = [
+      "action", [], 1, false,
+      { genres: "action" }, { genres: ["invalid/genre"] }, { genres: ["action", null] },
+      { statuses: "end" }, { statuses: ["retired-status"] }, { statuses: ["end", 1] },
+      { condition: "or" }, { condition: ["1"] }, { adult: "all" }, { adult: 0 },
+      { author: 123 }, { artist: ["3rd Studio"] }, { release: 2026 },
+    ];
+    const neutral = { genres: [], condition: "", author: "", artist: "", release: "", adult: "", statuses: [] };
+    for (const exclude of [true, false]) {
+      await settings.setExcludeNSFW(exclude); probe.requests.length = 0;
+      for (const metadata of invalid) {
+        const query = { title: "Logging", metadata };
+        await rejects(() => ManhwaNex.getSearchResults(query), /ManhwaNex saved .* filter is invalid/);
+        await rejects(() => ManhwaNex.getAdvancedSearchForm(query), /ManhwaNex saved .* filter is invalid/);
+        expect(() => new ManhwaNexSearchForm(query, [])).to.throw(/ManhwaNex saved .* filter is invalid/);
+      }
+      expect(probe.requests).to.have.length(0);
+      for (const metadata of [undefined, null, {}, neutral, Object.fromEntries(Object.keys(neutral).map((key) => [key, null]))])
+        expect(searchUrl({ title: "", metadata }, exclude)).to.equal(searchUrl({ title: "" }, exclude));
+      const metadata = { genres: ["action", "fantasy", "saved-taxonomy-id"], statuses: STATUSES.map((status) => status.id), condition: "1", adult: "0", author: " 3rd Studio ", artist: " Artist & Co. ", release: " 2026 " };
+      const persisted = JSON.parse(JSON.stringify(metadata)) as typeof metadata;
+      const form = new ManhwaNexSearchForm({ title: "", metadata: persisted }, parseGenreOptions(search));
+      expect(form.getSearchQueryMetadata()).to.deep.equal({ ...metadata, author: "3rd Studio", artist: "Artist & Co.", release: "2026" });
+      expect(persisted).to.deep.equal(metadata);
+      expect(searchUrl({ title: " Logging: 10,000? ", metadata }, exclude)).to.equal(`${BASE_URL}/?s=Logging%3A%2010%2C000%3F&post_type=wp-manga&genre%5B0%5D=action&genre%5B1%5D=fantasy&genre%5B2%5D=saved-taxonomy-id&op=1&author=3rd%20Studio&artist=Artist%20%26%20Co.&release=2026&adult=0&status%5B0%5D=on-going&status%5B1%5D=end&status%5B2%5D=canceled&status%5B3%5D=on-hold&status%5B4%5D=upcoming`);
+      await form.setCondition([""]); await form.setAdult([""]); await form.setGenres([]); await form.setStatuses([]);
+      expect(form.getSearchQueryMetadata()).to.deep.include({ condition: "", adult: "", genres: [], statuses: [] });
+      await form.reset(); expect(form.getSearchQueryMetadata()).to.deep.equal(neutral);
+      expect(readFilters({ release: "not-a-year", author: "3rd Studio" }).release).to.equal("not-a-year");
+    }
+    await settings.reset();
   });
   suite.test("advanced search: author, artist, release and adult semantics", async () => {
     for (const metadata of [{ author: "Xingjiu" }, { artist: "3rd Studio" }, { release: "2026" }]) {
