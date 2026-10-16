@@ -84,6 +84,14 @@ export const searchUrl = (
   sorting?: SortingOption,
 ): string => {
   const filters = readFilters(query.metadata);
+  if (
+    sorting != null &&
+    (typeof sorting !== "object" ||
+      Array.isArray(sorting) ||
+      typeof sorting.id !== "string" ||
+      !SORTS.some((sort) => sort.id === sorting.id))
+  )
+    throw new Error("Mangasushi saved sort is invalid; choose another sorting option.");
   return `${BASE_URL}/?${formEncode({
     // WordPress full-title search misses curly quotes used by displayed titles.
     s: query.title
