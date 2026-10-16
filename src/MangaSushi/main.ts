@@ -58,6 +58,13 @@ import {
   seriesUrl,
 } from "./parsers";
 import Config from "./pbconfig";
+import {
+  issueImages,
+  beginImageEvidence,
+  observeImageEvidence,
+  imageEvidenceAllowed,
+  type ImageEvidence,
+} from "./images";
 import { englishTitle, searchTitle } from "./titles";
 
 class MangaSushiExtension implements ExtensionImpl<typeof Config> {
@@ -70,6 +77,19 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
   });
   private cache = new Map<string, { data: SeriesMetadata; expires: number }>();
   private cacheContext = "";
+  private evidence = new WeakMap<SeriesMetadata, ImageEvidence>();
+  private observed = new WeakSet<SeriesMetadata>();
+  private homeEvidence?: ImageEvidence;
+  private markPage(page: CatalogPage, evidence: ImageEvidence): CatalogPage {
+    for (const item of page.items) this.evidence.set(item.metadata, evidence);
+    return page;
+  }
+  private inheritEvidence(data: SeriesMetadata, original: SeriesMetadata): SeriesMetadata {
+    const evidence = this.evidence.get(original);
+    if (evidence) this.evidence.set(data, evidence);
+    if (this.observed.has(original)) this.observed.add(data);
+    return data;
+  }
   private homeCache?: { data: string; expires: number };
   private pendingHome?: Promise<string>;
   private discoveryCache = new Map<string, { data: CatalogPage; expires: number }>();
@@ -101,12 +121,23 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
       throw new Error("Mangasushi settings changed. Reload this page.");
   }
   private remember(item: CatalogItem) {
-    const cached = this.cache.get(item.mangaId);
-    const previous = cached && cached.expires > Date.now() ? cached : undefined;
-    this.cache.set(item.mangaId, {
-      data: { ...item.metadata, adult: item.metadata.adult || previous?.data.adult === true },
-      expires: previous?.data.adult ? previous.expires : Date.now() + 5 * 60 * 1000,
-    });
+    const evidence = this.evidence.get(item.metadata);
+    if (!evidence) throw new Error("Mangasushi metadata has no source evidence.");
+    if (!this.observed.has(item.metadata)) {
+      observeImageEvidence(item.mangaId, isAllowed(item.metadata), evidence);
+      this.observed.add(item.metadata);
+    }
+    const previous = this.cache.get(item.mangaId);
+    const previousEvidence = previous ? this.evidence.get(previous.data) : undefined;
+    if (
+      previousEvidence?.generation === evidence.generation &&
+      (previousEvidence.sequence > evidence.sequence ||
+        (previousEvidence.sequence === evidence.sequence &&
+          previous?.data.adult &&
+          !item.metadata.adult))
+    )
+      return;
+    this.cache.set(item.mangaId, { data: item.metadata, expires: evidence.at + 5 * 60 * 1000 });
   }
   private observeWarnings(items: CatalogItem[], expected?: CatalogItem[]) {
     for (const item of items) {
@@ -116,12 +147,24 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
       // A failed bounded batch must not populate unrelated cold metadata.
       if (expected && !previous && !expected.some((entry) => entry.mangaId === item.mangaId))
         continue;
-      this.remember({ ...item, metadata: { ...(previous ?? item.metadata), adult: true } });
+      this.remember({
+        ...item,
+        metadata: this.inheritEvidence(
+          { ...(previous ?? item.metadata), adult: true },
+          item.metadata,
+        ),
+      });
     }
   }
   private ensureAllowed(saved: Preferences, mangaId: string) {
     const cached = this.cache.get(mangaId);
-    if (saved.excludeNSFW && (!cached || cached.expires <= Date.now() || !isAllowed(cached.data)))
+    if (
+      saved.excludeNSFW &&
+      (!cached ||
+        cached.expires <= Date.now() ||
+        !isAllowed(cached.data) ||
+        !imageEvidenceAllowed(mangaId, this.evidence.get(cached.data)))
+    )
       throw new Error(
         "This title is hidden by NSFW exclusion or lacks reliable website classification.",
       );
@@ -130,7 +173,9 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
     if (this.homeCache && this.homeCache.expires > Date.now()) return this.homeCache.data;
     if (this.pendingHome) return this.pendingHome;
     const request = (async () => {
+      const evidence = beginImageEvidence();
       const data = await fetchText(`${BASE_URL}/`);
+      this.homeEvidence = evidence;
       this.ensureCurrent(saved);
       this.homeCache = { data, expires: Date.now() + 5 * 60 * 1000 };
       return data;
@@ -203,11 +248,10 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
       return;
     }
     const request = (async () => {
-      const result = parseCatalog(
-        await fetchNext(metadataCursor),
-        "search",
-        saved.excludeNSFW,
-        metadataCursor,
+      const evidence = beginImageEvidence();
+      const result = this.markPage(
+        parseCatalog(await fetchNext(metadataCursor), "search", saved.excludeNSFW, metadataCursor),
+        evidence,
       );
       this.ensureCurrent(saved);
       this.observeWarnings(result.items, expected);
@@ -233,11 +277,14 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
             const previous = cached && cached.expires > Date.now() ? cached.data : emptyMetadata();
             this.remember({
               ...item,
-              metadata: {
-                ...previous,
-                nativeSafe: false,
-                adult: previous.adult || item.metadata.adult,
-              },
+              metadata: this.inheritEvidence(
+                {
+                  ...previous,
+                  nativeSafe: false,
+                  adult: previous.adult || item.metadata.adult,
+                },
+                this.markPage({ items: [item] }, evidence).items[0].metadata,
+              ),
             });
           }
       }
@@ -267,11 +314,17 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
       .split(/\s+/)
       .slice(0, 6)
       .join(" ");
+    let lastEvidence: ImageEvidence | undefined;
     for (const term of new Set([title, shortTitle])) {
-      let result = parseCatalog(
-        await fetchText(searchUrl({ title: term }, saved.excludeNSFW)),
-        "search",
-        saved.excludeNSFW,
+      let evidence = beginImageEvidence();
+      lastEvidence = evidence;
+      let result = this.markPage(
+        parseCatalog(
+          await fetchText(searchUrl({ title: term }, saved.excludeNSFW)),
+          "search",
+          saved.excludeNSFW,
+        ),
+        evidence,
       );
       let previousIds = "";
       for (let page = 0; page < 10; page++) {
@@ -285,14 +338,15 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
         if (!result.next) break;
         if (page === 9) throw new Error("Mangasushi classification search exceeded ten pages.");
         previousIds = ids;
-        result = parseCatalog(
-          await fetchNext(result.next),
-          "search",
-          saved.excludeNSFW,
-          result.next,
+        evidence = beginImageEvidence();
+        lastEvidence = evidence;
+        result = this.markPage(
+          parseCatalog(await fetchNext(result.next), "search", saved.excludeNSFW, result.next),
+          evidence,
         );
       }
     }
+    if (lastEvidence) observeImageEvidence(mangaId, false, lastEvidence);
     return undefined;
   }
   private async visible(
@@ -324,19 +378,39 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
       if (kind === "search") this.remember(item);
       const current = this.cache.get(item.mangaId);
       const metadata = classified
-        ? {
-            ...classified,
-            adult:
-              classified.adult ||
-              item.metadata.adult ||
-              (current && current.expires > Date.now() && current.data.adult) === true,
-          }
+        ? this.inheritEvidence(
+            {
+              ...classified,
+              adult:
+                classified.adult ||
+                item.metadata.adult ||
+                (current && current.expires > Date.now() && current.data.adult) === true,
+            },
+            classified,
+          )
         : undefined;
-      if (!saved.excludeNSFW || (metadata && isAllowed(metadata)))
+      if (
+        !saved.excludeNSFW ||
+        (metadata &&
+          isAllowed(metadata) &&
+          imageEvidenceAllowed(item.mangaId, this.evidence.get(metadata)))
+      )
         output.push(metadata ? { ...item, metadata } : item);
     }
     this.ensureCurrent(saved);
+    this.issueCovers(output, saved);
     return output;
+  }
+  private issueCovers(items: CatalogItem[], saved: Preferences) {
+    issueImages(
+      items.map((item) => ({
+        url: item.imageUrl,
+        id: item.mangaId,
+        allowed: isAllowed(item.metadata),
+        evidence: this.evidence.get(item.metadata),
+      })),
+      saved,
+    );
   }
   private async catalog(
     url: string,
@@ -350,12 +424,16 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
     let cursor: Pagination | undefined = previous?.context === context ? previous : undefined;
     let previousIds = previous?.context === context ? previous.ids : "";
     for (let attempt = 0; attempt < 10; attempt++) {
+      const evidence = cursor || kind === "search" ? beginImageEvidence() : undefined;
       const html = cursor
         ? await fetchNext(cursor)
         : kind === "latest"
           ? await this.home(saved)
           : await fetchText(url);
-      const result = parseCatalog(html, kind, saved.excludeNSFW && kind === "search", cursor);
+      const result = this.markPage(
+        parseCatalog(html, kind, saved.excludeNSFW && kind === "search", cursor),
+        evidence ?? this.homeEvidence!,
+      );
       this.ensureCurrent(saved);
       if (kind === "search") {
         // Even an invalid provider filter can reveal a real contrary warning.
@@ -412,10 +490,14 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
     const pending = this.pendingGenres.get(key);
     if (pending) return pending;
     const request = (async () => {
-      const result = parseGenreArchive(
-        cursor ? await fetchNext(cursor) : await fetchText(genre.url, undefined, true),
-        genre,
-        cursor,
+      const evidence = beginImageEvidence();
+      const result = this.markPage(
+        parseGenreArchive(
+          cursor ? await fetchNext(cursor) : await fetchText(genre.url, undefined, true),
+          genre,
+          cursor,
+        ),
+        evidence,
       );
       this.ensureCurrent(saved);
       for (const [key, value] of this.genrePages)
@@ -487,13 +569,18 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
       for (const item of result.items) {
         const cached = this.cache.get(item.mangaId);
         const data = cached && cached.expires > Date.now() ? cached.data : emptyMetadata();
-        const metadata = { ...data, adult: data.adult || item.metadata.adult };
+        const metadata = this.inheritEvidence(
+          { ...data, adult: data.adult || item.metadata.adult },
+          data,
+        );
         if (metadata.classified && !metadata.genres.some((entry) => entry.id === genre.id))
           throw new Error("Mangasushi returned metadata for a different genre archive.");
         if (
           !seen.has(item.mangaId) &&
           !EDITORIAL_IDS.includes(item.mangaId) &&
-          (!saved.excludeNSFW || isAllowed(metadata))
+          (!saved.excludeNSFW ||
+            (isAllowed(metadata) &&
+              imageEvidenceAllowed(item.mangaId, this.evidence.get(metadata))))
         )
           items.push({
             ...item,
@@ -511,7 +598,10 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
             seen: [...seen],
           }
         : undefined;
-      if (items.length || !next) return { items, metadata: next };
+      if (items.length || !next) {
+        this.issueCovers(items, saved);
+        return { items, metadata: next };
+      }
       cursor = { page: next.page, template: next.template, vars: next.vars };
     }
     throw new Error(
@@ -544,7 +634,7 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
     }
     if (section.id === "popular") {
       const html = await this.home(saved);
-      const result = parseCatalog(html, "popular");
+      const result = this.markPage(parseCatalog(html, "popular"), this.homeEvidence!);
       const latest = parseCatalog(html, "latest");
       const items = await this.visible(
         result.items,
@@ -611,12 +701,24 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
     const source = parseDetailBase(await fetchText(seriesUrl(mangaId)), mangaId);
     const metadata = await this.classify(mangaId, source.mangaInfo.primaryTitle, saved);
     this.ensureCurrent(saved);
-    if (saved.excludeNSFW && (!metadata || !isAllowed(metadata)))
+    if (saved.excludeNSFW && (!metadata || !isAllowed(metadata))) {
       throw new Error(
         "This title is hidden by NSFW exclusion or lacks reliable website classification. Change source settings to access it.",
       );
+    }
     this.ensureAllowed(saved, mangaId);
     const result = enrichDetails(source, metadata);
+    issueImages(
+      [
+        {
+          url: result.mangaInfo.thumbnailUrl,
+          id: mangaId,
+          allowed: !!metadata && isAllowed(metadata),
+          evidence: metadata ? this.evidence.get(metadata) : undefined,
+        },
+      ],
+      saved,
+    );
     const original = result.mangaInfo.primaryTitle;
     const alternatives = result.mangaInfo.secondaryTitles ?? [];
     const title = englishTitle(mangaId, original, metadata ? [metadata.alternative] : alternatives);
@@ -660,6 +762,18 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
     );
     this.ensureCurrent(saved);
     this.ensureAllowed(saved, chapter.sourceManga.mangaId);
+    const metadata = this.cache.get(chapter.sourceManga.mangaId)?.data;
+    if (!("pages" in result)) throw new Error("Mangasushi returned unsupported reader content.");
+    issueImages(
+      result.pages.map((url) => ({
+        url,
+        id: chapter.sourceManga.mangaId,
+        chapterId: chapter.chapterId,
+        allowed: !!metadata && isAllowed(metadata),
+        evidence: metadata ? this.evidence.get(metadata) : undefined,
+      })),
+      saved,
+    );
     return result;
   }
   async processTitlesForUpdates(_updateManager: UpdateManager, _lastUpdateDate?: Date) {
