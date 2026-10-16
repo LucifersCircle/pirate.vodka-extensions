@@ -104,7 +104,7 @@ function buildInfoItems(
   | undefined {
   const ratingItem =
     typeof rating === "number" && Number.isFinite(rating) && rating >= 0 && rating <= 100
-      ? { symbol: "star.fill", text: `${formatRating(rating)}/10` }
+      ? { symbol: "star.fill", text: formatRating(rating) }
       : undefined;
   const viewsItem =
     typeof views === "number" && Number.isFinite(views)
