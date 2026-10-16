@@ -484,6 +484,25 @@ export const parseDetailBase = (html: string, mangaId: string): SourceManga => {
     )
     .text()
     .trim();
+  const aggregate = $(".tab-summary .vote-details[typeof='AggregateRating']");
+  const value = (property: string): string => {
+    const nodes = aggregate.find(`[property="${property}"]`);
+    return nodes.length === 1 ? clean(nodes.text()) : "";
+  };
+  const scoreText = value("ratingValue"),
+    countText = value("ratingCount");
+  const score = /^\d+(?:\.\d+)?$/.test(scoreText) ? Number(scoreText) : NaN;
+  const votes = /^[1-9]\d*$/.test(countText) ? Number(countText) : NaN;
+  const rated =
+    aggregate.length === 1 &&
+    value("bestRating") === "5" &&
+    Number.isFinite(score) &&
+    score > 0 &&
+    score <= 5 &&
+    Number.isSafeInteger(votes) &&
+    votes > 0;
+  const type = field("type"),
+    release = field("release");
   return {
     mangaId,
     mangaInfo: {
@@ -494,6 +513,12 @@ export const parseDetailBase = (html: string, mangaId: string): SourceManga => {
       contentRating: ContentRating.MATURE,
       status: field("status"),
       shareUrl: seriesUrl(mangaId),
+      ...(rated ? { rating: score / 5 } : {}),
+      additionalInfo: {
+        ...(type ? { Type: type } : {}),
+        ...(release ? { Released: release } : {}),
+        ...(rated ? { Score: `★ ${score}/5 (${votes} ${votes === 1 ? "vote" : "votes"})` } : {}),
+      },
     },
   };
 };
@@ -512,6 +537,7 @@ export const enrichDetails = (source: SourceManga, metadata?: SeriesMetadata): S
       contentRating: metadata.adult ? ContentRating.ADULT : ContentRating.MATURE,
       tagGroups: [{ id: "genres", title: "Genres", tags: metadata.genres }],
       additionalInfo: {
+        ...source.mangaInfo.additionalInfo,
         ...(metadata.release ? { Released: metadata.release } : {}),
         ...(!metadata.classified
           ? { Classification: "The website does not supply genre metadata for this title." }
