@@ -134,6 +134,7 @@ export async function runTests(logger: TestLogger) {
   let safeSource: SourceManga;
   let safeDetailHTML = "";
   let safeCatalogRelease = "";
+  let safeSearchResponse: DiscoveryProbe["responses"][number] | undefined;
   let sample: SourceManga;
   let sampleChapters: Chapter[];
   let issuedReaderPages: string[];
@@ -188,7 +189,8 @@ export async function runTests(logger: TestLogger) {
       expect(result.items.map((item) => item.mangaId)).to.deep.equal(
         sourceSearch.items.filter((item) => isAllowed(item.metadata)).map((item) => item.mangaId),
       );
-      const catalogHTML = probe.responses.find((entry) => entry.request.url === searchUrl({ title: "" }, true))?.html ?? "";
+      safeSearchResponse = probe.responses.find((entry) => entry.request.url === searchUrl({ title: "" }, true));
+      const catalogHTML = safeSearchResponse?.html ?? "";
       expect(catalogHTML, "Missing the search response consumed by native getSearchResults").not.to.be.empty;
       const $catalog = cheerio.load(catalogHTML);
       const row = $catalog(".c-tabs-item__content").filter((_, node) => $catalog(node).find(".post-title a").first().attr("href") === seriesUrl(result.items[0].mangaId));
@@ -1970,9 +1972,9 @@ export async function runTests(logger: TestLogger) {
         "https://example.invalid/unissued.jpg",
         seriesUrl(SAMPLE),
       ]) await rejects(() => interceptor.interceptRequest({ url, method: "GET" }), /image|authorization/i);
-      const expired = JSON.parse(JSON.stringify(state)) as [string, { at: number; expires: number }][];
+      const expired = JSON.parse(state as string) as [string, { at: number; expires: number }][];
       for (const [, grant] of expired) { grant.at -= 24 * 60 * 60 * 1000 + 1; grant.expires -= 24 * 60 * 60 * 1000 + 1; }
-      Application.setState(expired, "MangaSushi.issuedImages");
+      Application.setState(JSON.stringify(expired), "MangaSushi.issuedImages");
       await rejects(() => interceptor.interceptRequest({ url: images[1], method: "GET" }), /expired|authorization/i);
       expect(probe.requests).to.have.length(0);
     } finally {
@@ -2046,6 +2048,66 @@ export async function runTests(logger: TestLogger) {
     expect(() =>
       parseCatalog("<html><title>Unexpected response</title></html>", "search", true),
     ).to.throw();
+  });
+  // Epoch migration is destructive: keep it last, after ordinary reader/cache checks.
+  suite.test("images: native state roundtrip preserves evidence and retires legacy grants", async () => {
+    const keys = ["MangaSushi.imageEvidence", "MangaSushi.imageEvidenceGeneration", "MangaSushi.issuedImages"];
+    const original = keys.map((key) => Application.getState(key));
+    const savedPreferences = Application.getState("MangaSushi.preferences");
+    const schedule = Application.scheduleRequest;
+    const captured = safeSearchResponse;
+    if (!captured) throw new Error("Missing the source response consumed by native search.");
+    let requests = 0;
+    Application.scheduleRequest = async (request) => {
+      expect(request.url).to.equal(captured.request.url);
+      expect(request.method).to.equal(captured.request.method);
+      requests++;
+      return [captured.response, encodeHTML(captured.html)];
+    };
+    try {
+      const cold = new (MangaSushi.constructor as new () => typeof MangaSushi)();
+      await cold.initialise();
+      const first = await cold.getSearchResults({ title: "" });
+      expect(first.items).not.to.be.empty;
+      const image = first.items[0].imageUrl;
+      const guard = new MangaSushiInterceptor("MangaSushi.state-roundtrip");
+      const stored = keys.map((key) => Application.getState(key));
+      // Roundtrip source-emitted state, not a preseeded first-install ledger.
+      // A 0/1 bridge is a compatibility model, not a proven physical-app cause.
+      const nativeRoundtrip = (value: unknown): unknown => JSON.parse(JSON.stringify(value),
+        (_key, item: unknown) => item === 0 ? false : item === 1 ? true : item) as unknown;
+      for (const [index, key] of keys.entries()) Application.setState(nativeRoundtrip(stored[index]), key);
+      const reloaded = new (MangaSushi.constructor as new () => typeof MangaSushi)();
+      await reloaded.getSearchResults({ title: "" });
+      expect((await guard.interceptRequest({ url: image, method: "GET" })).url).to.equal(image);
+      for (const key of keys) expect(Application.getState(key)).to.be.a("string");
+      const ledger = JSON.parse(Application.getState(keys[0]) as string) as { generation: string; sequence: number; discardedThrough: number; titles: unknown[] };
+      // Malformed current JSON cannot silently reset authority.
+      try {
+        Application.setState(JSON.stringify({ ...ledger, sequence: true }), keys[0]);
+        await rejects(() => guard.interceptRequest({ url: image, method: "GET" }), /sequence=boolean/);
+      } finally { Application.setState(JSON.stringify(ledger), keys[0]); }
+      // Retire recognizable numeric-schema state, including ambiguous counters.
+      for (const key of keys) {
+        const legacy: unknown = JSON.parse(Application.getState(key) as string,
+          (_key, value: unknown) => typeof value === "string" && /^json-v1:\d+$/.test(value)
+            ? Number(value.slice(8)) : value);
+        Application.setState(nativeRoundtrip(legacy), key);
+      }
+      await rejects(() => guard.interceptRequest({ url: image, method: "GET" }), /authorization/);
+      const fresh = await reloaded.getSearchResults({ title: "" });
+      expect(fresh.items).not.to.be.empty;
+      expect(fresh.items.every((item) => isAllowed(item.metadata))).to.equal(true);
+      expect(JSON.parse(Application.getState(keys[0]) as string).generation).not.to.equal(ledger.generation);
+      const grants = JSON.parse(Application.getState(keys[2]) as string) as [string, { chapters: string[] }][];
+      expect(grants.every(([, grant]) => grant.chapters.length === 1 && grant.chapters[0] === "")).to.equal(true);
+      expect((await guard.interceptRequest({ url: fresh.items[0].imageUrl, method: "GET" })).url).to.equal(fresh.items[0].imageUrl);
+      expect(Application.getState("MangaSushi.preferences")).to.deep.equal(savedPreferences);
+      expect(requests).to.equal(3);
+    } finally {
+      Application.scheduleRequest = schedule;
+      for (const [index, key] of keys.entries()) Application.setState(original[index], key);
+    }
   });
   try {
     await suite.run();

@@ -11,60 +11,117 @@ const LIMIT = 8192;
 const EVIDENCE = "MangaSushi.imageEvidence";
 const GENERATION = "MangaSushi.imageEvidenceGeneration";
 let highestGeneration = 0;
-export type ImageEvidence = { generation: number; sequence: number; at: number };
+const kind = (value: unknown): string =>
+  value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+const stateError = (key: string, decoded: unknown): Error => {
+  const record = decoded as Record<string, unknown> | null | undefined;
+  const field = (name: string): string =>
+    record && typeof record === "object" ? kind(record[name]) : "missing";
+  return new Error(
+    `Invalid saved Mangasushi image state (${key.split(".")[1]}: stored=${kind(Application.getState(key))}; decoded=${kind(decoded)}; sequence=${field("sequence")}; discardedThrough=${field("discardedThrough")}; titles=${field("titles")}).`,
+  );
+};
+const legacyCounter = (value: unknown, minimum = 0): boolean =>
+  (Number.isSafeInteger(value) && (value as number) >= minimum) ||
+  value === true ||
+  (minimum === 0 && value === false);
+// Explicit JSON keeps native object bridging from changing zero/one counters.
+// Recognizable pre-JSON values are retired, never trusted as classification or
+// image grants. Only a new source request may replace them; settings are untouched.
+const readState = (key: string): unknown => {
+  const raw = Application.getState(key);
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === "string") {
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(raw) as unknown;
+    } catch {
+      throw stateError(key, undefined);
+    }
+    if (
+      decoded === null ||
+      (key === STORE && !Array.isArray(decoded)) ||
+      (key === GENERATION && !generationNumber(decoded))
+    )
+      throw stateError(key, decoded);
+    return decoded;
+  }
+  const old = raw as Record<string, unknown>;
+  if (
+    (key === STORE && Array.isArray(raw)) ||
+    (key === GENERATION && legacyCounter(raw, 1)) ||
+    (key === EVIDENCE &&
+      typeof raw === "object" &&
+      !Array.isArray(raw) &&
+      (old.generation === undefined || legacyCounter(old.generation, 1)) &&
+      legacyCounter(old.sequence) &&
+      (old.discardedThrough === undefined || legacyCounter(old.discardedThrough)) &&
+      Array.isArray(old.titles))
+  )
+    return undefined;
+  throw stateError(key, raw);
+};
+const writeState = (value: unknown, key: string): void =>
+  Application.setState(JSON.stringify(value), key);
+// The namespace also prevents an old in-flight numeric epoch from matching a
+// migrated epoch, even when every legacy counter is absent or untrustworthy.
+const generationNumber = (value: unknown): number => {
+  if (typeof value !== "string" || !/^json-v1:[1-9]\d*$/.test(value)) return 0;
+  const number = Number(value.slice(8));
+  return Number.isSafeInteger(number) ? number : 0;
+};
+export type ImageEvidence = { generation: string; sequence: number; at: number };
 type TitleEvidence = ImageEvidence & {
   allowed: boolean;
   blockedThrough: number;
   firstSequence: number;
 };
 const ledger = (): {
-  generation: number;
+  generation: string;
   sequence: number;
   discardedThrough: number;
   missing: boolean;
   titles: Map<string, TitleEvidence>;
 } => {
-  const raw = Application.getState(EVIDENCE) as
+  const raw = readState(EVIDENCE) as
     | { generation?: unknown; sequence?: unknown; discardedThrough?: unknown; titles?: unknown }
     | undefined;
   if (
     raw !== undefined &&
-    raw !== null &&
-    (!Number.isSafeInteger(raw.sequence) ||
+    (typeof raw !== "object" ||
+      raw === null ||
+      Array.isArray(raw) ||
+      !generationNumber(raw.generation) ||
+      !Number.isSafeInteger(raw.sequence) ||
       (raw.sequence as number) < 0 ||
       !Array.isArray(raw.titles) ||
-      (raw.discardedThrough !== undefined &&
-        (!Number.isSafeInteger(raw.discardedThrough) ||
-          (raw.discardedThrough as number) < 0 ||
-          (raw.discardedThrough as number) > (raw.sequence as number))))
+      !Number.isSafeInteger(raw.discardedThrough) ||
+      (raw.discardedThrough as number) < 0 ||
+      (raw.discardedThrough as number) > (raw.sequence as number))
   )
-    throw new Error("Invalid saved Mangasushi classification evidence.");
-  const savedGeneration = Application.getState(GENERATION);
+    throw stateError(EVIDENCE, raw);
+  const savedGeneration = readState(GENERATION);
   for (const generation of [savedGeneration, raw?.generation])
-    if (
-      generation !== undefined &&
-      generation !== null &&
-      (!Number.isSafeInteger(generation) || (generation as number) < 1)
-    )
-      throw new Error("Invalid saved Mangasushi evidence generation.");
+    if (generation !== undefined && generation !== null && !generationNumber(generation))
+      throw stateError(GENERATION, generation);
   // Surviving grants also retain a bounded high-water mark across partial resets.
-  const grants = Application.getState(STORE);
+  const grants = readState(STORE);
   for (const entry of Array.isArray(grants) ? grants.slice(-LIMIT) : []) {
     const generation = Array.isArray(entry) ? entry[1]?.generation : undefined;
-    if (Number.isSafeInteger(generation) && generation > 0)
-      highestGeneration = Math.max(highestGeneration, generation);
+    highestGeneration = Math.max(highestGeneration, generationNumber(generation));
   }
   highestGeneration = Math.max(
     highestGeneration,
-    (savedGeneration as number | undefined) ?? 0,
-    (raw?.generation as number | undefined) ?? 0,
+    generationNumber(savedGeneration),
+    generationNumber(raw?.generation),
   );
   const generation =
-    savedGeneration === highestGeneration && raw?.generation === highestGeneration
-      ? highestGeneration
-      : 0;
+    generationNumber(savedGeneration) === highestGeneration &&
+    generationNumber(raw?.generation) === highestGeneration
+      ? (savedGeneration as string | undefined)
+      : undefined;
   if (!generation)
-    return { generation: 0, sequence: 0, discardedThrough: 0, missing: true, titles: new Map() };
+    return { generation: "", sequence: 0, discardedThrough: 0, missing: true, titles: new Map() };
   const sequence = (raw?.sequence as number | undefined) ?? 0;
   let discardedThrough = (raw?.discardedThrough as number | undefined) ?? 0;
   if (Array.isArray(raw?.titles) && raw.titles.length > LIMIT) discardedThrough = sequence;
@@ -107,7 +164,7 @@ const saveLedger = (value: ReturnType<typeof ledger>): void => {
     value.discardedThrough = value.sequence;
     value.titles.delete(value.titles.keys().next().value!);
   }
-  Application.setState(
+  writeState(
     {
       generation: value.generation,
       sequence: value.sequence,
@@ -123,9 +180,9 @@ export const beginImageEvidence = (): ImageEvidence => {
   if (value.missing) {
     if (!Number.isSafeInteger(highestGeneration + 1))
       throw new Error("Mangasushi evidence generation exhausted.");
-    value.generation = ++highestGeneration;
-    Application.setState(value.generation, GENERATION);
-    Application.setState([], STORE);
+    value.generation = `json-v1:${++highestGeneration}`;
+    writeState(value.generation, GENERATION);
+    writeState([], STORE);
   }
   if (!Number.isSafeInteger(value.sequence + 1))
     throw new Error("Mangasushi evidence sequence exhausted.");
@@ -174,7 +231,7 @@ export const imageEvidenceAllowed = (id: string, evidence?: ImageEvidence): bool
   );
 };
 type Grant = {
-  generation: number;
+  generation: string;
   id: string;
   chapters: string[];
   context: string;
@@ -203,15 +260,14 @@ const issuedImages = (): Map<string, Grant> => {
   // State access is synchronous. Reload each operation rather than retaining
   // an instance snapshot. Separate JavaScript contexts have no atomic CAS API.
   const issued = new Map<string, Grant>(),
-    stored = Application.getState(STORE),
+    stored = readState(STORE),
     now = Date.now();
   for (const entry of Array.isArray(stored) ? stored.slice(-LIMIT) : []) {
     if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string") continue;
     const value = entry[1] as Partial<Grant> | undefined;
     if (
       !value ||
-      !Number.isSafeInteger(value.generation) ||
-      value.generation! < 1 ||
+      !generationNumber(value.generation) ||
       !validId(value.id) ||
       !Array.isArray(value.chapters) ||
       value.chapters.length > 128 ||
@@ -227,8 +283,7 @@ const issuedImages = (): Map<string, Grant> => {
       value.expires <= now ||
       typeof value.allowed !== "boolean" ||
       (value.evidence !== undefined &&
-        (!Number.isSafeInteger(value.evidence.generation) ||
-          value.evidence.generation < 1 ||
+        (!generationNumber(value.evidence.generation) ||
           !Number.isSafeInteger(value.evidence.sequence) ||
           value.evidence.sequence < 1 ||
           !Number.isSafeInteger(value.evidence.at) ||
@@ -302,7 +357,7 @@ export const issueImages = (
     });
   }
   while (issued.size > LIMIT) issued.delete(issued.keys().next().value!);
-  Application.setState([...issued], STORE);
+  writeState([...issued], STORE);
 };
 export const authorizeImage = (url: string): void => {
   checkImageURL(url);
