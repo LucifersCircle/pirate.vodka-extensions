@@ -373,6 +373,170 @@ export async function assertKaganeLanguageEntryPoints(
   }
 }
 
+// Closed native probes reuse only this run's bulk response, with no provider calls.
+export async function assertKaganeNumericRanges(capture: Capture) {
+  const source = Kagane as typeof Kagane & KaganeImplementation;
+  const labels = [
+    ["current_books_min", "Minimum chapters"], ["current_books_max", "Maximum chapters"],
+    ["start_year_min", "Earliest start year"], ["start_year_max", "Latest start year"],
+  ];
+  const fields = await source.getSearchFilters();
+  for (const [id, title] of labels) {
+    const field = fields.find((entry) => entry.id === id);
+    expect(field?.type, `${id} native text input`).to.equal("input");
+    expect(field?.title).to.equal(title);
+    if (field?.type === "input") {
+      expect(field.value).to.equal("");
+      if (id.startsWith("current_books")) expect(field.placeholder).to.match(/uploaded.*entries.*not highest chapter number/i);
+    }
+  }
+  const raw = JSON.parse(Application.arrayBufferToUTF8String(capture[1]));
+  const schedule = Application.scheduleRequest;
+  const requests: Request[] = [];
+  let replay = { ...raw, last: true };
+  Application.scheduleRequest = async (request) => {
+    requests.push(request);
+    if (!request.url.includes("/api/v2/search/series")) throw new Error("Range probe unexpectedly requested provider metadata");
+    return [capture[0], new TextEncoder().encode(JSON.stringify(replay)).buffer as ArrayBuffer];
+  };
+  const search = (values: unknown, page = 1) => source.getSearchResults({ title: "  preserved query  ", metadata: values as SearchFilterValue[] }, { page }, { id: "updated_at,desc", label: "Latest" });
+  const base = [{ id: "formats", value: { Manga: "included" } }, { id: "statuses", value: { Ongoing: "included" } }];
+  try {
+    await search(base);
+    const baseline = JSON.parse(requests.at(-1)!.body as string);
+    const cases: Array<[Record<string, string>, Record<string, unknown>]> = [
+      [{ current_books_min: " 100 " }, { current_books: { min: 100 } }],
+      [{ current_books_max: "20" }, { current_books: { max: 20 } }],
+      [{ current_books_min: "0", current_books_max: "0" }, { current_books: { min: 0, max: 0 } }],
+      [{ current_books_max: "2147483647" }, { current_books: { max: 2147483647 } }],
+      [{ start_year_min: "2020", start_year_max: "2022" }, { start_year: { min: 2020, max: 2022 } }],
+      [{ start_year_min: "1", start_year_max: "9999" }, { start_year: { min: 1, max: 9999 } }],
+      [{ start_year_max: "2020" }, { start_year: { max: 2020 } }],
+      [{ start_year_min: "2020", start_year_max: "2020" }, { start_year: { min: 2020, max: 2020 } }],
+      [{ current_books_min: "  ", current_books_max: "", start_year_min: "", start_year_max: "\t" }, {}],
+      [{ current_books_min: "100", start_year_min: "2020" }, { current_books: { min: 100 }, start_year: { min: 2020 } }],
+    ];
+    for (const [values, expected] of cases) {
+      const metadata = [...base, ...Object.entries(values).map(([id, value]) => ({ id, value }))];
+      await search(metadata, 2);
+      const request = requests.at(-1)!, url = new globalThis.URL(request.url);
+      expect(JSON.parse(request.body as string)).to.deep.equal({ ...expected, ...baseline });
+      expect(url.pathname).to.equal("/api/v2/search/series");
+      expect(url.searchParams.get("page")).to.equal("1");
+      expect(url.searchParams.get("sort")).to.equal("updated_at,desc");
+      expect(request.method).to.equal("POST");
+    }
+    // Changed bounds must produce a new body, never a stale prior result/session.
+    await search([{ id: "current_books_min", value: "10" }]);
+    const firstBody = requests.at(-1)!.body;
+    await search([{ id: "current_books_min", value: "11" }]);
+    expect(requests.at(-1)!.body).not.to.equal(firstBody);
+    // The native continuation keeps the same range and server page progression.
+    replay = { ...raw, last: false };
+    const query = [{ id: "current_books_min", value: "0" }];
+    const first = await search(query);
+    expect(first.metadata).to.deep.equal({ page: 2 });
+    const continuationBody = requests.at(-1)!.body;
+    replay = { ...raw, last: true };
+    const second = await search(query, (first.metadata as { page: number } | undefined)?.page);
+    expect(second.metadata).to.equal(undefined);
+    expect(requests.at(-1)!.body).to.equal(continuationBody);
+    expect(new globalThis.URL(requests.at(-1)!.url).searchParams.get("page")).to.equal("1");
+    const invalid: unknown[] = [null, 1, 0, true, false, {}, [], ["1"], NaN, Infinity, undefined,
+      "-1", "+1", "1.5", "1e2", "Infinity", "NaN", "1 0", "1,000", "0x10", "１２", "9007199254740992", "2147483648"];
+    for (const value of invalid) {
+      for (const home of [false, true]) {
+        const metadata = [{ id: "current_books_min", value }, { id: "tags_text", value: "requires taxonomy" }, ...(home ? [{ id: HOME_SECTION_METADATA_ID, value: "avg_views_today,desc" }] : [])];
+        const before = requests.length;
+        let error: unknown;
+        try { await search(metadata); } catch (caught) { error = caught; }
+        expect(String(error)).to.match(/Invalid Kagane numeric range/);
+        expect(requests.length, "invalid range rejected before every HTTP request").to.equal(before);
+      }
+    }
+    for (const metadata of [
+      [{ id: "start_year_min", value: "0" }], [{ id: "start_year_max", value: "10000" }],
+      [{ id: "current_books_min", value: "2" }, { id: "current_books_max", value: "1" }],
+      [{ id: "start_year_min", value: "2022" }, { id: "start_year_max", value: "2020" }],
+      [{ id: "current_books_min", value: "1" }, { id: "current_books_min", value: "2" }],
+      [{ id: "start_year_max", value: "" }, { id: "start_year_max", value: {} }],
+    ]) {
+      const before = requests.length;
+      let error: unknown;
+      try { await search(metadata); } catch (caught) { error = caught; }
+      expect(String(error)).to.match(/Invalid Kagane numeric range/);
+      expect(requests.length).to.equal(before);
+    }
+    const home = [{ id: HOME_SECTION_METADATA_ID, value: "avg_views_today,desc" }, { id: "current_books_min", value: "100" }, { id: "start_year_max", value: "2020" }];
+    await search(home);
+    const homeBody = JSON.parse(requests.at(-1)!.body as string);
+    expect(homeBody.current_books).to.equal(undefined);
+    expect(homeBody.start_year).to.equal(undefined);
+    expect(homeBody.title).to.equal(undefined);
+    expect(new globalThis.URL(requests.at(-1)!.url).searchParams.get("sort")).to.equal("avg_views_today,desc");
+    const homeForm = source.getAdvancedSearchForm({ title: "", metadata: home });
+    expect(homeForm.getSearchQueryMetadata()).to.deep.equal(home);
+  } finally {
+    Application.scheduleRequest = schedule;
+  }
+}
+
+// Inspect only bulk rows consumed by these native searches, with no detail lookups.
+export async function assertKaganeLiveNumericRanges() {
+  const source = Kagane as typeof Kagane & KaganeImplementation;
+  const cases: Array<Record<string, { min?: number; max?: number }>> = [
+    { current_books: { min: 100 } }, { current_books: { max: 20 } },
+    { start_year: { min: 2020, max: 2022 } },
+    { current_books: { min: 100 }, start_year: { min: 2020, max: 2022 } },
+  ];
+  let rangeRequests = 0;
+  for (const ranges of cases) {
+    const metadata = Object.entries(ranges).flatMap(([field, range]) => Object.entries(range).map(([side, value]) => ({ id: `${field}_${side}`, value: String(value) })));
+    const schedule = Application.scheduleRequest;
+    const rows = new Map<string, Record<string, unknown>>();
+    Application.scheduleRequest = async (request) => {
+      if (request.url.includes("/api/v2/search/series")) {
+        if (rangeRequests >= 6) throw new Error("Numeric-range checks exceeded their six-search provider budget");
+        rangeRequests += 1;
+      }
+      const result = await schedule(request);
+      if (request.url.includes("/api/v2/search/series")) {
+        expect(JSON.parse(request.body as string)).to.include.all.keys(Object.keys(ranges));
+        const body = JSON.parse(request.body as string);
+        for (const [field, range] of Object.entries(ranges)) expect(body[field]).to.deep.equal(range);
+        const raw = JSON.parse(Application.arrayBufferToUTF8String(result[1]));
+        for (const row of raw.content) rows.set(row.series_id, row);
+      }
+      return result;
+    };
+    try {
+      const assertRows = (items: SearchResultItem[]) => {
+        for (const item of items) {
+          const row = rows.get(item.mangaId);
+          expect(row, "canonical result from consumed bulk response").not.to.equal(undefined);
+          for (const [field, range] of Object.entries(ranges)) {
+            const value = row?.[field];
+            expect(typeof value === "number" && Number.isSafeInteger(value), `${field} must be actual integer metadata, not null/missing`).to.equal(true);
+            if (typeof value !== "number") throw new Error(`Missing constrained Kagane ${field}`);
+            if (range.min !== undefined) expect(value).to.be.at.least(range.min);
+            if (range.max !== undefined) expect(value).to.be.at.most(range.max);
+          }
+        }
+      };
+      const query = { title: "", metadata };
+      const result = await source.getSearchResults(query);
+      expect(result.items.length, "nonempty live range sample").to.be.greaterThan(0);
+      assertRows(result.items);
+      if (Object.keys(ranges).length === 2 && result.metadata) {
+        const next = await source.getSearchResults(query, result.metadata as { page?: number });
+        assertRows(next.items);
+      }
+    } finally {
+      Application.scheduleRequest = schedule;
+    }
+  }
+}
+
 export async function runTests(logger: TestLogger) {
   const suite = new TestSuite("Kagane tests", logger);
   const probe = new Probe("kagane-language-probe");
@@ -404,6 +568,14 @@ export async function runTests(logger: TestLogger) {
     const search = [...probe.captures].find(([url]) => url.includes("/api/v2/search/series"))?.[1];
     if (!tags || !search) throw new Error("No actual Kagane taxonomy/search response seeds");
     await assertKaganeTagFilters(JSON.parse(Application.arrayBufferToUTF8String(tags[1])), search);
+  });
+  suite.test("Native optional ranges serialize exactly, isolate continuation and reject malformed values before HTTP", async () => {
+    const search = [...probe.captures].find(([url]) => url.includes("/api/v2/search/series"))?.[1];
+    if (!search) throw new Error("No actual Kagane search response for closed native range probes");
+    await assertKaganeNumericRanges(search);
+  });
+  suite.test("Live chapter-count and start-year bounds match consumed bulk rows", async () => {
+    await assertKaganeLiveNumericRanges();
   });
   suite.test(
     "Current live series translation and unknown language preserve native chapter identity",
