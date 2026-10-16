@@ -4,6 +4,7 @@ import {
   implementsSearchResultsProviding,
   SourceIntents,
   type Chapter,
+  type ChapterDetails,
   type ChapterProviding,
   type DiscoverSectionProviding,
   type Extension,
@@ -18,6 +19,7 @@ import {
 } from "@paperback/types";
 
 import { expect } from "chai";
+import * as cheerio from "cheerio";
 
 // Types for test cases and results
 export type TestCase = {
@@ -280,6 +282,31 @@ export const registerDefaultMangaProvidingSourceTests = function (
   }
 };
 
+// HTML is an explicit SDK reader variant, never a fallback for missing comic pages.
+export const assertChapterDetails = (details: ChapterDetails, chapter: Chapter): void => {
+  expect(details).to.not.be.undefined;
+  expect(details.id).to.equal(chapter.chapterId);
+  expect(details.mangaId).to.equal(chapter.sourceManga.mangaId);
+  if (chapter.sourceManga.mangaInfo.contentType === "novel") expect(details.type).to.equal("html");
+  if (details.type === "html") {
+    expect(chapter.sourceManga.mangaInfo.contentType).to.equal("novel");
+    expect(details.html).to.be.a("string").and.not.be.empty;
+    const $ = cheerio.load(details.html);
+    $("script,style,template,[hidden],[aria-hidden='true']").remove();
+    $("[style]").each((_, element) => {
+      if (/(?:display\s*:\s*none|visibility\s*:\s*hidden)(?:\s*!important)?\s*(?:;|$)/i.test($(element).attr("style") ?? ""))
+        $(element).remove();
+    });
+    expect($("body").text().trim().length > 0, "HTML reader contains visible body text").to.equal(true);
+  } else {
+    if (!("pages" in details)) throw new Error("Expected manga chapter page URLs");
+    expect(details.pages).to.be.an("array").and.not.be.empty;
+    for (const page of details.pages) {
+      expect(page).to.match(/^https:\/\//);
+    }
+  }
+};
+
 export const registerDefaultChapterProvidingSourceTests = function (
   suite: TestSuite,
   extension: Extension & ChapterProviding,
@@ -337,14 +364,7 @@ export const registerDefaultChapterProvidingSourceTests = function (
       }
 
       const chapterDetails = await extension.getChapterDetails(...params);
-      expect(chapterDetails).to.not.be.undefined;
-      expect(chapterDetails.id).to.equal(params[0].chapterId);
-      expect(chapterDetails.mangaId).to.equal(params[0].sourceManga.mangaId);
-      if (!("pages" in chapterDetails)) throw new Error("Expected manga chapter page URLs");
-      expect(chapterDetails.pages).to.be.an("array").and.not.be.empty;
-      for (const page of chapterDetails.pages) {
-        expect(page).to.match(/^https:\/\//);
-      }
+      assertChapterDetails(chapterDetails, params[0]);
 
       suite.state[STATE_KEY.ChapterProviding.getChapterDetails] = chapterDetails;
     });
