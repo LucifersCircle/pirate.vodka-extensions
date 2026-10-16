@@ -61,7 +61,7 @@ export const imageURL = (url: string, id: string, chapter?: string): string => {
   const p = sourceURL(url);
   if (p.query || !/\.(?:jpe?g|png|webp|avif)$/i.test(p.pathname))
     throw new Error("Invalid MangaStash image URL.");
-  if (chapter) {
+  if (chapter !== undefined) {
     chapterURL(chapter, id);
     if (
       !new RegExp(
@@ -72,6 +72,9 @@ export const imageURL = (url: string, id: string, chapter?: string): string => {
       throw new Error("Wrong MangaStash reader image owner.");
   } else if (
     !new RegExp(`^/content/covers/(?:thumbnails/)?${id}\\.(?:jpe?g|png|webp|avif)$`, "i").test(
+      p.pathname,
+    ) &&
+    !new RegExp(`^/content/${id}/chapter-\\d+(?:\\.\\d+)?/[a-zA-Z0-9_-]+\\.[a-zA-Z]+$`).test(
       p.pathname,
     )
   )
