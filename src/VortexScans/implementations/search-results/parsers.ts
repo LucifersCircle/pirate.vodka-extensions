@@ -122,13 +122,20 @@ export function parseSearchResults(data: VortexQueryResponse): SearchResultItem[
     )
     .map((post) => {
       const mangaId = buildMangaId(post.id, post.slug);
-      const latestChapter = post.chapters?.[0];
+      const latestNumber = post.chapters?.[0]?.number;
+      const count = post._count?.chapters;
+      const subtitle =
+        typeof count === "number" && Number.isSafeInteger(count) && count >= 0
+          ? `${count} Chapters`
+          : latestNumber != null
+            ? `Ch. ${latestNumber}`
+            : undefined;
 
       return {
         mangaId,
         title: Application.decodeHTMLEntities(post.postTitle),
         imageUrl: post.featuredImage || "",
-        subtitle: `${latestChapter?.number ?? post._count?.chapters ?? 0} Chapters`,
+        subtitle,
         contentRating: contentRating(mangaId),
       };
     });

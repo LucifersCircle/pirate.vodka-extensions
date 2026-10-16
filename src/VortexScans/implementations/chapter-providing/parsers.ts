@@ -24,7 +24,7 @@ export function parseChapterList(
   return unlocked.map((ch, index) => ({
     chapterId: ch.slug,
     sourceManga,
-    title: "",
+    title: chapterSubtitle(ch.title, ch.number),
     chapNum: ch.number,
     volume: 0,
     volumetitle: "",
@@ -32,6 +32,17 @@ export function parseChapterList(
     sortingIndex: index,
     publishDate: new Date(ch.createdAt),
   }));
+}
+
+// The native chapter number is rendered separately. Only remove an exact,
+// complete matching prefix; "Chapter 1 Remake" is genuine text for chapter 1.5.
+function chapterSubtitle(value: string | undefined, number: number): string {
+  const title = Application.decodeHTMLEntities(value ?? "").trim();
+  const prefix = /^(?:(?:chapter|ch\.?)\s*)?(\d+(?:\.\d+)?)(?=$|[\s:])/i.exec(title);
+  if (!prefix || Number(prefix[1]) !== number) return title;
+  const rest = title.slice(prefix[0].length);
+  // Remove one clear separator, never punctuation belonging to the subtitle.
+  return rest.replace(/^\s*:\s*|^\s+[-–—]\s+/, "").trim();
 }
 
 function normalizeUrl(url: string): string {
