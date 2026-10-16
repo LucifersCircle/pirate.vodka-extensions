@@ -325,6 +325,7 @@ class ManhwaNexExtension implements ExtensionImpl<typeof Config> {
     );
   }
   async getAdvancedSearchForm(query: SearchQuery<Metadata>) {
+    readFilters(query.metadata);
     const saved = this.saved();
     return new ManhwaNexSearchForm(
       query,
