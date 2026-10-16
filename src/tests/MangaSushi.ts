@@ -6,6 +6,8 @@ import {
   DiscoverSectionType,
   PaperbackInterceptor,
   type GenresCarouselItem,
+  type Metadata,
+  type SortingOption,
   type Chapter,
   type Request,
   type Response,
@@ -431,6 +433,42 @@ export async function runTests(logger: TestLogger) {
     const result = await MangaSushi.getSearchResults({ title: "qzxzqzxzznomatch887771" });
     expect(result.items).to.deep.equal([]);
     expect(result.metadata).to.equal(undefined);
+  });
+  suite.test("advanced search: malformed saved constraints fail before native requests", async () => {
+    const invalid: Metadata[] = [
+      "action", [], false, { genres: "action" }, { genres: ["action", null] },
+      { genres: ["invalid/genre"] }, { statuses: "end" }, { statuses: ["retired-status"] },
+      { condition: "or" }, { adult: 0 }, { author: 1 }, { artist: [] }, { release: 2026 },
+    ];
+    const invalidSorts = [{}, { id: null }, { id: 1 }, { id: "unknown" }] as unknown as SortingOption[];
+    const schedule = Application.scheduleRequest;
+    let requests = 0;
+    Application.scheduleRequest = async () => {
+      requests++;
+      throw new Error("Invalid saved constraints reached the native scheduler.");
+    };
+    try {
+      for (const exclude of [true, false]) {
+        await settings.setExcludeNSFW(exclude);
+        for (const metadata of invalid) {
+          const query = { title: "Saved filter proof", metadata };
+          await rejects(() => MangaSushi.getSearchResults(query), /Mangasushi saved .* filter is invalid/);
+          await rejects(() => MangaSushi.getAdvancedSearchForm(query), /Mangasushi saved .* filter is invalid/);
+        }
+        for (const sort of invalidSorts)
+          await rejects(() => MangaSushi.getSearchResults({ title: "" }, undefined, sort), /saved sort is invalid/);
+        for (const metadata of [undefined, null, {}, { genres: [], statuses: [], condition: "", adult: "" }])
+          expect(searchUrl({ title: "", metadata }, exclude)).to.equal(searchUrl({ title: "" }, exclude));
+        for (const sort of SORTS)
+          expect(searchUrl({ title: "", metadata: { genres: ["action"], statuses: ["end"] } }, exclude, sort))
+            .to.include(`m_orderby=${sort.id}&genre%5B0%5D=action`)
+            .and.to.include("status%5B0%5D=end");
+      }
+      expect(requests).to.equal(0);
+    } finally {
+      Application.scheduleRequest = schedule;
+      await settings.reset();
+    }
   });
   suite.test("advanced search: actual taxonomy and native options", async () => {
     const html = await fetchText(searchUrl({ title: "" }, true));

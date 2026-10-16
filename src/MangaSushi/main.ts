@@ -595,6 +595,7 @@ class MangaSushiExtension implements ExtensionImpl<typeof Config> {
   async getAdvancedSearchForm(query: SearchQuery<Metadata>) {
     const id = readGenreRoute(query.metadata);
     if (id) return new MangaSushiGenreForm(id);
+    readFilters(query.metadata);
     return new MangaSushiSearchForm(
       query,
       parseGenreOptions(await fetchText(searchUrl({ title: "" }, true))),
