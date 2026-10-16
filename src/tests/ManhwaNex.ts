@@ -59,13 +59,16 @@ export async function runTests(logger: TestLogger) {
     expect((await ManhwaNex.getSettingsForm()).getSections()).not.to.be.empty;
   });
   suite.test("discovery: exact native section names and order", async () => {
-    home = await fetchText(`${BASE_URL}/`);
     await settings.setExcludeNSFW(true); probe.requests.length = 0;
-    const categories = parseHomeCategories(home), sections = await ManhwaNex.getDiscoverSections();
+    const sections = await ManhwaNex.getDiscoverSections();
+    home = probe.responses.get(`${BASE_URL}/`)!;
+    const categories = parseHomeCategories(home), popular = ids(parseCatalog(home, "popular").items), latest = ids(parseCatalog(home, "latest").items);
+    const repeatsLatest = popular.length > 0 && popular.every((id, index) => id === latest[index]);
+    const expectedRows = SECTIONS.filter((section) => section.id !== "popular" || !repeatsLatest);
     expect(categories.map((category) => category.title)).to.deep.equal(["Action", "Romance", "Fantasy", "Martial Arts", "Adventure", "Ghost", "Cultivation", "System"]);
-    expect(sections.map((section) => section.title)).to.deep.equal(["Popular Series", "Latest Updates", ...categories.map((category) => category.title)]);
-    expect(sections.slice(0, 2)).to.deep.equal(SECTIONS);
-    expect(sections.slice(2).map((section) => section.id)).to.deep.equal(categories.map((category) => category.id));
+    expect(sections.map((section) => section.title)).to.deep.equal([...expectedRows.map((section) => section.title), ...categories.map((category) => category.title)]);
+    expect(sections.filter((section) => !section.id.startsWith("genre:"))).to.deep.equal(expectedRows);
+    expect(sections.filter((section) => section.id.startsWith("genre:")).map((section) => section.id)).to.deep.equal(categories.map((category) => category.id));
     expect(probe.requests.map((request) => request.url)).to.deep.equal([`${BASE_URL}/`]);
     await ManhwaNex.getDiscoverSections(); expect(probe.requests).to.have.length(1);
     expect(parseCatalog(home, "popular").items).not.to.be.empty;
