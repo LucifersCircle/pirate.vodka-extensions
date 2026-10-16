@@ -478,6 +478,52 @@ export async function runTests(logger: TestLogger) {
       firstPagePath: readerPageDiagnostic(pages[0]).path, lastPagePath: readerPageDiagnostic(pages.at(-1)).path,
       literalSlashAliases });
     expect(new Set(comparablePages).size, "no source pages collapse into duplicates").to.equal(pages.length);
+    // Observe the consumed HTML before the unchanged equality can fail. These
+    // indices refer only to the validated API manifest, never inferred filenames.
+    const apiIndex = (url: string | undefined): number => {
+      try { return url === undefined ? -1 : comparablePages.indexOf(comparableReaderPage(url)); }
+      catch { return -1; }
+    };
+    const advertisedIndex = (value: string | undefined) => value === undefined ? undefined :
+      /^\d{1,6}$/.test(value) && Number(value) < 2000 ? Number(value) : "[redacted]";
+    const domImages = $("img").toArray().map((element, position) => ({
+      position, hasSrc: $(element).attr("src") !== undefined,
+      apiIndex: apiIndex($(element).attr("src")), exact: pages.includes($(element).attr("src") ?? ""),
+      hidden: $(element).closest("[hidden]").length > 0,
+      ariaHidden: $(element).closest('[aria-hidden="true"]').length > 0,
+      // Structural positions only: no IDs, classes, arbitrary tag names or URLs.
+      path: $(element).parents().toArray().reverse().concat(element).slice(-8).map((node) =>
+        `${/^(html|head|body|main|section|div|picture|img|astro-island)$/.test(node.name) ? node.name : "element"}[${$(node).index()}]`).join(">"),
+      advertisedIndex: advertisedIndex($(element).attr("data-image-index")),
+      nearestAdvertisedIndex: advertisedIndex($(element).closest("[data-image-index]").attr("data-image-index")),
+    }));
+    const domReaderApiIndices = domImages.filter((image) => image.apiIndex >= 0).map((image) => image.apiIndex);
+    const indexedElements = $("[data-image-index]").toArray().map((element, position) => ({
+      position, advertisedIndex: advertisedIndex($(element).attr("data-image-index")),
+      imagePositions: $(element).find("img").addBack("img").toArray().map((image) => $("img").index(image)),
+    }));
+    // Independently inspect the existing fallback's raw URL scan input, before
+    // grouping/sorting. Do not call the production parser or treat this as oracle.
+    const documentMatches = Array.from(response!.body.matchAll(/https?:\/\/[^"'\\\s]+\/(?:public\/)?upload\/series\/[^"'\\\s]+?\.(?:webp|jpe?g|png)(?:\?[^"'\\\s]*)?/gi));
+    const documentApiIndices = documentMatches.map(([url]) => apiIndex(url));
+    const documentFirstReaderApiIndices = [...new Set(documentApiIndices.filter((index) => index >= 0))];
+    evidence.log("readerHtmlOrder", {
+      domImages, domReaderApiIndices, domReaderCount: domReaderApiIndices.length,
+      domComplete: domReaderApiIndices.length === pages.length && new Set(domReaderApiIndices).size === pages.length,
+      indexedElements,
+      documentScan: { rawCandidateCount: documentMatches.length, candidateApiIndices: documentApiIndices,
+        completeTokens: documentMatches.map((match) => {
+          const next = response!.body[match.index + match[0].length];
+          return next === undefined || /["'\s<>]/.test(next);
+        }),
+        exactCandidateCount: documentMatches.filter(([url], index) => documentApiIndices[index] >= 0 && url === pages[documentApiIndices[index]]).length,
+        literalSlashAliasCandidateCount: documentMatches.filter(([url], index) => documentApiIndices[index] >= 0 && url !== pages[documentApiIndices[index]]).length,
+        unmatchedCandidateCount: documentApiIndices.filter((index) => index < 0).length,
+        firstReaderApiIndices: documentFirstReaderApiIndices,
+        readerCandidateCount: documentFirstReaderApiIndices.length,
+        coversAllApiPages: documentFirstReaderApiIndices.length === pages.length },
+      nativeApiIndices: reader.pages.map(apiIndex),
+    });
     // Record before Chai truncates array values in String(error). Reuse only the
     // consumed manifests; this log must not fetch or change either page array.
     evidence.log("readerManifestComparison", {
