@@ -28,6 +28,7 @@ import { parseHome } from "../VortexScans/implementations/discover-section/home.
 import { contentSettings, observeContent } from "../VortexScans/implementations/shared/content.js";
 import { VortexSettingsForm } from "../VortexScans/implementations/settings-form/main.js";
 import { buildMangaId } from "../VortexScans/implementations/shared/utils.js";
+import { parseMangaPage } from "../VortexScans/implementations/manga/parsers.js";
 import sourceInfo from "../VortexScans/pbconfig.js";
 
 // Capture actual native callbacks. Mutations below reuse these current responses,
@@ -433,7 +434,41 @@ export async function runTests(logger: TestLogger) {
     } else {
       const responseStart = probe.responses.length;
       evidence.log("input", { mangaId, slug, path: `/series/${slug}` });
-      const source = await extension.getMangaDetails(mangaId);
+      const schedule = Application.scheduleRequest;
+      const errorIdentity = (value: unknown) => {
+        const error = value as { name?: unknown; code?: unknown } | undefined;
+        const names = ["Error", "TypeError", "SyntaxError", "URIError", "FetchError", "SocketError", "TimeoutError", "AbortError"];
+        const codes = ["ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT", "ABORT_ERR"];
+        return { name: typeof error?.name === "string" && names.includes(error.name) ? error.name : "Other",
+          code: typeof error?.code === "string" && codes.includes(error.code) ? error.code : typeof error?.code === "number" && Number.isSafeInteger(error.code) ? error.code : undefined };
+      };
+      const record: typeof Application.scheduleRequest = async (request) => {
+        if (request.url !== `${DOMAIN}/series/${slug}`) return schedule(request);
+        try {
+          const result = await schedule(request);
+          evidence.log("detailsResponse", { status: result[0].status, bytes: result[1].byteLength });
+          if (result[0].status === 200) {
+            try {
+              const post = parseMangaPage(Application.arrayBufferToUTF8String(result[1]), { id: "403", slug });
+              evidence.log("detailsParser", { outcome: post ? "matched" : "empty", idMatches: post?.id === 403, slugMatches: post?.slug === slug });
+            } catch {
+              evidence.log("detailsParser", { outcome: "threw" });
+            }
+          }
+          return result;
+        } catch (error) {
+          evidence.log("detailsError", { ...errorIdentity(error), cause: errorIdentity((error as { cause?: unknown })?.cause) });
+          throw error;
+        }
+      };
+      let source: SourceManga;
+      try {
+        Application.scheduleRequest = record;
+        if (Application.scheduleRequest !== record) throw new Error("Native runtime cannot record403 request diagnostics");
+        source = await extension.getMangaDetails(mangaId);
+      } finally {
+        Application.scheduleRequest = schedule;
+      }
       expect(source.mangaId).to.equal(mangaId);
       expect(source.mangaInfo.additionalInfo?.slug).to.equal(slug);
       expect(source.mangaInfo.shareUrl).to.equal(`${DOMAIN}/series/${slug}`);
