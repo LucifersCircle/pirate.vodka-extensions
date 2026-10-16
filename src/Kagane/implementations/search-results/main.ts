@@ -93,7 +93,11 @@ export class SearchProvider {
     // Discovery owns its body, but malformed injected range inputs must still fail locally.
     readNumericRanges(query.metadata);
     const homeSectionSort = readHomeSectionSort(query.metadata);
-    const selectedSort = homeSectionSort ?? sortingOption?.id ?? "relevance";
+    const selectedSort =
+      homeSectionSort ?? (sortingOption == null ? "relevance" : sortingOption?.id);
+    if (typeof selectedSort !== "string") {
+      throw new Error("Unknown Kagane sort. Choose another sort.");
+    }
     if (/^series_name(?:,|$)/.test(selectedSort)) {
       throw new Error("Kagane no longer supports By Name sorting. Choose another sort.");
     }
@@ -104,7 +108,11 @@ export class SearchProvider {
       throw new Error("Invalid Kagane Books Count sorting direction. Choose another sort.");
     }
     // Migrate saved Books Count choices without changing their selected direction.
-    const sort = selectedSort.replace(/^books_count(?=,(?:asc|desc)$|$)/, "current_books");
+    const legacyCount = /^books_count(?:,(asc|desc))?$/.exec(selectedSort);
+    const sort = legacyCount ? `current_books,${legacyCount[1] ?? "desc"}` : selectedSort;
+    if (!SORTING_OPTIONS.some((option) => option.id === sort)) {
+      throw new Error("Unknown Kagane sort. Choose another sort.");
+    }
     const page = metadata?.page ?? 1;
     const contentRatings = getContentRatingSettings();
     const kaganeMetadata = await getKaganeMetadata();
