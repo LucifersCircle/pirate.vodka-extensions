@@ -22,6 +22,7 @@ import * as cheerio from "cheerio";
 import { Noveli, NoveliExtension } from "../Noveli/main.js";
 import sourceInfo from "../Noveli/pbconfig.js";
 import { NoveliSearchForm } from "../Noveli/forms.js";
+import { assertPublic } from "../Noveli/models.js";
 import { assertChapterDetails, TestSuite } from "./suite.js";
 
 const BASE = "https://noveli.to";
@@ -53,27 +54,78 @@ type RawReader = {
   novel: { id: number; slug: string };
 };
 type Capture = { request: Request; response: Response; body: string };
-// Retain only the responses consumed in this run. Never log or commit prose/API bodies.
+// Diagnostics are a finite summary, never response bodies, arbitrary headers or URLs.
+const responseDiagnostic = (response: Response, data: ArrayBuffer, body: string) => {
+  const header = (name: string) => Object.entries(response.headers).find(([key]) => key.toLowerCase() === name)?.[1];
+  const declaredMime = (header("content-type") ?? response.mimeType ?? "").split(";")[0].trim().toLowerCase();
+  const mime = ["application/json", "text/html", "text/plain", "application/xhtml+xml", "image/jpeg", "image/png", "image/webp", "image/avif"].includes(declaredMime) ? declaredMime : declaredMime ? "other" : "absent";
+  const cfMitigatedChallenge = header("cf-mitigated")?.trim().toLowerCase() === "challenge";
+  let classification: "challenge" | "access-denied" | "json" | "shell" | "unknown" = "unknown";
+  let json: unknown;
+  try { json = JSON.parse(body); classification = "json"; } catch { /* No rejected body enters an error message. */ }
+  const pending: unknown[] = [json];
+  let nativeDenial = false;
+  while (pending.length && !nativeDenial) {
+    const value = pending.pop();
+    if (!value || typeof value !== "object") continue;
+    try { if (!Array.isArray(value)) assertPublic(value as Record<string, unknown>); }
+    catch { nativeDenial = true; }
+    pending.push(...Object.values(value));
+  }
+  const sample = body.slice(0, 32768);
+  if (cfMitigatedChallenge || (classification !== "json" && /(?:\/cdn-cgi\/challenge-platform\/|<title[^>]*>\s*Just a moment(?:\.{3}|…)?\s*<\/title>)/i.test(sample))) classification = "challenge";
+  else if (nativeDenial || /^\s*(?:error code:\s*(?:1010|1020)|access denied|forbidden|unauthorized)\s*[.!]?\s*$/i.test(body) || (classification !== "json" && /<title[^>]*>\s*(?:Access denied|Forbidden|Unauthorized)(?:\s*[|:-][^<]*)?\s*<\/title>/i.test(sample)) ||
+      (json && typeof json === "object" && !Array.isArray(json) && (json as Record<string, unknown>).success !== true &&
+        ["message", "error"].some((key) => typeof (json as Record<string, unknown>)[key] === "string" && /^(?:access denied|forbidden|unauthorized)(?:[.!:\s]|$)/i.test(((json as Record<string, unknown>)[key] as string).trim())))) classification = "access-denied";
+  else if (classification !== "json" && /<!doctype\s+html|<html\b|<body\b|<div\b[^>]*\bid=["'](?:root|app)["']/i.test(sample)) classification = "shell";
+  let bodyMD5: string | undefined;
+  try { const hash = Application.crypto_md5Hash(data); if (/^[a-f0-9]{32}$/i.test(hash)) bodyMD5 = hash; } catch { /* Hashing is optional diagnostic evidence. */ }
+  return { status: Number.isInteger(response.status) && response.status >= 100 && response.status <= 599 ? response.status : null,
+    mime, cfMitigatedChallenge, cfRayPresent: header("cf-ray") !== undefined, serverCloudflare: header("server")?.trim().toLowerCase() === "cloudflare",
+    classification, byteLength: data.byteLength, ...(bodyMD5 ? { bodyMD5 } : {}) };
+};
+// Observe the same native response before production rejects it. Only successful JSON
+// can become a later test oracle; rejected body snippets must never reach JSON errors.
 class Probe extends PaperbackInterceptor {
+  private accessStopped = false;
+  constructor(id: string, private logger: TestLogger) { super(id); }
   readonly requests: Request[] = [];
   readonly responses: Capture[] = [];
+  requireAccess(): void {
+    if (this.accessStopped) throw new Error("Noveli diagnostic access stopped after the first access failure; prerequisite unavailable.");
+  }
   override async interceptRequest(request: Request): Promise<Request> {
-    if (request.url.startsWith(`${BASE}/`)) this.requests.push(request);
+    if (request.url.startsWith(`${BASE}/`)) {
+      this.requireAccess();
+      this.requests.push(request);
+    }
     return request;
   }
   override async interceptResponse(request: Request, response: Response, data: ArrayBuffer): Promise<ArrayBuffer> {
-    if (request.url.startsWith(`${BASE}/api/`))
-      this.responses.push({ request, response, body: Application.arrayBufferToUTF8String(data) });
+    if (request.url.startsWith(`${BASE}/`)) {
+      let body = "";
+      if (request.url.startsWith(`${BASE}/api/`) || response.status !== 200) {
+        try { body = Application.arrayBufferToUTF8String(data); } catch { /* Binary/undecodable failures remain unknown. */ }
+      }
+      const diagnostic = responseDiagnostic(response, data, body);
+      if (response.status === 401 || response.status === 403 || diagnostic.classification === "challenge" || diagnostic.classification === "access-denied") this.accessStopped = true;
+      this.logger.list("nativeResponseDiagnostics").scope("response").log("evidence", { ...diagnostic, accessStopped: this.accessStopped });
+      if (request.url.startsWith(`${BASE}/api/`) && response.status === 200 && diagnostic.classification === "json")
+        this.responses.push({ request, response, body });
+    }
     return data;
   }
   find(path: string): Capture {
     const capture = this.responses.find(({ request }) => new globalThis.URL(request.url).pathname === path);
-    if (!capture) throw new Error(`Missing same-run native response for ${path}`);
+    if (!capture) throw new Error("Unmet Noveli prerequisite: successful native response unavailable.");
     return capture;
   }
 }
 const buffer = (value: unknown): ArrayBuffer => new TextEncoder().encode(JSON.stringify(value)).buffer as ArrayBuffer;
-const raw = <T>(capture: Capture): T => JSON.parse(capture.body) as T;
+const raw = <T>(capture: Capture | undefined): T => {
+  if (!capture) throw new Error("Unmet Noveli prerequisite: successful native response unavailable.");
+  return JSON.parse(capture.body) as T;
+};
 const cards = (items: (DiscoverSectionItem | SearchResultItem)[]) => items.map((item) => {
   if (!("mangaId" in item)) throw new Error("Expected a native novel card");
   return { mangaId: item.mangaId, title: item.title, imageUrl: item.imageUrl };
@@ -137,7 +189,12 @@ function assertReader(reader: ChapterDetails, chapter: Chapter, payload: RawRead
 
 export async function runTests(logger: TestLogger) {
   const suite = new TestSuite("Noveli tests", logger);
-  const probe = new Probe("Noveli.native-test-evidence");
+  const probe = new Probe("Noveli.native-test-evidence", logger);
+  // A stopped prerequisite remains a failed test, never a skip or a fake pass.
+  const test = (name: string, operation: () => Promise<void>) => suite.test(name, async () => {
+    probe.requireAccess();
+    await operation();
+  });
   let source: SourceManga;
   let chapters: Chapter[];
   let catalog: Awaited<ReturnType<typeof Noveli.getSearchResults>>;
@@ -162,20 +219,24 @@ export async function runTests(logger: TestLogger) {
       // Fresh mutation instances do not initialise, but restore the real singleton
       // registrations explicitly before any later native media/discovery callbacks.
       await Noveli.initialise();
+      probe.registerInterceptor();
     }
   };
 
-  suite.test("initialisation: pinned native capabilities and metadata", async () => {
+  test("initialisation: pinned native capabilities and metadata", async () => {
     await Noveli.initialise();
+    // alpha.92 invokes response interceptors in reverse registration order.
+    // Register last to observe, not alter, the same response before source rejection.
+    probe.registerInterceptor();
     expect(sourceInfo.name).to.equal("Noveli");
     expect(sourceInfo.capabilities).to.include(SourceIntents.CHAPTER_PROVIDING);
     expect(sourceInfo.capabilities).to.include(SourceIntents.SEARCH_RESULT_PROVIDING);
     expect(sourceInfo.capabilities).to.include(SourceIntents.DISCOVER_SECTION_PROVIDING);
   });
-  suite.test("getSortingOptions: all six source-supported sorts", async () => {
+  test("getSortingOptions: all six source-supported sorts", async () => {
     expect((await Noveli.getSortingOptions({ title: "" })).map((sort) => sort.id)).to.deep.equal(SORT_IDS);
   });
-  suite.test("home: six real rows, exact consumed membership and bounded requests", async () => {
+  test("home: six real rows, exact consumed membership and bounded requests", async () => {
     const sections = await Noveli.getDiscoverSections();
     expect(sections.map((section) => [section.id, section.title])).to.deep.equal(HOME);
     const start = probe.requests.length;
@@ -197,7 +258,7 @@ export async function runTests(logger: TestLogger) {
     }
     expect(probe.requests.length, "Warm home and every native first-page representation reuse both responses").to.equal(warm);
   });
-  suite.test("getSearchResults: native first pages, exact next-page order and terminal keyword search", async () => {
+  test("getSearchResults: native first pages, exact next-page order and terminal keyword search", async () => {
     catalog = await Noveli.getSearchResults({ title: "" });
     const warm = probe.requests.length;
     for (const metadata of [null, {}, Object.create(null)] as Metadata[])
@@ -217,7 +278,7 @@ export async function runTests(logger: TestLogger) {
     expect(keyword.items.some((item) => item.mangaId === SAMPLE)).to.equal(true);
     expect(keyword.metadata).to.equal(undefined);
   });
-  suite.test("advanced search: live taxonomy, native selection and reset callbacks", async () => {
+  test("advanced search: live taxonomy, native selection and reset callbacks", async () => {
     const form = await Noveli.getAdvancedSearchForm({ title: TITLE });
     expect(form).to.be.instanceOf(NoveliSearchForm);
     const taxonomy = raw<{ tags: string[] }>(probe.find("/api/novels/tags")).tags;
@@ -244,7 +305,7 @@ export async function runTests(logger: TestLogger) {
     await form.reset();
     expect(form.getSearchQueryMetadata()).to.deep.equal({ genres: [], status: "" });
   });
-  suite.test("search routing: keyword, multi-genre, status and all native sorts without extra provider requests", async () => {
+  test("search routing: keyword, multi-genre, status and all native sorts without extra provider requests", async () => {
     const schedule = Application.scheduleRequest;
     const requests: Request[] = [];
     try {
@@ -270,7 +331,7 @@ export async function runTests(logger: TestLogger) {
       expect(requests).to.have.length(SORT_IDS.length);
     } finally { Application.scheduleRequest = schedule; }
   });
-  suite.test("getMangaDetails: canonical native novel metadata and original cover bytes", async () => {
+  test("getMangaDetails: canonical native novel metadata and original cover bytes", async () => {
     source = await Noveli.getMangaDetails(SAMPLE);
     const detail = raw<{ data: RawNovel }>(probe.find(`/api/novels/${SAMPLE}`)).data;
     expect(source.mangaId).to.equal(SAMPLE);
@@ -296,7 +357,7 @@ export async function runTests(logger: TestLogger) {
     expect(source.mangaInfo.contentRating).not.to.equal(ContentRating.EVERYONE);
     await assertCoverBytes(source.mangaInfo.thumbnailUrl);
   });
-  suite.test("getChapters: complete source order, stable IDs and no invented dates or volumes", async () => {
+  test("getChapters: complete source order, stable IDs and no invented dates or volumes", async () => {
     const saved = JSON.parse(JSON.stringify(source)) as SourceManga;
     chapters = await Noveli.getChapters(saved);
     const detail = raw<{ data: RawNovel }>(probe.find(`/api/novels/${SAMPLE}`)).data;
@@ -316,7 +377,7 @@ export async function runTests(logger: TestLogger) {
       expect(chapter.volume).to.equal(0);
     });
   });
-  suite.test("getChapterDetails: actual first and last HTML readers preserve paragraphs, credits and hidden records", async () => {
+  test("getChapterDetails: actual first and last HTML readers preserve paragraphs, credits and hidden records", async () => {
     for (const chapter of new Set([chapters[0], chapters[chapters.length - 1]])) {
       const saved = JSON.parse(JSON.stringify(chapter)) as Chapter;
       const reader = await Noveli.getChapterDetails(saved);
@@ -326,7 +387,7 @@ export async function runTests(logger: TestLogger) {
     }
     logger.log("readerProof", { mangaId: SAMPLE, chapterCount: chapters.length, firstChapterId: chapters[0].chapterId, lastChapterId: chapters[chapters.length - 1].chapterId, nativeType: "html" });
   });
-  suite.test("shared runner: HTML requires novel content; comic image validation stays strict", async () => {
+  test("shared runner: HTML requires novel content; comic image validation stays strict", async () => {
     const chapter = chapters[0];
     assertChapterDetails(firstReader, chapter);
     for (const contentType of [undefined, "comic"] as const) {
@@ -346,7 +407,7 @@ export async function runTests(logger: TestLogger) {
         ...chapter, sourceManga: { ...source, mangaInfo: { ...source.mangaInfo, contentType } },
       })).to.throw();
   });
-  suite.test("continuations and identities: malformed native inputs fail before network", async () => {
+  test("continuations and identities: malformed native inputs fail before network", async () => {
     const schedule = Application.scheduleRequest;
     let calls = 0;
     try {
@@ -368,7 +429,7 @@ export async function runTests(logger: TestLogger) {
       expect(calls).to.equal(0);
     } finally { Application.scheduleRequest = schedule; }
   });
-  suite.test("content: same-ID explicit Adult classification survives sparse ranking metadata", async () => {
+  test("content: same-ID explicit Adult classification survives sparse ranking metadata", async () => {
     const catalogCapture = probe.responses.find(({ request }) => request.url === `${BASE}/api/novels?sort=popular&page=1&limit=36`)!;
     const rankingCapture = probe.find("/api/novels/rankings");
     const catalogData = raw<{ data: RawNovel[] }>(catalogCapture);
@@ -399,7 +460,7 @@ export async function runTests(logger: TestLogger) {
       } finally { Object.defineProperty(Application, "filterAdultTitles", original); }
     });
   });
-  suite.test("pagination: native-filtered pages advance with complete raw IDs or end honestly", async () => {
+  test("pagination: native-filtered pages advance with complete raw IDs or end honestly", async () => {
     const first = probe.responses.find(({ request }) => request.url === `${BASE}/api/novels?sort=popular&page=1&limit=36`)!;
     const second = probe.responses.find(({ request }) => request.url === `${BASE}/api/novels?sort=popular&page=2&limit=36`)!;
     const original = Object.getOwnPropertyDescriptor(Application, "filterAdultTitles")!;
@@ -428,7 +489,7 @@ export async function runTests(logger: TestLogger) {
       });
     } finally { Object.defineProperty(Application, "filterAdultTitles", original); }
   });
-  suite.test("content: independent native Adult and Mature caps use the strongest current novel classification", async () => {
+  test("content: independent native Adult and Mature caps use the strongest current novel classification", async () => {
     const detailCapture = probe.find(`/api/novels/${SAMPLE}`);
     const readerCapture = probe.find(`/api/novels/${SAMPLE}/chapters/${chapters[0].chapterId}`);
     const mature = Object.getOwnPropertyDescriptor(Application, "filterMatureTitles")!;
@@ -453,7 +514,7 @@ export async function runTests(logger: TestLogger) {
       Object.defineProperty(Application, "filterAdultTitles", adult);
     }
   });
-  suite.test("content: native Mature cap blocks restored novel, inventory and reader before prose", async () => {
+  test("content: native Mature cap blocks restored novel, inventory and reader before prose", async () => {
     const original = Object.getOwnPropertyDescriptor(Application, "filterMatureTitles")!;
     try {
       Object.defineProperty(Application, "filterMatureTitles", { ...original, value: true });
@@ -464,7 +525,7 @@ export async function runTests(logger: TestLogger) {
       });
     } finally { Object.defineProperty(Application, "filterMatureTitles", original); }
   });
-  suite.test("metadata: wrong identity, duplicate rows and changed inventory fail closed without network", async () => {
+  test("metadata: wrong identity, duplicate rows and changed inventory fail closed without network", async () => {
     const detailCapture = probe.find(`/api/novels/${SAMPLE}`);
     const detail = raw<{ data: RawNovel }>(detailCapture).data;
     const listCapture = probe.find(`/api/novels/${detail.slug}/chapters`);
@@ -498,7 +559,7 @@ export async function runTests(logger: TestLogger) {
       await rejects(() => cold.getSearchResults({ title: "" }), /Noveli|duplicate|pagination/i);
     });
   });
-  suite.test("metadata: absent optional fields stay absent, malformed fields fail, and ratings use the source scale", async () => {
+  test("metadata: absent optional fields stay absent, malformed fields fail, and ratings use the source scale", async () => {
     const capture = probe.find(`/api/novels/${SAMPLE}`);
     const optional = ["author", "status", "type", "original_language", "description", "associated_names"];
     for (const missing of [null, undefined]) await replay([capture], (payload) => {
@@ -522,7 +583,7 @@ export async function runTests(logger: TestLogger) {
       expect((await cold.getMangaDetails(SAMPLE)).mangaInfo.rating).to.equal(rating === 0 || rating === 5 ? rating / 5 : undefined);
     });
   });
-  suite.test("reader: wrong identities, access failures and malformed payloads fail closed without network", async () => {
+  test("reader: wrong identities, access failures and malformed payloads fail closed without network", async () => {
     const capture = probe.find(`/api/novels/${SAMPLE}/chapters/${chapters[0].chapterId}`);
     const mutateReader: ((payload: RawReader) => void)[] = [
       (payload) => { payload.success = false; },
@@ -546,7 +607,7 @@ export async function runTests(logger: TestLogger) {
         await rejects(() => cold.getChapterDetails(chapters[0]), /Noveli|chapter|identity|paragraph|response/i);
       });
   });
-  suite.test("reader: newly returned Adult warning and an in-flight app policy change cannot release text", async () => {
+  test("reader: newly returned Adult warning and an in-flight app policy change cannot release text", async () => {
     const capture = probe.find(`/api/novels/${SAMPLE}/chapters/${chapters[0].chapterId}`);
     const original = Object.getOwnPropertyDescriptor(Application, "filterAdultTitles")!;
     try {
@@ -560,7 +621,7 @@ export async function runTests(logger: TestLogger) {
       }, async (cold) => { await rejects(() => cold.getChapterDetails(chapters[0]), /filters changed/i); });
     } finally { Object.defineProperty(Application, "filterAdultTitles", original); }
   });
-  suite.test("transport: denied, redirected, non-JSON and malformed responses have no fallback requests", async () => {
+  test("transport: denied, redirected, non-JSON and malformed responses have no fallback requests", async () => {
     const capture = probe.find(`/api/novels/${SAMPLE}`);
     const schedule = Application.scheduleRequest;
     try {
@@ -582,7 +643,7 @@ export async function runTests(logger: TestLogger) {
       }
     } finally { Application.scheduleRequest = schedule; }
   });
-  suite.test("reader: text escaping and line breaks never execute provider markup", async () => {
+  test("reader: text escaping and line breaks never execute provider markup", async () => {
     const capture = probe.find(`/api/novels/${SAMPLE}/chapters/${chapters[0].chapterId}`);
     let changed!: RawReader;
     await replay(probe.responses, (payload, request) => {
@@ -594,7 +655,6 @@ export async function runTests(logger: TestLogger) {
     }, async (cold) => assertReader(await cold.getChapterDetails(chapters[0]), chapters[0], changed));
   });
 
-  probe.registerInterceptor();
   try { await suite.run(); }
   finally { probe.unregisterInterceptor(); }
 }
