@@ -24,11 +24,14 @@ export const sortId = (sorting: unknown): string => {
     throw new Error("Unsupported Noveli sorting option.");
   return value.id;
 };
+// HTTPS Request serialization percent-encodes query apostrophes. Issue that exact
+// canonical spelling so the strict requested/final response identity stays intact.
+const encodeQuery = (value: string): string => encodeURIComponent(value).replace(/'/g, "%27");
 export const catalogURL = (title: string, filters: Filters, sort: string, page: number): string => {
   let url = `${BASE_URL}/api/novels?sort=${sort}&page=${page}&limit=${PAGE_SIZE}`;
-  if (title) url += "&search=" + encodeURIComponent(title);
-  if (filters.genres.length) url += "&genres=" + encodeURIComponent(filters.genres.join(","));
-  if (filters.status) url += "&status=" + encodeURIComponent(filters.status);
+  if (title) url += "&search=" + encodeQuery(title);
+  if (filters.genres.length) url += "&genres=" + encodeQuery(filters.genres.join(","));
+  if (filters.status) url += "&status=" + encodeQuery(filters.status);
   return url;
 };
 export const detailURL = (id: string): string => {
@@ -75,7 +78,9 @@ export const isMetadataURL = (url: string): boolean => {
       const [key, value, extra] = pair.split("=");
       if (value === undefined || extra !== undefined || Object.hasOwn(values, key)) return false;
       if (!["sort", "page", "limit", "search", "genres", "status"].includes(key)) return false;
-      values[key] = decodeURIComponent(value);
+      const decoded = decodeURIComponent(value);
+      if (encodeQuery(decoded) !== value) return false;
+      values[key] = decoded;
     }
   } catch {
     return false;

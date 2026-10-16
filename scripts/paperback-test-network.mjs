@@ -1,9 +1,16 @@
 // Test-only bridge: the alpha.92 Node polyfill has no WebView/FlareSolverr support.
 // Kagane API requests use Chromium's network stack, preserving JSON POST bodies.
+import {
+  isNoveliBrowserRequest,
+  isNoveliCoverURL,
+  isNoveliMetadataURL,
+  isNoveliWarmSolution,
+} from "./noveli-test-browser-contract.mjs";
+
 const nativeFetch = globalThis.fetch;
 const solverURL = process.env.FLARESOLVERR_URL ?? "http://127.0.0.1:8191";
 const browserStates = new Map();
-const sourceHosts = new Set(["kagane.org", "vortexscans.org", "api.vortexscans.org"]);
+const sourceHosts = new Set(["kagane.org", "vortexscans.org", "api.vortexscans.org", "noveli.to"]);
 const sessions = new Set();
 
 async function solverCommand(payload) {
@@ -34,6 +41,8 @@ async function solve(url, session) {
   ) {
     throw new Error(`FlareSolverr browser could not securely load ${url}`);
   }
+  if (url.startsWith("https://noveli.to/") && !isNoveliWarmSolution(result.solution, url))
+    throw new Error("Noveli browser warm-up was denied, unresolved, or redirected");
   return { ...result.solution, session };
 }
 
@@ -60,15 +69,43 @@ function cookiesForURL(cookies, url) {
 
 globalThis.fetch = async function paperbackTestFetch(input, init = {}) {
   const inputURL = typeof input === "string" || input instanceof URL ? input : input.url;
+  const approvedNoveliMetadata = isNoveliMetadataURL(inputURL);
+  const approvedNoveliCover = isNoveliCoverURL(inputURL);
   const url = new URL(inputURL);
-  if (!sourceHosts.has(url.hostname)) return nativeFetch(input, init);
+  // A trailing-dot alias must fail closed, not fall through to the native path.
+  const noveli = url.hostname.replace(/\.+$/, "") === "noveli.to";
+  if (!noveli && !sourceHosts.has(url.hostname)) return nativeFetch(input, init);
+  const headers = new Headers(
+    init.headers ?? (input instanceof Request ? input.headers : undefined),
+  );
+  if (noveli) {
+    // URL/Request objects have already discarded raw traversal/authority ambiguity.
+    if (
+      typeof input !== "string" ||
+      Reflect.ownKeys(init).some((key) => !["method", "body", "headers", "signal"].includes(key)) ||
+      (init.method !== undefined && init.method !== "GET") ||
+      init.body != null ||
+      [...headers].length ||
+      init.credentials !== undefined ||
+      (init.signal !== undefined && !(init.signal instanceof AbortSignal))
+    )
+      throw new Error("Only anonymous raw Noveli GET requests are supported");
+    init.signal?.throwIfAborted();
+    // Covers retain the existing native path; no unproven image workaround.
+    if (approvedNoveliCover) return nativeFetch(input, init);
+    if (
+      !approvedNoveliMetadata ||
+      !isNoveliBrowserRequest(input, init.method ?? "GET", init.body, headers)
+    )
+      throw new Error("Unsupported Noveli browser metadata request");
+  }
 
   // Warm up each origin once, including concurrent taxonomy requests.
   let browserState = browserStates.get(url.origin);
   if (!browserState) {
     browserState = (async () => {
       let session;
-      if (url.hostname === "kagane.org") {
+      if (url.hostname === "kagane.org" || noveli) {
         session = crypto.randomUUID();
         await solverCommand({ cmd: "sessions.create", session });
         sessions.add(session);
@@ -78,19 +115,17 @@ globalThis.fetch = async function paperbackTestFetch(input, init = {}) {
     browserStates.set(url.origin, browserState);
   }
   let solution = await browserState;
-  const headers = new Headers(
-    init.headers ?? (input instanceof Request ? input.headers : undefined),
-  );
   const originalCookies = headers.get("cookie");
 
   async function send() {
-    if (url.hostname === "kagane.org" && url.pathname.startsWith("/api/")) {
+    if (noveli) init.signal?.throwIfAborted();
+    if (noveli || (url.hostname === "kagane.org" && url.pathname.startsWith("/api/"))) {
       const result = await nativeFetch(`${solverURL.replace(/\/$/, "")}/browser/request`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           session: solution.session,
-          url: url.toString(),
+          url: noveli ? inputURL : url.toString(),
           method: init.method ?? (input instanceof Request ? input.method : "GET"),
           headers: Object.fromEntries(headers),
           body: init.body ?? null,
@@ -101,6 +136,8 @@ globalThis.fetch = async function paperbackTestFetch(input, init = {}) {
       if (!result.ok || data.error || !data.status) {
         throw new Error(`Browser API request failed for ${url}: ${data.error ?? result.status}`);
       }
+      if (noveli && (!isNoveliMetadataURL(data.url) || data.url !== inputURL))
+        throw new Error("Noveli browser metadata request redirected");
       const response = new Response([204, 205, 304].includes(data.status) ? null : data.body, {
         status: data.status,
         headers: data.headers,
@@ -127,13 +164,17 @@ globalThis.fetch = async function paperbackTestFetch(input, init = {}) {
   }
 
   let response = await send();
-  const isChallenge =
-    response.headers.get("cf-mitigated") === "challenge" ||
-    (response.headers.get("content-type")?.includes("text/html") &&
-      (await response.clone().text()).includes("vShield"));
+  const isChallenge = noveli
+    ? response.status === 403 &&
+      response.headers.get("cf-mitigated") === "challenge" &&
+      response.headers.get("content-type")?.toLowerCase().startsWith("text/html")
+    : response.headers.get("cf-mitigated") === "challenge" ||
+      (response.headers.get("content-type")?.includes("text/html") &&
+        (await response.clone().text()).includes("vShield"));
   if (isChallenge) {
     await response.body?.cancel();
-    browserState = solve(url.toString(), solution.session);
+    if (noveli) init.signal?.throwIfAborted();
+    browserState = solve(noveli ? inputURL : url.toString(), solution.session);
     browserStates.set(url.origin, browserState);
     solution = await browserState;
     response = await send();

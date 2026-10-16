@@ -23,6 +23,7 @@ import { Noveli, NoveliExtension } from "../Noveli/main.js";
 import sourceInfo from "../Noveli/pbconfig.js";
 import { NoveliSearchForm } from "../Noveli/forms.js";
 import { assertPublic } from "../Noveli/models.js";
+import { isMetadataURL } from "../Noveli/urls.js";
 import { assertChapterDetails, TestSuite } from "./suite.js";
 
 const BASE = "https://noveli.to";
@@ -329,6 +330,34 @@ export async function runTests(logger: TestLogger) {
         expect(request.cookies).to.equal(undefined);
       }
       expect(requests).to.have.length(SORT_IDS.length);
+      const title = "Reader's Story 修仙 & ? # + / %", genre = "Sibling's Care";
+      const selectedGenres = ["Action", genre], requestCount = probe.requests.length;
+      const taxonomyCapture = probe.find("/api/novels/tags"), catalogCapture = probe.find("/api/novels");
+      const taxonomy = raw<{ success: boolean; tags: string[] }>(taxonomyCapture);
+      expect(taxonomy.tags).to.include(genre);
+      Application.scheduleRequest = async (request) => {
+        if (new globalThis.URL(request.url).pathname === "/api/novels/tags")
+          return [taxonomyCapture.response, buffer(taxonomy)];
+        requests.push(request);
+        // The host serializes special-URL query apostrophes before returning its
+        // final URL. Retain production's exact requested/final identity comparison.
+        return [{ ...catalogCapture.response, url: new globalThis.Request(request.url).url }, buffer(raw(catalogCapture))];
+      };
+      const result = await new NoveliExtension().getSearchResults({ title, metadata: { genres: selectedGenres, status: "Completed" } });
+      expect(cards(result.items)).to.deep.equal(expectedCards(raw<{ data: RawNovel[] }>(catalogCapture).data));
+      const request = requests.at(-1)!, url = new globalThis.URL(request.url);
+      expect(request.url).to.equal(new globalThis.Request(request.url).url);
+      expect(request.url).to.include("Reader%27s");
+      expect(request.url).not.to.include("'");
+      expect(isMetadataURL(request.url)).to.equal(true);
+      expect(isMetadataURL(request.url.replace("%27", "'"))).to.equal(false);
+      expect(isMetadataURL(request.url.replace("%E4", "%e4"))).to.equal(false);
+      expect(isMetadataURL(request.url.replace("sort=popular", "sort=%70opular"))).to.equal(false);
+      expect(url.searchParams.get("search")).to.equal(title);
+      expect(url.searchParams.get("genres")).to.equal(selectedGenres.join(","));
+      expect(url.searchParams.get("status")).to.equal("Completed");
+      expect(requests).to.have.length(SORT_IDS.length + 1);
+      expect(probe.requests.length).to.equal(requestCount);
     } finally { Application.scheduleRequest = schedule; }
   });
   test("getMangaDetails: canonical native novel metadata and original cover bytes", async () => {
