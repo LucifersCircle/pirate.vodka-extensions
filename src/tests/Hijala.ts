@@ -795,6 +795,52 @@ export async function runTests(logger: TestLogger) {
       }
     },
   );
+  suite.test("search: malformed saved constraints fail before provider requests", async () => {
+    const genre = parseGenreOptions(await fetchText(`${BASE_URL}/series/`)).find(
+      (item) => !blockedGenre(item.title),
+    );
+    expect(genre, "Use the current native taxonomy for the valid saved selection").not.to.be.undefined;
+    const valid = {
+      genres: { [genre!.id]: "included" },
+      statuses: ["ONGOING"],
+      types: [TYPES[0]],
+      direction: "default",
+    };
+    const malformed = [
+      { genres: { ...valid.genres, "not-a-genre": "excluded" } },
+      { genres: { [genre!.id]: "invalid" } },
+      { genres: [] },
+      { statuses: [...valid.statuses, "INVALID"] },
+      { statuses: valid.statuses[0] },
+      { types: [...valid.types, "INVALID"] },
+      { types: valid.types[0] },
+      { direction: "sideways" },
+      { minChapters: 1 },
+      { createdAfter: 2026 },
+    ];
+    const previous = Application.getState("Hijala.preferences"),
+      probe = new Probe("Hijala.saved-filter-integrity");
+    probe.registerInterceptor();
+    try {
+      for (const excludeNSFW of [true, false]) {
+        Application.setState({ ...preferences(), excludeNSFW }, "Hijala.preferences");
+        for (const invalid of malformed) {
+          const source = new HijalaExtension(),
+            query = { title: "", metadata: { ...valid, ...invalid } };
+          await rejects(() => source.getSearchResults(query), /Hijala saved .* filter is invalid/);
+          await rejects(
+            () => source.getAdvancedSearchForm(query),
+            /Hijala saved .* filter is invalid/,
+          );
+        }
+      }
+      expect(probe.requests, "Invalid selections must not fetch even the safety taxonomy").to.be
+        .empty;
+    } finally {
+      probe.unregisterInterceptor();
+      Application.setState(previous, "Hijala.preferences");
+    }
+  });
   suite.test("search: every site sort, native advanced filters and true empty result", async () => {
     for (const sort of SORTS)
       expect((await Hijala.getSearchResults({ title: "" }, undefined, sort)).items).not.to.be.empty;

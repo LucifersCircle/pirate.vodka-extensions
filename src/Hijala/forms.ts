@@ -40,21 +40,43 @@ export const blockedGenre = (name: string): boolean =>
 
 export const readFilters = (metadata?: Metadata): SearchFilters => {
   const data = (metadata ?? {}) as Partial<SearchFilters>;
+  const invalid = (field: string): never => {
+    throw new Error(
+      `Hijala saved ${field} filter is invalid; clear your search filters and retry.`,
+    );
+  };
+  if (typeof data !== "object" || Array.isArray(data)) invalid("search");
+  const genres = data.genres ?? {};
+  if (typeof genres !== "object" || Array.isArray(genres)) invalid("genre");
+  for (const [id, value] of Object.entries(genres)) {
+    // Native tri-state deselection removes the key. An unset value is not a constraint.
+    if (value === undefined) continue;
+    if (!/^\d+$/.test(id) || (value !== "included" && value !== "excluded")) invalid("genre");
+  }
+  for (const [key, allowed] of [
+    ["statuses", STATUSES],
+    ["types", TYPES],
+  ] as const) {
+    const values = data[key];
+    if (
+      values != null &&
+      (!Array.isArray(values) || values.some((value) => !allowed.includes(value)))
+    )
+      invalid(key);
+  }
+  if (data.direction != null && !["", "default", "asc", "desc"].includes(data.direction))
+    invalid("sort direction");
+  for (const key of ["minChapters", "maxChapters", "createdAfter", "createdBefore"] as const)
+    if (data[key] != null && typeof data[key] !== "string") invalid(key);
   return {
-    genres: Object.fromEntries(
-      Object.entries(data.genres ?? {}).filter(
-        ([id, value]) => /^\d+$/.test(id) && (value === "included" || value === "excluded"),
-      ),
-    ),
-    statuses: Array.isArray(data.statuses)
-      ? data.statuses.filter((value) => STATUSES.includes(value))
-      : [],
-    types: Array.isArray(data.types) ? data.types.filter((value) => TYPES.includes(value)) : [],
-    direction: ["asc", "desc"].includes(data.direction ?? "") ? data.direction! : "default",
-    minChapters: typeof data.minChapters === "string" ? data.minChapters : "",
-    maxChapters: typeof data.maxChapters === "string" ? data.maxChapters : "",
-    createdAfter: typeof data.createdAfter === "string" ? data.createdAfter : "",
-    createdBefore: typeof data.createdBefore === "string" ? data.createdBefore : "",
+    genres: Object.fromEntries(Object.entries(genres).filter(([, value]) => value !== undefined)),
+    statuses: [...(data.statuses ?? [])],
+    types: [...(data.types ?? [])],
+    direction: data.direction || "default",
+    minChapters: data.minChapters ?? "",
+    maxChapters: data.maxChapters ?? "",
+    createdAfter: data.createdAfter ?? "",
+    createdBefore: data.createdBefore ?? "",
   };
 };
 
