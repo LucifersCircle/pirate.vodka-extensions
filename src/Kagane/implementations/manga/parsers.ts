@@ -32,6 +32,7 @@ export function parseMangaDetails(
     .map((person) => person.name);
   const tagGroups = buildTagGroups(data);
   const uploadStatus = mapPublicationStatus(data.upload_status);
+  const rating = data.average_rating ?? data.bayesian_rating;
 
   return {
     mangaId,
@@ -43,6 +44,10 @@ export function parseMangaDetails(
       author: joinUnique(authors),
       artist: joinUnique(artists),
       status: mapPublicationStatus(data.publication_status),
+      rating:
+        typeof rating === "number" && Number.isFinite(rating) && rating >= 0 && rating <= 100
+          ? rating / 100
+          : undefined,
       additionalInfo: uploadStatus !== "Unknown" ? { "Upload status": uploadStatus } : undefined,
       contentRating: getPaperbackBookContentRating(data),
       tagGroups,

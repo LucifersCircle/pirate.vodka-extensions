@@ -40,7 +40,7 @@ class Probe extends PaperbackInterceptor {
 }
 
 // Compare with the exact first detail response consumed by the native detail call.
-export function assertKaganePublicationStatus(manga: SourceManga, capture: Capture) {
+export function assertKaganeDetailMetadata(manga: SourceManga, capture: Capture) {
   const raw = JSON.parse(Application.arrayBufferToUTF8String(capture[1]));
   const expectedLabel = (value: unknown) => {
     const entry = typeof value === "string" ? [
@@ -52,6 +52,9 @@ export function assertKaganePublicationStatus(manga: SourceManga, capture: Captu
   expect(manga.mangaInfo.status, "native publication status").to.equal(expectedLabel(raw.publication_status));
   const upload = expectedLabel(raw.upload_status);
   expect(manga.mangaInfo.additionalInfo?.["Upload status"], "explicit upload progress").to.equal(upload === "Unknown" ? undefined : upload);
+  const score = raw.average_rating ?? raw.bayesian_rating;
+  const expectedRating = typeof score === "number" && Number.isFinite(score) && score >= 0 && score <= 100 ? score / 100 : undefined;
+  expect(manga.mangaInfo.rating, "native rating from the consumed detail score").to.equal(expectedRating);
 }
 
 // Use only the already-resolved native reader URLs. No new manifest or metadata
@@ -742,7 +745,7 @@ export async function runTests(logger: TestLogger) {
     if (!manga || !chapters?.[0] || !reader) throw new Error("No successful native Kagane reader sample");
     const detail = probe.firstDetails.get(`${API_URL}/api/v2/series/${manga.mangaId}`);
     if (!detail) throw new Error("No intercepted native Kagane detail response");
-    assertKaganePublicationStatus(manga, detail);
+    assertKaganeDetailMetadata(manga, detail);
     logger.log("readerImageEvidence", await assertKaganeReaderImageBytes(manga, chapters[0], reader));
   });
   suite.test("Native directional sorts emit exact tokens and preserve consumed count/rating order", async () => {
