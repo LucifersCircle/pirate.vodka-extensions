@@ -68,14 +68,6 @@ function extractChapterImageUrls(html: string): string[] {
   );
 }
 
-function sortByPageNumber(urls: string[]): string[] {
-  return [...urls].sort((a, b) => {
-    const numA = parseInt(a.match(/page-(\d+)/i)?.[1] ?? "0");
-    const numB = parseInt(b.match(/page-(\d+)/i)?.[1] ?? "0");
-    return numA - numB;
-  });
-}
-
 function getSeoSectionPages(html: string): string[] {
   const seoSection = html.match(
     /<section[^>]*aria-label="[^"]*comic pages"[^>]*>([\s\S]*?)<\/section>/i,
@@ -112,7 +104,7 @@ function getDocumentPages(html: string): string[] {
     }
   }
 
-  return sortByPageNumber(bestGroup);
+  return bestGroup;
 }
 
 function getIndexedPages(html: string): string[] {
@@ -135,8 +127,8 @@ function getIndexedPages(html: string): string[] {
 export function parseChapterDetails(html: string, chapter: Chapter): ChapterDetails {
   const candidates = [
     getSeoSectionPages(html),
-    getDocumentPages(html),
     getIndexedPages(html),
+    getDocumentPages(html),
   ].filter((pages) => pages.length > 0);
 
   const bestCandidate = candidates.reduce<string[] | undefined>((best, candidate) => {
