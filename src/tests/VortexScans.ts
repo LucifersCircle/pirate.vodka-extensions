@@ -190,6 +190,37 @@ function readerPageDiagnostic(input: string | undefined) {
     literalSlashRuns: (path.match(/\/{2,}/g) ?? []).length };
 }
 
+// Some source-owned dated uploads are genuine WebP served as generic binary.
+// Verify the complete still-image container and positive encoded dimensions before
+// accepting that MIME. This is not a full pixel decoder; real decode is separate.
+function assertReaderImageType(response: Response, data: ArrayBuffer, format: string, url: string): string {
+  const contentType = Object.entries(response.headers).find(([name]) => name.toLowerCase() === "content-type")?.[1]?.split(";")[0].trim().toLowerCase();
+  if (contentType?.startsWith("image/")) return contentType;
+  expect(contentType, url).to.equal("application/octet-stream");
+  expect(url, "source-owned binary WebP upload").to.match(/^https:\/\/storage\.vortexscans\.org\/upload\/(?:\d{4}\/\d{2}\/\d{2}\/[A-Za-z0-9_-]+|series\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+)\.webp(?:\?[^#]*)?$/);
+  expect(format, "binary response image format").to.equal("WebP");
+  const bytes = new Uint8Array(data), view = new DataView(data);
+  expect(String.fromCharCode(...bytes.slice(0, 4))).to.equal("RIFF");
+  expect(String.fromCharCode(...bytes.slice(8, 12))).to.equal("WEBP");
+  expect(view.getUint32(4, true) + 8, "complete binary WebP RIFF length").to.equal(bytes.length);
+  // The observed generic-binary upload is simple still-image VP8 WebP.
+  // Do not widen this exception to unfamiliar chunk layouts or other formats.
+  expect(String.fromCharCode(...bytes.slice(12, 16)), "one VP8 image chunk").to.equal("VP8 ");
+  const size = view.getUint32(16, true), start = 20, end = start + size;
+  expect(size, "VP8 frame header and payload").to.be.greaterThan(10);
+  expect(end + size % 2, "complete single VP8 chunk including padding").to.equal(bytes.length);
+  if (size % 2) expect(bytes[end], "WebP chunk padding").to.equal(0);
+  const frameTag = bytes[start] + bytes[start + 1] * 256 + bytes[start + 2] * 65536;
+  expect(frameTag & 1, "VP8 key frame").to.equal(0);
+  expect((frameTag >>> 1) & 7, "VP8 bitstream version").to.be.at.most(3);
+  expect((frameTag >>> 4) & 1, "VP8 visible frame").to.equal(1);
+  expect(frameTag >>> 5, "positive VP8 first partition").to.be.greaterThan(0).and.at.most(size - 10);
+  expect(Array.from(bytes.slice(start + 3, start + 6)), "VP8 key-frame signature").to.deep.equal([0x9d, 0x01, 0x2a]);
+  expect(view.getUint16(start + 6, true) & 0x3fff, "positive binary WebP width").to.be.greaterThan(0);
+  expect(view.getUint16(start + 8, true) & 0x3fff, "positive binary WebP height").to.be.greaterThan(0);
+  return contentType!;
+}
+
 type ReaderProof = { mangaId: string; chapterId: string; completePages: number; literalSlashAliases: number; rawImageRequests: number };
 
 export async function runTests(logger: TestLogger) {
@@ -492,7 +523,7 @@ export async function runTests(logger: TestLogger) {
     } finally { Application.scheduleRequest = schedule; }
   });
 
-  const verifyReader = async (source: SourceManga, chapters: Chapter[], reader: ChapterDetails, evidence: TestLogger, responses = probe.responses, expectedApiChapterId?: number): Promise<ReaderProof> => {
+  const verifyReader = async (source: SourceManga, chapters: Chapter[], reader: ChapterDetails, evidence: TestLogger, responses = probe.responses, expectedApiChapterId?: number, expectedMarkedPageCount?: number): Promise<ReaderProof> => {
     expect(chapters).not.to.be.empty;
     for (const chapter of chapters) expect(chapter.sourceManga).to.equal(source);
     expect(reader.mangaId).to.equal(source.mangaId);
@@ -540,6 +571,18 @@ export async function runTests(logger: TestLogger) {
       firstPagePath: readerPageDiagnostic(pages[0]).path, lastPagePath: readerPageDiagnostic(pages.at(-1)).path,
       literalSlashAliases });
     expect(new Set(comparablePages).size, "no source pages collapse into duplicates").to.equal(pages.length);
+    if (expectedMarkedPageCount !== undefined) {
+      const marked = $('img[data-reader-page-image="true"][data-reader-index]').toArray().map((element) => {
+        const index = $(element).attr("data-reader-index");
+        expect(index, "explicit native HTML reader index").to.match(/^\d{1,6}$/);
+        return { index: Number(index), url: $(element).attr("src") };
+      }).sort((left, right) => left.index - right.index);
+      expect(pages, "pinned native API page count").to.have.length(expectedMarkedPageCount);
+      expect(marked.map(({ index }) => index), "unique contiguous explicit native HTML reader indices")
+        .to.deep.equal(Array.from({ length: expectedMarkedPageCount }, (_, index) => index));
+      expect(marked.map(({ url }) => url), "explicit native HTML images equal exact API page order").to.deep.equal(pages);
+      expect(reader.pages, "native reader equals exact API page order").to.deep.equal(pages);
+    }
     // Observe the consumed HTML before the unchanged equality can fail. These
     // indices refer only to the validated API manifest, never inferred filenames.
     const apiIndex = (url: string | undefined): number => {
@@ -600,13 +643,12 @@ export async function runTests(logger: TestLogger) {
     });
     expect(reader.pages.map(comparableReaderPage), "HTML reader equals independent ordered public API manifest; literal pathname slash runs only").to.deep.equal(comparablePages);
     expect(new Set(reader.pages).size).to.equal(reader.pages.length);
-    const imageEvidence: { page: number; bytes: number; contentLength?: number; contentEncoding?: string; format: string }[] = [];
+    const imageEvidence: { page: number; bytes: number; contentLength?: number; contentEncoding?: string; contentType: string; format: string }[] = [];
     const pairs = evidence.list("readerRawImagePairs");
     let rawImageRequests = 0;
     for (const url of new Set([reader.pages[0], reader.pages.at(-1)!])) {
       const [response, data] = await Application.scheduleRequest({ url, method: "GET" });
       expect(response.status, url).to.equal(200);
-      expect(Object.entries(response.headers).find(([name]) => name.toLowerCase() === "content-type")?.[1], url).to.match(/^image\//i);
       const bytes = new Uint8Array(data), magic = String.fromCharCode(...bytes.slice(0, 16));
       expect(bytes.length, url).to.be.greaterThan(100);
       const length = Object.entries(response.headers).find(([name]) => name.toLowerCase() === "content-length")?.[1]?.trim();
@@ -644,6 +686,7 @@ export async function runTests(logger: TestLogger) {
         }
         expect(offset, `AVIF complete file: ${url}`).to.equal(bytes.length);
       } else throw new Error(`Unsupported image response format: ${url}`);
+      const contentType = assertReaderImageType(response, data, format, url);
       const rawUrl = pages[reader.pages.indexOf(url)];
       if (rawUrl !== url) {
         // Both URLs are source-derived and already matched above. Fetch the exact
@@ -651,7 +694,6 @@ export async function runTests(logger: TestLogger) {
         const [rawResponse, rawData] = await Application.scheduleRequest({ url: rawUrl, method: "GET" });
         rawImageRequests++;
         expect(rawResponse.status, rawUrl).to.equal(200);
-        expect(Object.entries(rawResponse.headers).find(([name]) => name.toLowerCase() === "content-type")?.[1], rawUrl).to.match(/^image\//i);
         const rawBytes = new Uint8Array(rawData);
         let firstMismatch = 0;
         while (firstMismatch < bytes.length && firstMismatch < rawBytes.length && bytes[firstMismatch] === rawBytes[firstMismatch]) firstMismatch++;
@@ -661,8 +703,9 @@ export async function runTests(logger: TestLogger) {
           rawBytes: rawBytes.length, nativeBytes: bytes.length, firstMismatch });
         expect(rawBytes.length, "raw published/native image body length").to.equal(bytes.length);
         expect(firstMismatch, "raw published/native entire image body first mismatch (-1 means equal)").to.equal(-1);
+        assertReaderImageType(rawResponse, rawData, format, rawUrl);
       }
-      imageEvidence.push({ page: reader.pages.indexOf(url) + 1, bytes: bytes.length, contentLength, contentEncoding, format });
+      imageEvidence.push({ page: reader.pages.indexOf(url) + 1, bytes: bytes.length, contentLength, contentEncoding, contentType, format });
     }
     const proof = { mangaId: source.mangaId, chapterId: reader.id, completePages: reader.pages.length, literalSlashAliases, rawImageRequests };
     evidence.log("readerEvidence", { ...proof, images: imageEvidence });
@@ -736,6 +779,23 @@ export async function runTests(logger: TestLogger) {
       const proof = await verifyReader(source, chapters, reader, evidence, probe.responses.slice(responseStart));
       evidence.log("proof", { ...proof, reusedDynamic: false });
     }
+  });
+
+  suite.test("regression329: list-derived chapter 10, nine explicit HTML pages and complete image bytes", async () => {
+    const mangaId = "329:regressed-blood-demon", slug = "regressed-blood-demon";
+    const evidence = logger.scope("regression329"), responseStart = probe.responses.length;
+    const source = await extension.getMangaDetails(mangaId);
+    expect(source.mangaId).to.equal(mangaId);
+    expect(source.mangaInfo.additionalInfo?.slug).to.equal(slug);
+    expect(source.mangaInfo.shareUrl).to.equal(`${DOMAIN}/series/${slug}`);
+    const chapters = await extension.getChapters(source);
+    for (const chapter of chapters) expect(chapter.sourceManga).to.equal(source);
+    const selected = chapters.filter((chapter) => chapter.chapNum === 10);
+    expect(selected, "unique native chapter number 10").to.have.length(1);
+    expect(selected[0].chapterId).to.equal("chapter-10");
+    const reader = await extension.getChapterDetails(selected[0]);
+    const proof = await verifyReader(source, selected, reader, evidence, probe.responses.slice(responseStart), 18039, 9);
+    evidence.log("proof", proof);
   });
 
   suite.test("regression584: saved apostrophe ID details, original chapters/reader and complete image bytes", async () => {
