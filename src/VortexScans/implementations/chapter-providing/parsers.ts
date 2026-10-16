@@ -1,5 +1,6 @@
 import type { Chapter, ChapterDetails, SourceManga } from "@paperback/types";
 import type { VortexChaptersResponse } from "../shared/models";
+import * as cheerio from "cheerio";
 
 const CHAPTER_IMAGE_REGEX =
   /https?:\/\/[^"'\\\s]+\/(?:public\/)?upload\/series\/[^"'\\\s]+?\.(?:webp|jpe?g|png)(?:\?[^"'\\\s]*)?/gi;
@@ -124,7 +125,74 @@ function getIndexedPages(html: string): string[] {
   return dedupePreservingOrder(indexed.map((page) => page.url));
 }
 
+// Current readers mark actual page images explicitly, including older dated
+// upload paths. Never expand the generic document scan to those paths: covers
+// and preloads use them too. A malformed marked manifest must not fall back.
+function getMarkedReaderPages(html: string): string[] | undefined {
+  const $ = cheerio.load(html);
+  const marked = $("[data-reader-page-image]").toArray();
+  if (marked.length === 0) return undefined;
+  const invalid = () => new Error("Invalid VortexScans reader page manifest.");
+  if (marked.length > 2000) throw invalid();
+
+  const indexed = marked.map((element) => {
+    const image = $(element);
+    const index = image.attr("data-reader-index");
+    const src = image.attr("src");
+    if (
+      !("name" in element) ||
+      element.name !== "img" ||
+      image.attr("data-reader-page-image") !== "true" ||
+      index === undefined ||
+      !/^(0|[1-9]\d*)$/.test(index) ||
+      !Number.isSafeInteger(Number(index)) ||
+      !src ||
+      image.closest('[hidden], [aria-hidden="true"], template, noscript').length > 0 ||
+      image
+        .parents()
+        .addBack()
+        .toArray()
+        .some((node) =>
+          /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\s*(?:!important\s*)?(?:;|$)/i.test(
+            $(node).attr("style") ?? "",
+          ),
+        )
+    )
+      throw invalid();
+    if (
+      Array.from(src).some(
+        (char) =>
+          char === "\\" || /\s/.test(char) || char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127,
+      )
+    )
+      throw invalid();
+    const url = normalizeUrl(src);
+    const approved =
+      /^https:\/\/storage\.vortexscans\.org(\/(?:public\/)?upload\/(?:\d{4}\/\d{2}\/\d{2}\/[A-Za-z0-9_-]+|series\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+)\.(?:webp|jpe?g|png|gif|avif))(?:\?[^#]*)?$/.exec(
+        url,
+      );
+    if (!approved || approved[1]!.split("/").some((part) => part === "." || part === ".."))
+      throw invalid();
+    return { index: Number(index), url };
+  });
+  indexed.sort((left, right) => left.index - right.index);
+  if (
+    indexed.some((page, index) => page.index !== index) ||
+    new Set(indexed.map((page) => page.url)).size !== indexed.length
+  )
+    throw invalid();
+  return indexed.map((page) => page.url);
+}
+
 export function parseChapterDetails(html: string, chapter: Chapter): ChapterDetails {
+  const markedPages = getMarkedReaderPages(html);
+  if (markedPages)
+    return {
+      id: chapter.chapterId,
+      mangaId: chapter.sourceManga.mangaId,
+      pages: markedPages,
+    };
+
   const candidates = [
     getSeoSectionPages(html),
     getIndexedPages(html),

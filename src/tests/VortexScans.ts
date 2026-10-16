@@ -492,7 +492,7 @@ export async function runTests(logger: TestLogger) {
     } finally { Application.scheduleRequest = schedule; }
   });
 
-  const verifyReader = async (source: SourceManga, chapters: Chapter[], reader: ChapterDetails, evidence: TestLogger, responses = probe.responses, expectedApiChapterId?: number): Promise<ReaderProof> => {
+  const verifyReader = async (source: SourceManga, chapters: Chapter[], reader: ChapterDetails, evidence: TestLogger, responses = probe.responses, expectedApiChapterId?: number, expectedMarkedPageCount?: number): Promise<ReaderProof> => {
     expect(chapters).not.to.be.empty;
     for (const chapter of chapters) expect(chapter.sourceManga).to.equal(source);
     expect(reader.mangaId).to.equal(source.mangaId);
@@ -540,6 +540,18 @@ export async function runTests(logger: TestLogger) {
       firstPagePath: readerPageDiagnostic(pages[0]).path, lastPagePath: readerPageDiagnostic(pages.at(-1)).path,
       literalSlashAliases });
     expect(new Set(comparablePages).size, "no source pages collapse into duplicates").to.equal(pages.length);
+    if (expectedMarkedPageCount !== undefined) {
+      const marked = $('img[data-reader-page-image="true"][data-reader-index]').toArray().map((element) => {
+        const index = $(element).attr("data-reader-index");
+        expect(index, "explicit native HTML reader index").to.match(/^\d{1,6}$/);
+        return { index: Number(index), url: $(element).attr("src") };
+      }).sort((left, right) => left.index - right.index);
+      expect(pages, "pinned native API page count").to.have.length(expectedMarkedPageCount);
+      expect(marked.map(({ index }) => index), "unique contiguous explicit native HTML reader indices")
+        .to.deep.equal(Array.from({ length: expectedMarkedPageCount }, (_, index) => index));
+      expect(marked.map(({ url }) => url), "explicit native HTML images equal exact API page order").to.deep.equal(pages);
+      expect(reader.pages, "native reader equals exact API page order").to.deep.equal(pages);
+    }
     // Observe the consumed HTML before the unchanged equality can fail. These
     // indices refer only to the validated API manifest, never inferred filenames.
     const apiIndex = (url: string | undefined): number => {
@@ -736,6 +748,23 @@ export async function runTests(logger: TestLogger) {
       const proof = await verifyReader(source, chapters, reader, evidence, probe.responses.slice(responseStart));
       evidence.log("proof", { ...proof, reusedDynamic: false });
     }
+  });
+
+  suite.test("regression329: list-derived chapter 10, nine explicit HTML pages and complete image bytes", async () => {
+    const mangaId = "329:regressed-blood-demon", slug = "regressed-blood-demon";
+    const evidence = logger.scope("regression329"), responseStart = probe.responses.length;
+    const source = await extension.getMangaDetails(mangaId);
+    expect(source.mangaId).to.equal(mangaId);
+    expect(source.mangaInfo.additionalInfo?.slug).to.equal(slug);
+    expect(source.mangaInfo.shareUrl).to.equal(`${DOMAIN}/series/${slug}`);
+    const chapters = await extension.getChapters(source);
+    for (const chapter of chapters) expect(chapter.sourceManga).to.equal(source);
+    const selected = chapters.filter((chapter) => chapter.chapNum === 10);
+    expect(selected, "unique native chapter number 10").to.have.length(1);
+    expect(selected[0].chapterId).to.equal("chapter-10");
+    const reader = await extension.getChapterDetails(selected[0]);
+    const proof = await verifyReader(source, selected, reader, evidence, probe.responses.slice(responseStart), 18039, 9);
+    evidence.log("proof", proof);
   });
 
   suite.test("regression584: saved apostrophe ID details, original chapters/reader and complete image bytes", async () => {
