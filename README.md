@@ -310,112 +310,181 @@ docker compose down
 <details>
 <summary>Hijala</summary>
 
-Hijala follows the current Hijala website: Featured, Latest
-Releases, New, Most Popular and Latest Updates. Latest/New use verified source
-pagination; Popular uses the rendered first nine titles and chapter updates use
-actual source chapter identities. Stale Hot and homepage Genres rows are removed;
-all live genres remain available in advanced search and source settings.
+[Hijala](https://en-hijala.com/) is a native Paperback source.
 
-Latest and New are separate native rows for the site's tabs.
+**Discover and search**
 
-Default-on persistent NSFW exclusion uses verified source genre labels, not an
-invented four-category rating or demographic guesses. Unknown classification is
-hidden by default, and explicit genre exclusions remain fail-closed after opt-out.
-Existing content types and paid-chapter hiding intersect those preferences across
-browsing, details, chapters and readers; protected chapters remain on the website.
-Bounded caches reused across callbacks avoid per-title metadata requests.
+- Featured, Latest Releases, New, Most Popular and Latest Updates follow the website.
+  Latest and New remain distinct; pagination and chapter-update identities come
+  from the source. Popular uses the rendered homepage selection, not a different ranking.
+- Live genres, source filters and sorting are available in advanced search.
+  Shared bounded caches avoid fetching details for every title.
 
-Native checks preserve the exact supplied `SourceManga` reference, all source
-chapters and genuine decimal numbers, semantic titles, paid boundaries and real
-first/middle/last reader image bytes. Covers retain their source-provided URLs.
+**Details and reader**
+
+- Source-provided covers, canonical titles and complete available chapter lists.
+  Decimal chapter numbers, genuine subtitles and the supplied `SourceManga`
+  reference are preserved. Reader checks load actual image bytes.
+
+**Settings and limitations**
+
+- NSFW exclusion is on by default and uses verified source genre labels.
+  Unknown classifications are hidden by default; explicit genre exclusions remain
+  fail-closed even after opting out. Demographic and relationship labels are not
+  invented adult classifications.
+- Content-type choices and paid-chapter hiding intersect those preferences.
+  Login, paid and protected content remain on the website.
+
+Implementation: [`src/Hijala`](src/Hijala).
+
+</details>
+
+<details>
+<summary>Kagane</summary>
+
+[Kagane](https://kagane.org/) is a native Paperback source.
+
+**Discover and search**
+
+- Popular, Latest Updates and Recently Added, with Popularity and Genres chip
+  destinations. Search exposes supported directional sorts, grouped and typed
+  tags, genre/tag matching, format, upload status and source filters.
+- Optional type and star-rating subtitles apply to Recently Added and search
+  cards. They do not replace chapter labels in Latest Updates or the Featured layout.
+
+**Details and reader**
+
+- Original titles, associated names, staff, source genres/tags, synopsis and
+  publication/upload status are retained when supplied. Edition and source labels
+  can be added to titles without changing their canonical IDs.
+- Chapter pagination uses the current source index; reader pages follow the
+  public manifest order. Chapter title mode and data saver are configurable.
+
+**Settings and limitations**
+
+- Persistent content-rating and language choices, source choices, excluded genres
+  and hidden tags control browsing. Grouped and custom hidden tags remain distinct
+  from a numeric review score.
+- Listing ratings use Kagane's documented score scale; missing values are not
+  invented. Unsupported source sort tokens are not advertised as working options.
+- Source access restrictions still apply. Metadata availability and language labels
+  depend on the source; aliases are not translated or guessed.
+
+Implementation: [`src/Kagane`](src/Kagane). Existing GPL copyright and attribution
+are retained in the source files.
 
 </details>
 
 <details>
 <summary>MangaSushi</summary>
 
-MangaSushi uses the website's Popular Series slider and What's New
-feed, including native load-more pagination. A lightweight Genres chip row follows
-the homepage menu; each selected genre lazily opens its exact native archive,
-preserving source order and AJAX continuation without loading all archives. Its search mirrors the seven website sorts and the
-actual genre OR/AND, author, artist, release year, adult-content and status filters.
-The two verified donation/recruitment announcement posts are not treated as manga.
-If the website ignores a selected search genre, the extension reports an error
-rather than returning unrelated titles. A verified empty archive remains empty.
+[MangaSushi](https://mangasushi.org/) is a native Paperback source.
 
-Discovery shares the homepage response and a page-sized native AJAX metadata
-request across concurrent sections instead of searching once per title. Short-lived,
-setting-keyed caches also avoid repeat requests on warm loads. Exact homepage order,
-upstream continuation, explicit-tag exclusions and unknown-title blocking remain
-unchanged. Homepage titles missing from a batch retain the canonical-ID search
-fallback; genre archives use only their bounded page metadata and hide unknown
-classifications, without per-title requests.
+**Discover and search**
 
-NSFW exclusion is enabled by default in Mangasushi's source settings. It applies
-the site's non-adult filter plus Adult, Mature, Smut, Hentai, Erotica and Ecchi genre
-exclusions across discovery, search, details, chapters and reading. Titles without
-reliable genre metadata are hidden; BL/Yuri or demographic tags alone are not
-classified as adult. Website classification is incomplete and cannot guarantee
-content safety. At the 2026-10-15 check, 37 of 46 manga titles were visible with the
-default filter: five lacked genre metadata and four were adult-flagged or carried
-excluded tags. All five Popular Series and 17 of the first 20 What's New entries
-remained visible. These are a dated audit, not fixed catalog limits. Turning the
-setting off restores unclassified titles such as Welcome to the Cheap Restaurant
-of Outcasts! Settings changes invalidate source caches, but cannot revoke pages
-already downloaded by Paperback. Login, paid access and security gates are not
-bypassed.
+- Popular Series and What's New preserve source order and native load-more
+  continuation. Genre chips lazily open the website's real archives.
+- Search follows the website's sorts and genre OR/AND, author, artist, release
+  year, status and adult-content filters. Ignored genre filters report an error
+  rather than unrelated results; a verified empty archive stays empty.
+- Shared homepage responses and bounded page metadata avoid per-title enrichment.
+  Missing homepage batch entries retain the canonical-ID search fallback.
 
-Mangasushi prefers audited English aliases only while the exact complete alias is
-still present in current source metadata. Original titles and full alternative text
-remain available, and canonical IDs do not change. Unverified or removed aliases
-fall back to the original title; no translations or language guesses are generated.
-Discovery reuses the native metadata batch for this in both content-setting modes,
-without one request per title. Exact punctuation-sensitive full-title searches use
-verified source-title fallbacks; ordinary partial searches are unchanged.
+**Details and reader**
 
-Mangasushi's maintained live suite also checks native continuation, strict NSFW
-handling, exact metadata, decimal chapter numbers, complete asynchronous chapter
-lists, multiple readers and settings/cache transitions. Paperback renders the chapter
-number itself, so redundant matching number prefixes are removed from chapter titles;
-real subtitles and special labels remain. Chapters without a reported volume use zero. Chapter lists must retain
-the exact SourceManga object supplied by Paperback, including when loading saved
-titles with cold caches. Valid underscore chapter IDs are retained, including the
-named Lonely Attack on the Different World chapter-list and reader regression.
-Reader tests fetch the first and last images of sampled
-safe and decimal chapters and verify successful responses, image MIME types and
-image signatures. This does not replace testing the physical iOS app.
+- Audited English aliases are preferred only while the complete alias is still
+  present in current metadata. Originals, full alternatives and canonical IDs remain;
+  removed or unverified aliases fall back without invented translations.
+- Complete asynchronous chapter lists preserve decimal numbers, real subtitles,
+  special labels and valid underscore IDs. Redundant chapter-number prefixes are
+  omitted because Paperback renders the number; missing volumes use zero.
+- Chapters keep the exact supplied `SourceManga` reference, including cold-cache
+  saved titles. Native reader checks verify actual first/last image bodies.
+
+**Settings and limitations**
+
+- NSFW exclusion is on by default: the site's adult filter and verified explicit
+  genre labels apply across browsing, saved details, chapters and reader entry.
+  Unknown genre classifications are hidden; demographic/relationship tags alone
+  are not adult evidence. Turning it off permits unclassified titles.
+- Setting changes invalidate source caches but cannot revoke downloaded pages.
+  Website labels cannot guarantee image safety. Verified donation/recruitment
+  announcements are excluded as non-reading content.
+- Exact punctuation-sensitive titles use verified source-title fallbacks; ordinary
+  partial search is unchanged. Login, paid access and security gates are not bypassed.
+
+Implementation: [`src/MangaSushi`](src/MangaSushi).
 
 </details>
 
 <details>
 <summary>ManhwaNex</summary>
 
-ManhwaNex preserves the public website's Popular Series and Latest
-Updates sections, canonical releases, native search filters, and reader pages.
-Website five-star scores are converted to Paperback's normalized 0–1 rating scale;
-unrated or invalid scores are omitted.
-Popular and Latest share one bounded homepage metadata batch, without fetching
-details for every card.
+[ManhwaNex](https://manhwanex.com/) is a native Paperback source.
 
-The eight genre archives linked from the homepage are separate Discover sections,
-in the site's order. Each archive loads only when requested and uses bounded,
-page-sized metadata batches when classification is needed. Native archive order
-and next-page links are preserved. Repeated canonical IDs are omitted across a
-pagination chain, including duplicate-only intermediate pages; distinct source
-entries remain separate even when they share titles or artwork.
+**Discover and search**
 
-NSFW exclusion is on by default and applies to discovery, search, saved-title
-details, chapters, and reader entry. It requires the website's non-adult flag and
-verified genre metadata; unknown or conflicting classifications are hidden. The
-site has no verified granular age-rating taxonomy, so selective age ratings are
-not offered. Paperback's conservative Mature badge is not an all-ages guarantee.
-Website labels can be incomplete, and downloaded pages cannot be revoked.
+- Popular Series, Latest Updates and the homepage-linked genre archives preserve
+  native order and continuation. Archives load lazily with bounded page metadata.
+- Popular and Latest share homepage metadata rather than fetching each card's
+  details. Pagination removes repeated canonical IDs, not distinct source titles.
+- Search keeps the site's native filters and query behavior.
 
-Search preserves the site's query behavior, including its limitations: long
-punctuated titles can return unrelated native matches, and some numeric author
-queries redirect to the homepage and report an error. Try a short title fragment
-or another author spelling. Alternative-title text is preserved without guessing
-translations or merging separate source entries. Only publicly listed chapters
-are returned, which may be a recent subset rather than every historical release.
+**Details and reader**
+
+- Original titles, full alternatives, available metadata and public chapter
+  identities are preserved. Five-star review scores use Paperback's normalized
+  0–1 scale; missing or invalid scores are omitted.
+- Reader pages keep source order. Only publicly listed chapters are returned,
+  which can be a recent subset rather than every historical release.
+
+**Settings and limitations**
+
+- NSFW exclusion is on by default across browsing, saved details, chapters and
+  reader entry. It requires the source's non-adult flag and verified genre metadata;
+  unknown or conflicting classifications are hidden.
+- The site has no verified granular age taxonomy. The conservative Mature badge
+  is not an all-ages guarantee, and downloaded pages cannot be revoked.
+- Long punctuated searches can return unrelated native matches; some numeric
+  author queries redirect to the homepage and report an error. Try a shorter title
+  fragment or another author spelling. Separate entries and aliases are not merged
+  or translated to compensate.
+
+Implementation: [`src/ManhwaNex`](src/ManhwaNex).
+
+</details>
+
+<details>
+<summary>VortexScans</summary>
+
+[VortexScans](https://vortexscans.org/) is a native Paperback source.
+
+**Discover and search**
+
+- Featured, Popular Today and Most Popular retain the website's curated order.
+  Browse releases, Collections and Genres chips open their distinct destinations;
+  Latest remains available without a duplicate whole-feed Discover section.
+- Shared homepage data avoids per-title enrichment. Search provides source genres,
+  inclusion/exclusion, status, type and supported sorting filters.
+
+**Details and reader**
+
+- Canonical IDs, available original titles, source metadata and public chapter
+  identities are retained. Original covers are preferred when the response supplies
+  them; reader checks verify complete ordered pages and actual image bytes.
+- Details may legitimately have no description. The extension does not invent a
+  synopsis or substitute generic search-engine text.
+
+**Settings and limitations**
+
+- NSFW exclusion is on by default and uses actual source warning labels.
+  Unknown/incomplete labels remain visible with a conservative Mature badge,
+  not a fabricated adult classification or all-ages guarantee.
+- The filter applies to Discover, search, saved details, chapters and reading;
+  demographic/relationship tags do not determine it. Downloaded pages cannot be revoked.
+- Locked chapters are excluded. Cloudflare/vShield challenges use Paperback's
+  supported resolution flow; access restrictions and TLS safeguards remain intact.
+
+Implementation: [`src/VortexScans`](src/VortexScans).
 
 </details>
