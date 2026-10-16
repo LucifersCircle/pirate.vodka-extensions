@@ -48,7 +48,7 @@ import { TestSuite } from "./suite.js";
 // No saved HTML, alternate parser, or replacement source implementation is used.
 class DiscoveryProbe extends PaperbackInterceptor {
   readonly requests: Request[] = [];
-  readonly responses: { request: Request; html: string }[] = [];
+  readonly responses: { request: Request; response: Response; html: string }[] = [];
   gate?: (request: Request, data: ArrayBuffer) => Promise<ArrayBuffer>;
   override async interceptRequest(request: Request): Promise<Request> {
     if (request.url.startsWith(`${BASE_URL}/`)) this.requests.push(request);
@@ -56,12 +56,12 @@ class DiscoveryProbe extends PaperbackInterceptor {
   }
   override async interceptResponse(
     request: Request,
-    _response: Response,
+    response: Response,
     data: ArrayBuffer,
   ): Promise<ArrayBuffer> {
     const result = this.gate ? await this.gate(request, data) : data;
     if (request.url.startsWith(`${BASE_URL}/`))
-      this.responses.push({ request, html: Application.arrayBufferToUTF8String(result) });
+      this.responses.push({ request, response, html: Application.arrayBufferToUTF8String(result) });
     return result;
   }
 }
@@ -818,6 +818,7 @@ export async function runTests(logger: TestLogger) {
           (chip) => readGenreRoute(chip.searchQuery.metadata) === "action",
         )!.searchQuery;
         const probe = new DiscoveryProbe(`MangaSushi.genre-progress-${mode}-test`);
+        const schedule = Application.scheduleRequest;
         let firstCards = "",
           firstHTML = "",
           active = false;
@@ -836,8 +837,7 @@ export async function runTests(logger: TestLogger) {
           if (!active || typeof request.body !== "string") return data;
           const body = requestParameters(request.body);
           if (body.get("template") !== "madara-core/content/content-archive") return data;
-          if (mode === "stalled" || (mode === "duplicates" && body.get("page") === "1"))
-            return encodeHTML(firstCards);
+          if (mode === "duplicates" && body.get("page") === "1") return encodeHTML(firstCards);
           if (mode === "excluded" && body.get("page") === "1") {
             const $ = cheerio.load(html);
             expect($(".page-item-detail.manga").length).to.be.greaterThan(0);
@@ -855,20 +855,66 @@ export async function runTests(logger: TestLogger) {
           const count = probe.requests.length,
             responseStart = probe.responses.length;
           if (mode === "stalled") {
+            // These deliberately repeated cards come from this run's first page.
+            // Do not fetch ten provider pages whose contents would be discarded.
+            const seed = probe.responses.find(
+              ({ request }) => request.url === `${BASE_URL}/manga-genre/action/`,
+            )!;
+            const cursor = JSON.stringify(first.metadata);
+            expect(nativeFirst.next!.page).to.equal(1);
+            expect(nativeFirst.next!.template).to.equal("madara-core/content/content-archive");
+            const fields: string[] = [];
+            const pending: [string, unknown][] = Object.entries(nativeFirst.next!.vars).map(
+              ([key, value]) => [`vars[${key}]`, value],
+            );
+            while (pending.length) {
+              const [key, value] = pending.shift()!;
+              if (value !== null && typeof value === "object")
+                pending.unshift(
+                  ...Object.entries(value).map(([child, entry]): [string, unknown] => [
+                    `${key}[${child}]`,
+                    entry,
+                  ]),
+                );
+              else {
+                const text =
+                  typeof value === "string"
+                    ? value
+                    : typeof value === "number" || typeof value === "boolean"
+                      ? String(value)
+                      : "";
+                fields.push(`${encodeURIComponent(key)}=${encodeURIComponent(text)}`);
+              }
+            }
+            const requests: Request[] = [];
+            const replay: typeof schedule = async (request) => {
+              requests.push(request);
+              expect(requests.length).to.be.at.most(10);
+              expect(request.url).to.equal(`${BASE_URL}/wp-admin/admin-ajax.php`);
+              expect(request.method).to.equal("POST");
+              expect(request.body).to.equal(
+                [
+                  "action=madara_load_more",
+                  `page=${requests.length}`,
+                  "template=madara-core%2Fcontent%2Fcontent-archive",
+                  ...fields,
+                ].join("&"),
+              );
+              return [{ ...seed.response, url: request.url }, encodeHTML(firstCards)];
+            };
+            Application.scheduleRequest = replay;
+            if (Application.scheduleRequest !== replay)
+              throw new Error(
+                "Native runtime does not allow replacing Application.scheduleRequest",
+              );
             await rejects(
               () => MangaSushi.getSearchResults(query, first.metadata),
               /no visible progress in ten source pages/i,
             );
-            const requests = probe.requests.slice(count);
             expect(requests).to.have.length(10);
-            expect(
-              requests.every(
-                (request) =>
-                  typeof request.body === "string" &&
-                  requestParameters(request.body).get("template") ===
-                    "madara-core/content/content-archive",
-              ),
-            ).to.equal(true);
+            expect(JSON.stringify(first.metadata)).to.equal(cursor);
+            expect(probe.requests).to.have.length(count);
+            expect(probe.responses).to.have.length(responseStart);
           } else {
             const next = await MangaSushi.getSearchResults(query, first.metadata);
             const requests = probe.requests.slice(count),
@@ -931,6 +977,7 @@ export async function runTests(logger: TestLogger) {
               .some((request) => request.url.startsWith(`${BASE_URL}/manga/`)),
           ).to.equal(false);
         } finally {
+          Application.scheduleRequest = schedule;
           probe.unregisterInterceptor();
           await settings.setExcludeNSFW(true);
         }
