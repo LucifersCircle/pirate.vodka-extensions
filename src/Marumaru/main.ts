@@ -1,8 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright © 2026 Lucifers Circle */
-
 import {
-  BasicRateLimiter,
   DiscoverSectionType,
   type Chapter,
   type ChapterDetails,
@@ -19,18 +17,18 @@ import Config from "./pbconfig";
 import {
   DOMAIN,
   id,
-  parseCatalog,
+  parseListing,
+  parseWork,
   parseDetail,
   parseReader,
-  parseSearch,
-  type Detail,
-} from "./MarumaruParser";
-import { documentParts } from "./MarumaruURLs";
-import { renderedHTML } from "./renderedTransport";
-import { MarumaruInterceptor } from "./network";
+  readerURL,
+  type APIDetail,
+} from "./MarumaruAPI";
+import { fetchJSON, MarumaruInterceptor, MarumaruRateLimiter } from "./network";
 import {
   allowed,
   badge,
+  batchPolicy,
   currentPolicy,
   issue,
   nativePolicy,
@@ -38,9 +36,8 @@ import {
   requireAllowed,
 } from "./policy";
 import { chapters, sourceManga } from "./mapping";
-
-type Cached = { detail: Detail; at: number };
-type Cursor = { scope: string; url: string; at: number };
+type Cached = { detail: APIDetail; at: number; sourceAdult: boolean };
+type Cursor = { scope: string; page: number; at: number };
 const empty = (value: unknown): boolean => {
   if (value == null) return true;
   if (typeof value !== "object" || Array.isArray(value) || Reflect.ownKeys(value).length)
@@ -57,7 +54,7 @@ const empty = (value: unknown): boolean => {
 };
 export class MarumaruExtension implements ExtensionImpl<typeof Config> {
   private readonly interceptor = new MarumaruInterceptor("Marumaru.site");
-  private readonly rateLimiter = new BasicRateLimiter("Marumaru.rate", {
+  private readonly rateLimiter = new MarumaruRateLimiter("Marumaru.rate", {
     numberOfRequests: 1,
     bufferInterval: 1,
     ignoreImages: true,
@@ -75,15 +72,23 @@ export class MarumaruExtension implements ExtensionImpl<typeof Config> {
     currentPolicy(saved);
     let cached = this.cache.get(work);
     if (!cached || cached.at + 60000 <= Date.now()) {
-      const html = await renderedHTML(`${DOMAIN}/manhwa/${work}`);
-      cached = { detail: parseDetail(html, work), at: Date.now() };
+      const metadata = parseWork(await fetchJSON(`${DOMAIN}/api/works/${work}`), work),
+        at = Date.now();
+      currentPolicy(saved);
+      requireAllowed(work, metadata.explicitlyAdult, at);
+      const detail = parseDetail(metadata, await fetchJSON(metadata.episodesUrl));
+      currentPolicy(saved);
+      cached = { detail, at, sourceAdult: detail.explicitlyAdult };
       this.cache.set(work, cached);
       while (this.cache.size > 16) this.cache.delete(this.cache.keys().next().value!);
     }
     currentPolicy(saved);
-    const adult = requireAllowed(work, cached.detail.explicitlyAdult, cached.at);
-    issue(cached.detail.cover, work, adult, cached.at);
-    return { detail: { ...cached.detail, explicitlyAdult: adult }, at: cached.at };
+    const adult = batchPolicy(() => {
+      const adult = requireAllowed(work, cached!.sourceAdult, cached!.at);
+      issue(cached!.detail.cover, work, cached!.sourceAdult, cached!.at);
+      return adult;
+    });
+    return { ...cached, detail: { ...cached.detail, explicitlyAdult: adult } };
   }
   async getDiscoverSections(): Promise<DiscoverSection[]> {
     nativePolicy();
@@ -120,51 +125,51 @@ export class MarumaruExtension implements ExtensionImpl<typeof Config> {
     if (title.length > 300) throw new Error("Marumaru search is too long.");
     const saved = nativePolicy(),
       scope = JSON.stringify([title, saved]);
-    let url = title
-      ? `${DOMAIN}/search?q=${encodeURIComponent(title)}&kind=manhwa`
-      : `${DOMAIN}/manhwa`;
+    let page = 0;
     if (!empty(metadata)) {
       if (
         !metadata ||
         typeof metadata !== "object" ||
         Array.isArray(metadata) ||
         typeof metadata.cursor !== "string" ||
-        Object.keys(metadata).some((key) => key !== "cursor")
+        Object.keys(metadata).some((k) => k !== "cursor")
       )
         throw new Error("Invalid Marumaru continuation.");
       const cursor = this.cursors.get(metadata.cursor);
       if (!cursor || cursor.scope !== scope || cursor.at + 600000 <= Date.now())
         throw new Error("Marumaru continuation expired or changed; restart search.");
-      url = cursor.url;
+      page = cursor.page;
     }
-    const html = await renderedHTML(url),
+    const url = title
+      ? `${DOMAIN}/api/search?q=${encodeURIComponent(title)}&page=${page}&media=MANHWA&sort=LATEST`
+      : `${DOMAIN}/api/works?mediaType=MANHWA&page=${page}&size=49`;
+    const listing = parseListing(await fetchJSON(url), page, !!title),
       at = Date.now();
     currentPolicy(saved);
-    const listing = title ? parseSearch(html, url) : parseCatalog(html, url);
-    const items: SearchResultItem[] = [];
-    for (const card of listing.items) {
-      const adult = observe(card.id, false, at);
-      if (!allowed(adult)) continue;
-      issue(card.cover, card.id, adult, at);
-      items.push({
-        mangaId: card.id,
-        title: card.title,
-        imageUrl: card.cover,
-        contentRating: badge(adult),
-      });
-    }
+    const items: SearchResultItem[] = batchPolicy(() =>
+      listing.items.flatMap((card) => {
+        const adult = observe(card.id, card.explicitlyAdult, at);
+        if (!allowed(adult)) return [];
+        issue(card.cover, card.id, card.explicitlyAdult, at);
+        return [
+          {
+            mangaId: card.id,
+            title: card.title,
+            imageUrl: card.cover,
+            contentRating: badge(adult),
+          },
+        ];
+      }),
+    );
     currentPolicy(saved);
     if (listing.items.length && !items.length)
       throw new Error(
         "Paperback's content filters exclude this Marumaru page. Unclassified titles use Mature compatibility, not a source age rating.",
       );
     let next: Metadata | undefined;
-    if (listing.next) {
-      const parsed = documentParts(listing.next);
-      if (Number(parsed.query.page) > 10000)
-        throw new Error("Marumaru continuation exceeds its page limit.");
+    if (listing.nextPage !== undefined) {
       const key = `${Date.now()}:${++this.sequence}`;
-      this.cursors.set(key, { scope, url: listing.next, at });
+      this.cursors.set(key, { scope, page: listing.nextPage, at });
       while (this.cursors.size > 128) this.cursors.delete(this.cursors.keys().next().value!);
       next = { cursor: key };
     }
@@ -182,14 +187,20 @@ export class MarumaruExtension implements ExtensionImpl<typeof Config> {
     const work = id(chapter.sourceManga.mangaId),
       episode = id(chapter.chapterId),
       saved = nativePolicy();
-    const { detail, at } = await this.detail(work, saved);
+    const { detail, at, sourceAdult } = await this.detail(work, saved);
     const selected = detail.chapters.find((entry) => entry.id === episode);
     if (!selected || selected.sourceNumber !== chapter.chapNum)
       throw new Error("Marumaru chapter identity does not match its current title inventory.");
-    const pages = parseReader(await renderedHTML(`${DOMAIN}/manhwa/${work}/${episode}`), episode);
+    const pages = parseReader(
+      await fetchJSON(readerURL(detail.episodesUrl, work, episode)),
+      work,
+      selected,
+    );
     currentPolicy(saved);
-    requireAllowed(work, detail.explicitlyAdult, at);
-    for (const page of pages) issue(page, work, detail.explicitlyAdult, at, episode);
+    batchPolicy(() => {
+      requireAllowed(work, sourceAdult, at);
+      for (const page of pages) issue(page, work, sourceAdult, at, episode);
+    });
     return { id: episode, mangaId: work, pages };
   }
 }

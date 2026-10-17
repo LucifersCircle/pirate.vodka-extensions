@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 import { ContentRating, type SourceManga, type Chapter } from "@paperback/types";
-import { DOMAIN, type Detail } from "./MarumaruParser";
+import { DOMAIN, type Detail } from "./MarumaruAPI";
 export function sourceManga(detail: Detail): SourceManga {
   return {
     mangaId: detail.id,
@@ -8,7 +8,7 @@ export function sourceManga(detail: Detail): SourceManga {
       primaryTitle: detail.title,
       secondaryTitles: [],
       thumbnailUrl: detail.cover,
-      synopsis: detail.summary,
+      synopsis: detail.summary ?? "",
       author: detail.author,
       contentRating: detail.explicitlyAdult ? ContentRating.ADULT : ContentRating.MATURE,
       shareUrl: `${DOMAIN}/manhwa/${detail.id}`,
@@ -22,7 +22,7 @@ export function sourceManga(detail: Detail): SourceManga {
       ...(detail.rating === undefined ? {} : { rating: detail.rating }),
       additionalInfo: {
         sourceContentRating: detail.explicitlyAdult
-          ? "Source explicitly marks 19"
+          ? "Source explicitly marks adult"
           : "Unclassified; Mature is a compatibility fallback, not a site age rating.",
       },
     },
