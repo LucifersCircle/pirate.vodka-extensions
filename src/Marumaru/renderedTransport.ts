@@ -5,7 +5,15 @@ import * as cheerio from "cheerio";
 import { validateDocumentURL } from "./MarumaruURLs";
 import { fetchDocument } from "./network";
 
-type Snapshot = { ok: boolean; code?: string; url: string; baseURI: string; html?: string };
+type ReaderProgress = { cuts: number; ready: number; missing: number; undecoded: number };
+type Snapshot = {
+  ok: boolean;
+  code?: string;
+  url: string;
+  baseURI: string;
+  html?: string;
+  readerProgress?: ReaderProgress;
+};
 const RESULT_KEY = "__paperbackMarumaruDOMResult__";
 
 // Independent DOM-only implementation. This is not a token/network hook.
@@ -15,6 +23,9 @@ export function collectDOM(expected: string, key: string): void {
   target[key] = new Promise<Snapshot>((resolve) => {
     let interval: ReturnType<typeof setInterval> | undefined;
     let deadline: ReturnType<typeof setTimeout> | undefined;
+    let hardDeadline: ReturnType<typeof setTimeout> | undefined;
+    let waitingForDocument = false;
+    let readerProgress: ReaderProgress | undefined;
     let observer: MutationObserver | undefined;
     let done = false;
     let previous = "";
@@ -33,6 +44,8 @@ export function collectDOM(expected: string, key: string): void {
       done = true;
       if (interval !== undefined) clearInterval(interval);
       if (deadline !== undefined) clearTimeout(deadline);
+      if (hardDeadline !== undefined) clearTimeout(hardDeadline);
+      if (waitingForDocument) document.removeEventListener("DOMContentLoaded", startReadiness);
       observer?.disconnect();
       resolve({
         ok: code === undefined,
@@ -40,6 +53,7 @@ export function collectDOM(expected: string, key: string): void {
         url: location.href,
         baseURI: document.baseURI,
         ...(html === undefined ? {} : { html }),
+        ...(readerProgress === undefined ? {} : { readerProgress }),
       });
     };
     const serialize = (elements: Element[]) =>
@@ -57,21 +71,24 @@ export function collectDOM(expected: string, key: string): void {
       const pager = () => serialize([...document.querySelectorAll("a.pager-btn")]);
       if (/^\/manhwa\/[1-9]\d*\/[1-9]\d*$/.test(path)) {
         const cuts = [...document.querySelectorAll(".vw-cut.theme-viewer-image")];
+        readerProgress = { cuts: cuts.length, ready: 0, missing: 0, undecoded: 0 };
         if (!cuts.length) return;
         if (cuts.length > 1000) {
           finish("reader-limit");
           return;
         }
-        const pending = cuts.find((cut) => {
+        let pending: Element | undefined;
+        for (const cut of cuts) {
           const images = cut.querySelectorAll("img");
           const image = images[0];
-          return (
-            images.length !== 1 ||
-            !image?.complete ||
-            image.naturalWidth <= 0 ||
-            image.naturalHeight <= 0
-          );
-        });
+          if (images.length !== 1 || !image) {
+            readerProgress.missing++;
+            pending ??= cut;
+          } else if (!image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) {
+            readerProgress.undecoded++;
+            pending ??= cut;
+          } else readerProgress.ready++;
+        }
         if (pending) {
           pending.scrollIntoView({ block: "center" });
           return;
@@ -232,7 +249,19 @@ export function collectDOM(expected: string, key: string): void {
     observer = new MutationObserver(inspect);
     observer.observe(document, { childList: true, subtree: true, attributes: true });
     interval = setInterval(inspect, 150);
-    deadline = setTimeout(() => finish("render-timeout"), 18000);
+    // The bootstrap runs in <head>, before the site's module has hydrated. Give
+    // DOM readiness its own bounded budget after DOMContentLoaded, as with the
+    // observed normal browser flow, while keeping a whole-operation deadline.
+    const startReadiness = () => {
+      waitingForDocument = false;
+      if (!done && deadline === undefined)
+        deadline = setTimeout(() => finish("render-timeout"), 18000);
+    };
+    hardDeadline = setTimeout(() => finish("render-timeout"), 28000);
+    if (document.readyState === "loading") {
+      waitingForDocument = true;
+      document.addEventListener("DOMContentLoaded", startReadiness, { once: true });
+    } else startReadiness();
     inspect();
   });
 }
@@ -291,7 +320,18 @@ export function renderedHTML(url: string): Promise<string> {
       ].includes(code ?? "")
         ? code
         : "invalid-result";
-      throw new Error(`Marumaru native DOM rendering failed (${safe}).`);
+      const progress = result?.readerProgress;
+      const validProgress =
+        progress &&
+        [progress.cuts, progress.ready, progress.missing, progress.undecoded].every(
+          (value) => Number.isSafeInteger(value) && value >= 0 && value <= 1000,
+        ) &&
+        progress.ready + progress.missing + progress.undecoded === progress.cuts;
+      const detail =
+        safe === "render-timeout" && validProgress
+          ? `; reader ${progress.ready}/${progress.cuts} ready, ${progress.missing} missing, ${progress.undecoded} undecoded`
+          : "";
+      throw new Error(`Marumaru native DOM rendering failed (${safe}${detail}).`);
     }
     if (!result.html || result.html.length > 4000000)
       throw new Error("Marumaru returned an invalid DOM snapshot.");
