@@ -169,6 +169,31 @@ void test("CAPTCHA/security gates are sticky and cleanup occurs without solving"
   }
 });
 
+void test("Identity failure diagnostics expose only known fixed stages", async () => {
+  const known = fixture({
+    error: "not logged",
+    code: "operation",
+    reason: "document-identity-changed",
+    stage: "final-loader",
+  });
+  await assert.rejects(
+    known.host.executeInWebView(context()),
+    /document-identity-changed; final-loader/,
+  );
+  const unknown = fixture({
+    error: "not logged",
+    code: "operation",
+    reason: "document-identity-changed",
+    stage: "private-secret",
+  });
+  await assert.rejects(
+    unknown.host.executeInWebView(context()),
+    (error) =>
+      error.message.includes("document-identity-changed") &&
+      !error.message.includes("private-secret"),
+  );
+});
+
 void test("Lost session-creation response still attempts destruction; no execution retry", async () => {
   const calls = [];
   const host = createPaperbackTestWebView({

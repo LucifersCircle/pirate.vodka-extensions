@@ -32,17 +32,29 @@ WORLD = 'paperback-test-safety'
 BINDING = '__paperback_test_safety__'
 GATES = frozenset({'captcha-visible', 'certificate-marker', 'internal-page',
                    'document-identity-changed', 'tls-resource-error'})
+IDENTITY_STAGES = frozenset({'same-document-event', 'main-frame-url', 'main-frame-recommit',
+                            'main-response-redirect', 'main-request-identity', 'isolated-observer',
+                            'safety-before-inject', 'safety-after-inject', 'inject-result',
+                            'final-frame-url', 'final-loader'})
 
 
 class WebViewFailure(Exception):
     """Only fixed, non-sensitive codes may cross the HTTP bridge."""
-    def __init__(self, reason, code='operation'):
+    def __init__(self, reason, code='operation', stage=None):
         super().__init__(reason)
         self.reason, self.code = reason, code
+        self.stage = stage if stage in IDENTITY_STAGES else None
 
 
-def fail(reason, code='operation'):
-    raise WebViewFailure(reason, code)
+def fail(reason, code='operation', stage=None):
+    raise WebViewFailure(reason, code, stage)
+
+
+def failure_payload(error):
+    result = {'error': 'Paperback test WebView failed', 'code': error.code, 'reason': error.reason}
+    if error.stage in IDENTITY_STAGES:
+        result['stage'] = error.stage
+    return result
 
 
 def assert_document_url(value):
@@ -320,7 +332,8 @@ class ChromiumHTMLHost:
             reason = notice.get('reason')
             if reason in GATES:
                 fail(reason, 'captcha' if reason == 'captcha-visible' else
-                     'security' if reason != 'document-identity-changed' else 'operation')
+                     'security' if reason != 'document-identity-changed' else 'operation',
+                     stage='isolated-observer' if reason == 'document-identity-changed' else None)
         elif method == 'Network.loadingFailed' and re.search(r'ERR_CERT_|ERR_SSL_', data.get('errorText', '')):
             fail('tls-resource-error', 'security')
         elif method == 'Security.certificateError':
@@ -328,11 +341,16 @@ class ChromiumHTMLHost:
         elif method == 'Page.javascriptDialogOpening':
             fail('unexpected-dialog')
         elif method == 'Page.navigatedWithinDocument' and session == self.session and data.get('frameId') == self.frame:
-            fail('document-identity-changed')
+            # SPAs may replaceState with the same URL without changing document
+            # identity. Accept only the exact expected URL; no URL normalization.
+            if data.get('url') != self.payload['source']['baseUrl']:
+                fail('document-identity-changed', stage='same-document-event')
         elif method == 'Page.frameNavigated' and session == self.session and data['frame']['id'] == self.frame:
             frame = data['frame']
-            if frame.get('url') != self.payload['source']['baseUrl'] or self.committed:
-                fail('document-identity-changed')
+            if frame.get('url') != self.payload['source']['baseUrl']:
+                fail('document-identity-changed', stage='main-frame-url')
+            if self.committed:
+                fail('document-identity-changed', stage='main-frame-recommit')
             self.loader, self.committed = frame.get('loaderId'), True
         elif method == 'Page.domContentEventFired' and session == self.session and self.committed:
             self.ready = True
@@ -354,10 +372,10 @@ class ChromiumHTMLHost:
             # unchanged, not with a fabricated successful response. Independent
             # Network/Security TLS events still terminate the operation.
             if main and 300 <= data.get('responseStatusCode', 0) < 400:
-                fail('document-identity-changed')
+                fail('document-identity-changed', stage='main-response-redirect')
         elif main:
             if self.injected or url != self.payload['source']['baseUrl'] or request.get('method') != 'GET':
-                fail('document-identity-changed')
+                fail('document-identity-changed', stage='main-request-identity')
             self.injected = True
             # Exact UTF-8 supplied HTML. No base tag, URL stub, bootstrap, fixture,
             # CSP or JavaScript substitution is introduced by this host.
@@ -388,7 +406,7 @@ class ChromiumHTMLHost:
                 fail('private-subresource')
         self.call('Fetch.continueRequest', {'requestId': identifier}, session)
 
-    def check_safety(self):
+    def check_safety(self, stage):
         # A synchronous scan in each isolated realm closes the gap between the
         # last DOM mutation, its observer notification, and the final result.
         if self.frame not in self.safety_contexts.values():
@@ -402,7 +420,8 @@ class ChromiumHTMLHost:
             reason = result.get('result', {}).get('value')
             if reason in GATES:
                 fail(reason, 'captcha' if reason == 'captcha-visible' else
-                     'security' if reason != 'document-identity-changed' else 'operation')
+                     'security' if reason != 'document-identity-changed' else 'operation',
+                     stage=stage if reason == 'document-identity-changed' else None)
 
     def run(self):
         self.context = self.call('Target.createBrowserContext', {'disposeOnDetach': True})['browserContextId']
@@ -418,7 +437,7 @@ class ChromiumHTMLHost:
             self.pump()
         if not self.injected or not self.committed:
             fail('document-not-supplied')
-        self.check_safety()
+        self.check_safety('safety-before-inject')
         expression = evaluation_expression(self.payload)
         result = self.call('Runtime.evaluate', {'expression': expression, 'awaitPromise': True,
                            'returnByValue': True, 'timeout': max(1, int(self.remaining() * 1000))}, self.session)
@@ -428,16 +447,18 @@ class ChromiumHTMLHost:
         if type(value) is not dict:
             fail('evaluation-failed')
         if value.get('error') in {'callback-rejected', 'document-identity-changed', 'serialization-error', 'result-too-large'}:
-            fail(value['error'])
+            fail(value['error'], stage='inject-result' if value['error'] == 'document-identity-changed' else None)
         if (value.get('url') != self.payload['source']['baseUrl'] or not isinstance(value.get('encoded'), str)
                 or len(value['encoded'].encode('utf-8')) > MAX_RESULT):
             fail('invalid-result')
         # A round trip flushes safety notices queued alongside the result before
         # success. It also verifies the real loader did not change undetected.
         frame = self.call('Page.getFrameTree', session=self.session)['frameTree']['frame']
-        if frame.get('url') != value['url'] or frame.get('loaderId') != self.loader:
-            fail('document-identity-changed')
-        self.check_safety()
+        if frame.get('url') != value['url']:
+            fail('document-identity-changed', stage='final-frame-url')
+        if frame.get('loaderId') != self.loader:
+            fail('document-identity-changed', stage='final-loader')
+        self.check_safety('safety-after-inject')
         return {'url': value['url'], 'value': strict_json(value['encoded'])}
 
     def cleanup(self):
@@ -504,7 +525,7 @@ def register(app):
                 lock.release()
         except WebViewFailure as error:
             response.status = 409 if error.code in ('captcha', 'security') else 502
-            return {'error': 'Paperback test WebView failed', 'code': error.code, 'reason': error.reason}
+            return failure_payload(error)
         except TimeoutError:
             response.status = 502
             return {'error': 'Paperback test WebView failed', 'code': 'operation', 'reason': 'operation-timeout'}

@@ -105,8 +105,27 @@ class ProtocolTests(unittest.TestCase):
         bridge = RecordingHost()
         with self.assertRaises(host.WebViewFailure):
             bridge.request_paused(paused(responseStatusCode=302), 'main')
-        with self.assertRaises(host.WebViewFailure):
-            bridge.event({'method':'Page.navigatedWithinDocument','sessionId':'main','params':{'frameId':'frame','url':URL}})
+        for changed in (URL + '?page=2', URL + '#fragment', URL + '/456', 'https://other.example/'):
+            with self.subTest(changed=changed), self.assertRaises(host.WebViewFailure) as caught:
+                bridge.event({'method':'Page.navigatedWithinDocument','sessionId':'main','params':{'frameId':'frame','url':changed}})
+            self.assertEqual(caught.exception.stage, 'same-document-event')
+
+    def test_exact_same_url_history_event_preserves_identity(self):
+        bridge = RecordingHost(); bridge.committed = True; bridge.loader = 'original-loader'
+        bridge.event({'method':'Page.navigatedWithinDocument','sessionId':'main',
+                      'params':{'frameId':'frame','url':URL,'navigationType':'historyApi'}})
+        self.assertEqual(bridge.loader, 'original-loader')
+        self.assertTrue(bridge.committed)
+        self.assertEqual(bridge.calls, [])
+
+    def test_identity_stage_output_is_fixed_enum_only(self):
+        for stage in host.IDENTITY_STAGES:
+            result = host.failure_payload(host.WebViewFailure('document-identity-changed', stage=stage))
+            self.assertEqual(result, {'error':'Paperback test WebView failed','code':'operation',
+                                     'reason':'document-identity-changed','stage':stage})
+        for stage in (None, URL, '<html>private</html>', 'unexpected-stage'):
+            result = host.failure_payload(host.WebViewFailure('document-identity-changed', stage=stage))
+            self.assertNotIn('stage', result)
 
     def test_unmodified_public_https_resource_methods_and_redirects(self):
         bridge = RecordingHost()
@@ -199,10 +218,11 @@ class ProtocolTests(unittest.TestCase):
 
 class ProtocolSocket:
     """Minimal deterministic CDP peer, not a web-provider response fixture."""
-    def __init__(self, evaluation_error=False, timeout=False, cleanup_error=False):
+    def __init__(self, evaluation_error=False, timeout=False, cleanup_error=False, same_url_event=False, final_loader='loader'):
         self.queue, self.sent = [], []
         self.loaded = self.closed = False
         self.evaluation_error, self.timeout, self.cleanup_error = evaluation_error, timeout, cleanup_error
+        self.same_url_event, self.final_loader = same_url_event, final_loader
 
     def __enter__(self): return self
     def __exit__(self, *args): self.closed = True
@@ -214,7 +234,7 @@ class ProtocolSocket:
         elif method == 'Target.createTarget': result = {'targetId':'target'}
         elif method == 'Target.attachToTarget': result = {'sessionId':'main'}
         elif method == 'Page.getFrameTree':
-            result = {'frameTree':{'frame':{'id':'frame','url':URL if self.loaded else 'about:blank','loaderId':'loader'}}}
+            result = {'frameTree':{'frame':{'id':'frame','url':URL if self.loaded else 'about:blank','loaderId':self.final_loader if self.loaded else 'loader'}}}
         elif method == 'Page.navigate':
             self.queue.append({'method':'Fetch.requestPaused','sessionId':'main','params':paused()})
             result = {'frameId':'frame','loaderId':'loader'}
@@ -227,6 +247,9 @@ class ProtocolSocket:
         elif method == 'Runtime.evaluate' and 'contextId' in message['params']:
             result = {'result':{'type':'undefined'}}
         elif method == 'Runtime.evaluate':
+            if self.same_url_event:
+                self.queue.append({'method':'Page.navigatedWithinDocument','sessionId':'main',
+                                   'params':{'frameId':'frame','url':URL,'navigationType':'historyApi'}})
             if self.timeout:
                 self.queue.append('timeout'); return
             result = {'exceptionDetails':{'text':'not returned to caller'}} if self.evaluation_error else {
@@ -266,6 +289,20 @@ class LifecycleTests(unittest.TestCase):
         evaluations=[item for item in socket.sent if item['method']=='Runtime.evaluate' and 'awaitPromise' in item['params']]
         self.assertTrue(evaluations[0]['params']['awaitPromise'])
         self.assertGreater(evaluations[0]['params']['timeout'],0)
+
+    def test_same_url_history_event_does_not_abort_lifecycle(self):
+        socket = ProtocolSocket(same_url_event=True)
+        self.assertEqual(self.execute(socket), {'url':URL,'value':{'protocol':True}})
+        self.assertTrue(socket.closed)
+
+    def test_same_url_history_event_does_not_relax_final_loader_guard(self):
+        socket = ProtocolSocket(same_url_event=True, final_loader='different-loader')
+        with self.assertRaises(host.WebViewFailure) as caught:
+            self.execute(socket)
+        self.assertEqual(caught.exception.reason, 'document-identity-changed')
+        self.assertEqual(caught.exception.stage, 'final-loader')
+        self.assertEqual(socket.sent[-1]['method'], 'Target.disposeBrowserContext')
+        self.assertTrue(socket.closed)
 
     def test_evaluation_failure_still_disposes(self):
         socket=ProtocolSocket(evaluation_error=True)

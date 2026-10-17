@@ -239,7 +239,21 @@ export function createPaperbackTestWebView({
         "unsupported-debugger-address",
       ];
       const reason = reasons.includes(result?.reason) ? result.reason : "unknown";
-      throw new Error(`Paperback WebView operation failed (${reason})`);
+      const stages = [
+        "same-document-event",
+        "main-frame-url",
+        "main-frame-recommit",
+        "main-response-redirect",
+        "main-request-identity",
+        "isolated-observer",
+        "safety-before-inject",
+        "safety-after-inject",
+        "inject-result",
+        "final-frame-url",
+        "final-loader",
+      ];
+      const stage = stages.includes(result?.stage) ? `; ${result.stage}` : "";
+      throw new Error(`Paperback WebView operation failed (${reason}${stage})`);
     }
     return result;
   }
