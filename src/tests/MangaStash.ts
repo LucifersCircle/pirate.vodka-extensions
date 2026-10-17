@@ -107,7 +107,7 @@ export async function runTests(logger: TestLogger) {
     expect(typeof Headers).to.equal("undefined");
     expect(typeof URLSearchParams).to.equal("undefined");
     expect(preferences().onlySafe).to.equal(false);
-    expect(info.version).to.equal("0.0.1-alpha.6");
+    expect(info.version).to.equal("0.0.1-alpha.7");
     expect(typeof Application.getState(PREFERENCES)).to.equal("string");
     expect((await MangaStash.getSettingsForm()).getSections()).not.to.be.empty;
   });
@@ -281,6 +281,69 @@ export async function runTests(logger: TestLogger) {
       expect(probe.requests.length).to.equal(before);
     },
   );
+  suite.test("covers: source-proven Kagurabachi alias preserves exact ownership and grants", async () => {
+    const id = "kagurabachi",
+      url = seriesURL(id),
+      before = probe.requests.length,
+      result = await MangaStash.getMangaDetails(id),
+      html = probe.responses.get(url)!,
+      $ = cheerio.load(html),
+      book = $("script[type='application/ld+json']")
+        .toArray()
+        .map((node) => JSON.parse($(node).html()!))
+        .filter((item) => item["@type"] === "Book");
+    expect(probe.requests.length).to.equal(before + 1);
+    expect($("link[rel='canonical']").attr("href")).to.equal(url);
+    expect(book.length).to.equal(1);
+    expect(book[0]["@id"]).to.equal(url);
+    expect(book[0].url).to.equal(url);
+    expect(book[0].image).to.equal(BASE_URL + "/content/covers/kagura-bachi.jpg");
+    expect($("meta[property='og:image']").attr("content")).to.equal(book[0].image);
+    expect(result.mangaInfo.thumbnailUrl).to.equal(book[0].image);
+    const aliases = [
+      book[0].image as string,
+      BASE_URL + "/content/covers/thumbnails/kagura-bachi.jpg",
+    ];
+    expect($(".series-cover img").attr("src")).to.equal(aliases[1]);
+    for (const value of aliases) {
+      expect(imageURL(value, id)).to.equal(value);
+      for (const owner of ["other", "kagura-bachi", "kagura--bachi"])
+        expect(() => imageURL(value, owner)).to.throw(/owner/);
+      expect(() => imageURL(value, id, id + "/chapter-1")).to.throw(/owner/);
+      for (const bad of [
+        value + "?x=1",
+        value + "#x",
+        value.replace(".jpg", ".webp"),
+        value.replace("kagura-bachi", "kagura--bachi"),
+        value.replace("mangastash.org", "other.example"),
+      ])
+        expect(() => imageURL(bad, id)).to.throw(/MangaStash/);
+    }
+    // Knowing a source-owned alias is not evidence that this exact URL was issued.
+    const issued = Application.getState(IMAGE_STORE);
+    try {
+      Application.setState([], IMAGE_STORE);
+      for (const value of aliases) expect(() => authorizeImage(value)).to.throw(/authorization/);
+    } finally {
+      Application.setState(issued, IMAGE_STORE);
+    }
+    expect(authorizeImage(result.mangaInfo.thumbnailUrl).id).to.equal(id);
+    const [response, data] = await Application.scheduleRequest({
+      url: result.mangaInfo.thumbnailUrl,
+      method: "GET",
+    });
+    expect(response.status).to.equal(200);
+    expect(response.headers["content-type"]).to.match(/^image\/jpe?g(?:;|$)/i);
+    expect(data.byteLength).to.be.greaterThan(1000);
+    const bytes = new Uint8Array(data);
+    expect(Array.from(bytes.subarray(0, 2))).to.deep.equal([0xff, 0xd8]);
+    expect(Array.from(bytes.subarray(bytes.length - 2))).to.deep.equal([0xff, 0xd9]);
+    logger.log("verifiedAliasCoverBytes", {
+      id,
+      url: result.mangaInfo.thumbnailUrl,
+      bytes: data.byteLength,
+    });
+  });
   suite.test("browse: exact declared controls and preserved real page-two scope", async () => {
     const first = await MangaStash.getSearchResults(browseQuery, undefined, SORTS[3]);
     expect(first.items).not.to.be.empty;

@@ -61,6 +61,16 @@ export const imageURL = (url: string, id: string, chapter?: string): string => {
   const p = sourceURL(url);
   if (p.query || !/\.(?:jpe?g|png|webp|avif)$/i.test(p.pathname))
     throw new Error("Invalid MangaStash image URL.");
+  // The canonical /kagurabachi/ Book metadata binds this exact filename to the work.
+  // Accept only its observed full/thumbnail paths; never normalize IDs or invent URLs.
+  const namedCover = [
+    "/content/covers/kagura-bachi.jpg",
+    "/content/covers/thumbnails/kagura-bachi.jpg",
+  ].includes(p.pathname)
+    ? id === "kagurabachi"
+    : new RegExp(`^/content/covers/(?:thumbnails/)?${id}\\.(?:jpe?g|png|webp|avif)$`, "i").test(
+        p.pathname,
+      );
   if (chapter !== undefined) {
     chapterURL(chapter, id);
     if (
@@ -71,9 +81,7 @@ export const imageURL = (url: string, id: string, chapter?: string): string => {
     )
       throw new Error("Wrong MangaStash reader image owner.");
   } else if (
-    !new RegExp(`^/content/covers/(?:thumbnails/)?${id}\\.(?:jpe?g|png|webp|avif)$`, "i").test(
-      p.pathname,
-    ) &&
+    !namedCover &&
     !new RegExp(`^/content/${id}/chapter-\\d+(?:\\.\\d+)?/[a-zA-Z0-9_-]+\\.[a-zA-Z]+$`).test(
       p.pathname,
     )
