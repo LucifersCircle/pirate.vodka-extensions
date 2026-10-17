@@ -87,12 +87,23 @@ fetch(payload.url, {
     credentials: 'include',
     cache: 'no-store',
     signal: AbortSignal.timeout(60000)
-}).then(async result => done({
-    url: result.url,
-    status: result.status,
-    headers: Object.fromEntries(result.headers.entries()),
-    body: await result.text()
-})).catch(error => done({error: String(error)}));
+}).then(async result => {
+    // Kagane API routes include binary covers. Never round-trip them through UTF-8.
+    const bytes = new Uint8Array(await result.arrayBuffer());
+    if (bytes.length > 16 * 1024 * 1024) throw new Error('Browser API response exceeds byte limit');
+    let binary = '';
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+    }
+    done({
+        url: result.url,
+        status: result.status,
+        headers: Object.fromEntries(result.headers.entries()),
+        body: btoa(binary),
+        encoding: 'base64',
+        byteLength: bytes.length
+    });
+}).catch(error => done({error: String(error)}));
 """
 
 # No caller-provided identity or credentials. Refuse redirects before following them.

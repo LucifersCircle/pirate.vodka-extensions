@@ -141,7 +141,24 @@ globalThis.fetch = async function paperbackTestFetch(input, init = {}) {
       }
       if (noveli && (!isNoveliMetadataURL(data.url) || data.url !== inputURL))
         throw new Error("Noveli browser metadata request redirected");
-      const response = new Response([204, 205, 304].includes(data.status) ? null : data.body, {
+      let body = data.body;
+      if (!noveli) {
+        // Match Chromium's explicit binary envelope. Legacy text would corrupt images.
+        if (
+          data.encoding !== "base64" ||
+          typeof body !== "string" ||
+          !Number.isSafeInteger(data.byteLength) ||
+          data.byteLength < 0 ||
+          data.byteLength > 16 * 1024 * 1024 ||
+          body.length !== Math.ceil(data.byteLength / 3) * 4
+        )
+          throw new Error("Invalid browser API binary envelope");
+        const bytes = Buffer.from(body, "base64");
+        if (bytes.length !== data.byteLength || bytes.toString("base64") !== body)
+          throw new Error("Invalid browser API binary envelope");
+        body = bytes;
+      }
+      const response = new Response([204, 205, 304].includes(data.status) ? null : body, {
         status: data.status,
         headers: data.headers,
       });
