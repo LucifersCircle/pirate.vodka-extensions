@@ -4,14 +4,15 @@
 import { ContentRating, SourceIntents, type ExtensionInfo } from "@paperback/types";
 export default {
   name: "Marumaru",
-  version: "0.0.1-alpha.1",
+  version: "0.0.1-alpha.2",
   icon: "icon.png",
   language: "ko",
   description:
-    "Experimental Korean manga catalog and reader from rendered public Marumaru pages. Native WebView validation is pending. Unclassified titles use Mature compatibility, not a source age rating. Explicit 19 warnings are preserved. Reload titles after restarting the source to refresh image access.",
+    "Korean manga catalog and reader through the site-advertised public API. Unclassified titles use Mature compatibility, not a source age rating. Explicit adult warnings and original chapter labels are preserved.",
   contentRating: ContentRating.ADULT,
   capabilities: [
     SourceIntents.CHAPTER_PROVIDING,
+    SourceIntents.CLOUDFLARE_BYPASS_PROVIDING,
     SourceIntents.DISCOVER_SECTION_PROVIDING,
     SourceIntents.SEARCH_RESULT_PROVIDING,
   ],
