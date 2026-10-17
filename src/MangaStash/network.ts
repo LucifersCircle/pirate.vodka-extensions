@@ -12,11 +12,17 @@ export class MangaStashInterceptor extends PaperbackInterceptor {
     return undefined;
   }
   override async interceptRequest(request: Request): Promise<Request> {
+    const userAgent = await Application.getDefaultUserAgent();
     const url = sourceURL(request.url);
     if (request.method !== "GET" || request.body !== undefined || request.cookies !== undefined)
       throw new Error("Unsupported MangaStash request.");
     if (!metadataRequests.has(url.href)) authorizeImage(url.href);
-    request.headers = { ...request.headers, referer: BASE_URL + "/", origin: BASE_URL };
+    request.headers = {
+      ...request.headers,
+      referer: BASE_URL + "/",
+      origin: BASE_URL,
+      "user-agent": userAgent,
+    };
     return request;
   }
   override async interceptResponse(

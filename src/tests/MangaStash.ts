@@ -56,6 +56,7 @@ class Probe extends PaperbackInterceptor {
   responses = new Map<string, string>();
   gate?: (request: Request, data: ArrayBuffer) => Promise<ArrayBuffer>;
   override async interceptRequest(request: Request) {
+    expect(request.headers?.["user-agent"]).to.equal(await Application.getDefaultUserAgent());
     this.requests.push(request);
     return request;
   }
@@ -106,7 +107,7 @@ export async function runTests(logger: TestLogger) {
     expect(typeof Headers).to.equal("undefined");
     expect(typeof URLSearchParams).to.equal("undefined");
     expect(preferences().onlySafe).to.equal(false);
-    expect(info.version).to.equal("0.0.1-alpha.5");
+    expect(info.version).to.equal("0.0.1-alpha.6");
     expect(typeof Application.getState(PREFERENCES)).to.equal("string");
     expect((await MangaStash.getSettingsForm()).getSections()).not.to.be.empty;
   });
