@@ -36,10 +36,10 @@ export function collectDOM(expected: string, key: string): void {
       observer?.disconnect();
       resolve({
         ok: code === undefined,
-        code,
+        ...(code === undefined ? {} : { code }),
         url: location.href,
         baseURI: document.baseURI,
-        html,
+        ...(html === undefined ? {} : { html }),
       });
     };
     const serialize = (elements: Element[]) =>

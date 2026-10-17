@@ -21,6 +21,7 @@ const cli = fileURLToPath(
   new URL("../node_modules/@paperback/toolchain/dist/cli.mjs", import.meta.url),
 );
 const bridge = fileURLToPath(new URL("./paperback-test-network.mjs", import.meta.url));
+const webView = fileURLToPath(new URL("./paperback-test-webview-preload.mjs", import.meta.url));
 console.log(`FlareSolverr: ${process.env.FLARESOLVERR_URL ?? "http://127.0.0.1:8191"}`);
 mkdirSync(fileURLToPath(new URL("../bundles/live-status", import.meta.url)), { recursive: true });
 function runCLI(sources, output) {
@@ -31,6 +32,8 @@ function runCLI(sources, output) {
       "--use-env-proxy",
       "--import",
       bridge,
+      "--import",
+      webView,
       cli,
       "test",
       "--noGenerate",
