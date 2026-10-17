@@ -302,6 +302,8 @@ void test("Noveli transport keeps raw guards, isolated sessions, native covers, 
       { method: "POST" },
       { body: "" },
       { headers: { Cookie: "x" } },
+      { headers: { Referer: "https://other.example/" } },
+      { headers: { Referer: `${origin}/`, Cookie: "x" } },
       { credentials: "include" },
       { proxy: "x" },
       { redirect: "follow" },
@@ -316,7 +318,15 @@ void test("Noveli transport keeps raw guards, isolated sessions, native covers, 
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, `${origin}/uploads/covers/valid.webp`);
     calls.length = 0;
-    await Promise.all([bridge(`${api}/tags`), bridge(`${api}/rankings`)]);
+    await bridge(`${origin}/uploads/covers/valid.webp`, {
+      headers: { Referer: `${origin}/` },
+    });
+    assert.equal(new Headers(calls[0].headers).get("referer"), `${origin}/`);
+    calls.length = 0;
+    await Promise.all([
+      bridge(`${api}/tags`),
+      bridge(`${api}/rankings`, { headers: { Referer: `${origin}/` } }),
+    ]);
     assert.equal(calls.filter((call) => call.payload?.cmd === "sessions.create").length, 1);
     assert.equal(calls.filter((call) => call.payload?.cmd === "request.get").length, 1);
     const requests = calls.filter((call) => call.url.endsWith("/browser/request"));

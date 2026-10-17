@@ -3,6 +3,7 @@
 /* Copyright © 2026 Lucifers Circle */
 
 import {
+  CloudflareError,
   ContentRating,
   PaperbackInterceptor,
   SourceIntents,
@@ -101,6 +102,7 @@ class Probe extends PaperbackInterceptor {
   override async interceptRequest(request: Request): Promise<Request> {
     if (request.url.startsWith(`${BASE}/`)) {
       this.requireAccess();
+      expect(request.headers?.referer).to.equal(`${BASE}/`);
       this.requests.push(request);
     }
     return request;
@@ -254,9 +256,22 @@ export async function runTests(logger: TestLogger) {
     // Register last to observe, not alter, the same response before source rejection.
     probe.registerInterceptor();
     expect(sourceInfo.name).to.equal("Noveli");
+    expect(sourceInfo.capabilities).to.include(SourceIntents.CLOUDFLARE_BYPASS_PROVIDING);
     expect(sourceInfo.capabilities).to.include(SourceIntents.CHAPTER_PROVIDING);
     expect(sourceInfo.capabilities).to.include(SourceIntents.SEARCH_RESULT_PROVIDING);
     expect(sourceInfo.capabilities).to.include(SourceIntents.DISCOVER_SECTION_PROVIDING);
+  });
+  test("transport: Noveli Referer and Paperback Cloudflare challenge handling", async () => {
+    const guard = new NoveliInterceptor("Noveli.challenge", new ContentPolicy());
+    const request: Request = { url: `${BASE}/api/novels/tags`, method: "GET", headers: { accept: "application/json" } };
+    expect(await guard.interceptRequest(request)).to.equal(request);
+    expect(request.headers).to.deep.equal({ accept: "application/json", referer: `${BASE}/` });
+    let failure: unknown;
+    try {
+      await guard.interceptResponse(request, { url: request.url, status: 403, headers: { "cf-mitigated": "challenge" }, cookies: [] } as Response, buffer("challenge"));
+    } catch (error) { failure = error; }
+    expect(failure).to.be.instanceOf(CloudflareError);
+    expect((failure as CloudflareError).resolutionRequest).to.deep.equal({ url: request.url, method: "GET" });
   });
   test("getSortingOptions: all six source-supported sorts", async () => {
     expect((await Noveli.getSortingOptions({ title: "" })).map((sort) => sort.id)).to.deep.equal(SORT_IDS);

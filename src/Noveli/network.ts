@@ -1,7 +1,13 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright © 2026 Lucifers Circle */
 
-import { PaperbackInterceptor, type Request, type Response } from "@paperback/types";
+import {
+  CloudflareError,
+  PaperbackInterceptor,
+  type Request,
+  type Response,
+} from "@paperback/types";
+import { BASE_URL } from "./models";
 import { isMetadataURL } from "./urls";
 import { nativePolicy, type ContentPolicy } from "./policy";
 const responseType = (response: Response): string =>
@@ -34,8 +40,8 @@ export class NoveliInterceptor extends PaperbackInterceptor {
     if (request.method !== "GET" || request.body !== undefined || request.cookies !== undefined)
       throw new Error("Unsupported Noveli request.");
     if (!isMetadataURL(request.url)) this.policy.authorize(request.url);
-    // The proven contract is anonymous GET. Do not inject authentication, cookies,
-    // browser execution, referer, origin, or alternate user-agent headers.
+    request.headers = request.headers ?? {};
+    request.headers.referer = `${BASE_URL}/`;
     return request;
   }
   override async interceptResponse(
@@ -44,6 +50,13 @@ export class NoveliInterceptor extends PaperbackInterceptor {
     data: ArrayBuffer,
   ): Promise<ArrayBuffer> {
     nativePolicy();
+    const cfMitigated = response.headers?.["cf-mitigated"];
+    if (cfMitigated === "challenge") {
+      throw new CloudflareError({
+        url: request.url,
+        method: request.method ?? "GET",
+      });
+    }
     checkResponse(request, response);
     if (!isMetadataURL(request.url)) {
       this.policy.authorize(request.url);

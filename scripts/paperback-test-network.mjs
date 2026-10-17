@@ -79,6 +79,9 @@ globalThis.fetch = async function paperbackTestFetch(input, init = {}) {
     init.headers ?? (input instanceof Request ? input.headers : undefined),
   );
   if (noveli) {
+    // Chromium supplies Referer for metadata; native covers retain the original init.
+    if ([...headers].length === 1 && headers.get("referer") === "https://noveli.to/")
+      headers.delete("referer");
     // URL/Request objects have already discarded raw traversal/authority ambiguity.
     if (
       typeof input !== "string" ||
