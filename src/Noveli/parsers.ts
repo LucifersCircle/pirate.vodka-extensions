@@ -19,7 +19,7 @@ import {
   words,
   type Rating,
 } from "./models";
-import { chapterListURL, coverURL } from "./urls";
+import { chapterListURL, coverURL, labelId } from "./urls";
 import { classify } from "./policy";
 export type Card = SearchResultItem & { sourceRating: Rating };
 type Endpoint = { id: string; number: number };
@@ -178,9 +178,13 @@ export const parseDetail = (raw: unknown, id: string): Detail => {
           {
             id: "genres",
             title: "Genres",
-            tags: genres.map((label) => ({ id: label, title: label })),
+            tags: genres.map((label) => ({ id: labelId(label), title: label })),
           },
-          { id: "tags", title: "Tags", tags: tags.map((label) => ({ id: label, title: label })) },
+          {
+            id: "tags",
+            title: "Tags",
+            tags: tags.map((label) => ({ id: labelId(label), title: label })),
+          },
         ],
         additionalInfo: info,
         shareUrl: `${BASE_URL}/novel/${slug}`,
