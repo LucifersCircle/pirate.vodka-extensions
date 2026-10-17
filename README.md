@@ -12,8 +12,11 @@ dispatch. GitHub may delay scheduled runs. Pull requests run live checks for
 affected sources; shared or uncertain changes require the full live suite.
 Merges do not start another live run. Full static checks and bundles still run on
 pull requests and relevant `0.9/stable` pushes; publication remains independent.
-The status below records the last full sweep and its tested commit, not a pass
-for newer commits. Click a run link for logs and downloadable results.
+The badge above tracks the latest Live Extension Tests run on 0.9/stable,
+the default branch. The report below records that branch’s last full scheduled
+or manually dispatched sweep and its tested commit. Later pull-request checks
+can pass without updating either; neither is a pass for newer commits. Open the
+workflow run list for PR-specific results.
 
 <!-- LIVE_TEST_STATUS:START -->
 
@@ -277,6 +280,7 @@ the extensions you want in Paperback.
 - [MangaStash](src/MangaStash)
 - [MangaSushi](src/MangaSushi)
 - [ManhwaNex](src/ManhwaNex)
+- [Noveli](src/Noveli) · native HTML novels, Paperback only
 - [VortexScans](src/VortexScans)
 
 Source settings and website access restrictions vary. Review each extension's
@@ -306,7 +310,9 @@ npm run test:extensions
 ```
 
 The suites exercise initialisation, sorting, search, manga details, chapters,
-nonempty chapter page URLs, and every discover section. Results are written to
+ordered comic image pages or native novel HTML, and every discover section.
+Source-specific reader checks validate actual image bodies or source-faithful
+prose and canonical chapter identity. Results are written to
 `bundles/live-test-results.json`. Failed or missing suites return a nonzero exit
 code. Extension directories with a `pbconfig.ts` are discovered automatically, so
 new extensions must have a passing suite and appear in the status report.
@@ -538,6 +544,43 @@ Implementation: [`src/MangaSushi`](src/MangaSushi).
   or translated to compensate.
 
 Implementation: [`src/ManhwaNex`](src/ManhwaNex).
+
+</details>
+
+<details>
+<summary>Noveli</summary>
+
+[Noveli](https://noveli.to/) is a native HTML-novel source for Paperback only.
+
+**Discover and search**
+
+- Translated by Novelito, Trending Novels, Latest Chapter Updates, Top Rated by
+  Readers and Completed & Bingeable use the site's finite ranked lists. Explore
+  Web Novels follows the paginated catalog. The repeated Spotlight feed is omitted.
+- Search preserves the site's genre, status and sort choices, exact novel IDs and
+  continuation. Shared bulk responses avoid per-title card enrichment.
+
+**Details and reader**
+
+- Source titles, authors, aliases, synopsis and genre labels are retained. Valid
+  five-point review scores use Paperback's normalized 0–1 rating scale.
+- The complete source chapter list preserves canonical IDs and chapter numbers.
+  Missing literary volumes use zero; catalog ingestion timestamps are not
+  presented as chapter publication dates.
+- Native HTML keeps the source's visible paragraph order, Unicode and credits.
+  Text is escaped rather than executing site markup or scripts; source-hidden
+  display records remain hidden. No prose is converted into images.
+
+**Settings and limitations**
+
+- Explicit adult source labels take precedence; unclassified novels use
+  Paperback's conservative Mature classification, not an all-ages guarantee.
+- Reading is limited to anonymously available source chapters. Login, paid access,
+  access restrictions and TLS safeguards are not bypassed.
+- Website/browser and native-suite checks do not establish physical Paperback
+  rendering. Actual app presentation remains subject to the app's HTML reader.
+
+Implementation: [`src/Noveli`](src/Noveli).
 
 </details>
 

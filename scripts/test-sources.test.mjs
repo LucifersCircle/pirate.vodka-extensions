@@ -57,3 +57,12 @@ void test("missing, failing, empty, malformed, and inconsistent Hijala reports f
   }
   assert.deepEqual(failedSources(null, ["Hijala"]), ["Hijala"]);
 });
+
+void test("Noveli is automatically selected and a missing novel suite fails closed", () => {
+  const sources = discoverSources();
+  assert.ok(sources.includes("Noveli"));
+  assert.deepEqual(selectSources(["Noveli"]), ["Noveli"]);
+  const report = Object.fromEntries(sources.map((name) => [name, suite()]));
+  delete report.Noveli;
+  assert.deepEqual(failedSources(report, sources), ["Noveli"]);
+});
