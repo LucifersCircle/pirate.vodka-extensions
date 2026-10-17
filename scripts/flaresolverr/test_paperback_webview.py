@@ -115,6 +115,40 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual([call[0] for call in bridge.calls], ['Fetch.continueRequest', 'Fetch.continueRequest'])
         self.assertTrue(all(call[1] == {'requestId':'request'} for call in bridge.calls))
 
+    def test_failed_main_document_still_fails(self):
+        bridge = RecordingHost()
+        with self.assertRaises(host.WebViewFailure) as caught:
+            bridge.request_paused(paused(responseErrorReason='Failed'), 'main')
+        self.assertEqual(caught.exception.reason, 'resource-load-failed')
+        self.assertEqual(bridge.calls, [])
+
+    def test_ordinary_failed_subresources_retain_browser_failure(self):
+        for reason in ('Failed', 'NameNotResolved', 'BlockedByClient'):
+            for resource, frame in [('Script', 'frame'), ('Image', 'frame'), ('Document', 'child-frame')]:
+                bridge = RecordingHost()
+                with self.subTest(reason=reason, resource=resource):
+                    bridge.request_paused(paused('https://cdn.example.com/resource', resource,
+                                                frame=frame, responseErrorReason=reason), 'main')
+                    self.assertEqual(bridge.calls, [('Fetch.continueRequest', {'requestId':'request'}, 'main')])
+                    self.assertFalse(bridge.injected)
+
+    def test_tls_after_subresource_response_error_still_fails(self):
+        for session in ('main', 'child-frame'):
+            for method, params in [
+                ('Network.loadingFailed', {'errorText':'net::ERR_CERT_AUTHORITY_INVALID'}),
+                ('Network.loadingFailed', {'errorText':'net::ERR_SSL_PROTOCOL_ERROR'}),
+                ('Security.certificateError', {'errorType':'net::ERR_CERT_DATE_INVALID'}),
+            ]:
+                bridge = RecordingHost(); bridge.sessions.add('child-frame')
+                with self.subTest(session=session, method=method, params=params):
+                    bridge.request_paused(paused('https://cdn.example.com/resource', 'Script',
+                                                responseErrorReason='Failed'), session)
+                    self.assertEqual(bridge.calls[-1], ('Fetch.continueRequest', {'requestId':'request'}, session))
+                    with self.assertRaises(host.WebViewFailure) as caught:
+                        bridge.event({'method':method, 'sessionId':session, 'params':params})
+                    self.assertEqual(caught.exception.reason, 'tls-resource-error')
+                    self.assertEqual(caught.exception.code, 'security')
+
     def test_private_or_non_https_subresources_stop(self):
         for url in ['http://example.com/a', 'https://127.0.0.1/a', 'https://10.1.2.3/a',
                     'https://localhost/a', 'https://host.internal/a', 'file:///tmp/x']:

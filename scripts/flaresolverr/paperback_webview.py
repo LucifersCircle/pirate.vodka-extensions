@@ -347,8 +347,12 @@ class ChromiumHTMLHost:
         url, resource = request['url'], data.get('resourceType')
         main = session == self.session and data.get('frameId') == self.frame and resource == 'Document'
         if 'responseStatusCode' in data or 'responseErrorReason' in data:
-            if data.get('responseErrorReason'):
+            if main and data.get('responseErrorReason'):
                 fail('resource-load-failed')
+            # Ordinary subresource failures belong to Chromium and the source's
+            # own DOM readiness/completeness checks. Continue the failed request
+            # unchanged, not with a fabricated successful response. Independent
+            # Network/Security TLS events still terminate the operation.
             if main and 300 <= data.get('responseStatusCode', 0) < 400:
                 fail('document-identity-changed')
         elif main:
