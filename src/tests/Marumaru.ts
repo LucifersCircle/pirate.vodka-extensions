@@ -7,6 +7,7 @@ import { parseListing, parseWork, parseDetail, parseReader, readerURL } from "..
 import { MarumaruInterceptor, MarumaruRateLimiter } from "../Marumaru/network";
 import { authorizeImage, batchPolicy, nativePolicy, observe } from "../Marumaru/policy";
 import { TestSuite } from "./suite";
+import { chapters as mapChapters } from "../Marumaru/mapping";
 import { binaryCoverWebP, binaryCoverJPEG } from "../Marumaru/images";
 
 // Inspect only responses actually consumed by the normal source callbacks.
@@ -31,6 +32,10 @@ class Probe extends PaperbackInterceptor {
 }
 const clone=<T>(value:T):T=>JSON.parse(JSON.stringify(value));
 const fail=async(fn:()=>Promise<unknown>,pattern:RegExp)=>{let error:unknown;try{await fn()}catch(e){error=e}expect(String(error)).to.match(pattern);};
+const visibleInventory=(actual:Chapter[],raw:any)=>{
+  const expected=raw.episodes.filter((e:any)=>e.ready!==false).sort((a:any,b:any)=>b.number-a.number).map((e:any)=>({id:String(e.id),number:e.number,title:e.title,date:new Date(e.published_at).toISOString()}));
+  expect(actual.map(c=>({id:c.chapterId,number:c.chapNum,title:c.title,date:c.publishDate?.toISOString()}))).to.deep.equal(expected);
+};
 const ROOT="https://marumaru105.com",LIST="https://api.storagewebtoon.store/api/v1/reader/A2/works/17155",READER="https://api.storagewebtoon.store/api/v1/reader/A2/episodes/21331";
 export async function runTests(logger:TestLogger){
   const suite=new TestSuite("Marumaru native API tests",logger),probe=new Probe("Marumaru.native-test-evidence");
@@ -67,15 +72,40 @@ export async function runTests(logger:TestLogger){
     expect(probe.requests.slice(before).map(r=>r.url)).to.deep.equal([`${ROOT}/api/works/17155`,LIST]);
     expect(detail.mangaInfo.primaryTitle).to.equal("라멘 아카네코");expect(detail.mangaInfo.author).to.equal("안갸맨");expect(detail.mangaInfo.synopsis.length).to.be.greaterThan(0);
   });
-  suite.test("Native cached inventory preserves all 103 special labels and SourceManga references",async()=>{
+  suite.test("Native cached inventory hides only explicit unready chapters without renumbering",async()=>{
     expect(detail,"Details prerequisite; no retry").not.to.equal(undefined);const before=probe.requests.length;chapters=await Marumaru.getChapters(detail!);expect(probe.requests.length).to.equal(before);
-    expect(chapters.length).to.equal(103);expect(chapters[0]?.chapterId).to.equal("1738175");expect(chapters.at(-1)?.chapterId).to.equal("21333");expect(new Set(chapters.map(c=>c.chapterId)).size).to.equal(chapters.length);
+    const raw=probe.json.get(LIST) as any;const complete=parseDetail(parseWork(probe.json.get(`${ROOT}/api/works/17155`),"17155"),raw);expect(complete.chapters.length).to.equal(raw.episodes.length);visibleInventory(chapters,raw);
+    expect(new Set(chapters.map(c=>c.chapterId)).size).to.equal(chapters.length);
     for(const c of chapters){expect(c.sourceManga).to.equal(detail);expect(c.sortingIndex).to.equal(c.chapNum);}
     const special=chapters.find(c=>c.chapterId==="21332");expect(special?.chapNum).to.equal(2);expect(special?.title).to.include("1-2화");
+    logger.log("availability17155",{published:complete.chapters.length,visible:chapters.length,explicitlyUnready:raw.episodes.filter((e:any)=>e.ready===false).length});
   });
-  suite.test("Native 15-chapter title does not require a nonexistent DOM next control",async()=>{
-    expect(catalogReady,"Catalog prerequisite; no retry").to.equal(true);const single=await Marumaru.getMangaDetails("21861"),all=await Marumaru.getChapters(single);
-    expect(single.mangaInfo.primaryTitle).to.equal("은거 마왕님의 회춘귀환");expect(all.length).to.equal(15);expect(all[0].chapterId).to.equal("3086149");expect(all.at(-1)?.chapterId).to.equal("1385655");for(const c of all)expect(c.sourceManga).to.equal(single);
+  suite.test("Native user-reported title filters the actual bulk availability without per-chapter requests",async()=>{
+    expect(catalogReady,"Catalog prerequisite; no retry").to.equal(true);const before=probe.requests.length,single=await Marumaru.getMangaDetails("21861"),all=await Marumaru.getChapters(single);
+    const list=LIST.replace("17155","21861");expect(probe.requests.slice(before).map(r=>r.url)).to.deep.equal([`${ROOT}/api/works/21861`,list]);
+    expect(single.mangaInfo.primaryTitle).to.equal("은거 마왕님의 회춘귀환");const raw=probe.json.get(list) as any;visibleInventory(all,raw);for(const c of all)expect(c.sourceManga).to.equal(single);
+    for(const id of ["1931031","3086149"]){const advertised=raw.episodes.find((e:any)=>String(e.id)===id);expect(advertised).not.to.equal(undefined);expect(all.some(c=>c.chapterId===id)).to.equal(advertised.ready!==false);}
+    logger.log("availability21861",{published:raw.episodes.length,visible:all.length,explicitlyUnready:raw.episodes.filter((e:any)=>e.ready===false).length});
+  });
+  suite.test("Native list refresh rechecks current availability with two bulk requests only",async()=>{
+    expect(detail,"Details prerequisite; no retry").not.to.equal(undefined);const before=probe.requests.length;chapters=await Marumaru.getChapters(detail!);
+    expect(probe.requests.slice(before).map(r=>r.url)).to.deep.equal([`${ROOT}/api/works/17155`,LIST]);visibleInventory(chapters,probe.json.get(LIST));
+  });
+  suite.test("Live-derived availability changes retain unknowns and validate hidden rows before filtering",async()=>{
+    expect(detail).not.to.equal(undefined);const before=probe.requests.length,work=parseWork(probe.json.get(`${ROOT}/api/works/17155`),"17155"),raw=probe.json.get(LIST) as any;
+    const target=String(raw.episodes[0].id);
+    const visible=(value:any)=>mapChapters(parseDetail(work,value),detail!);
+    for(const flag of [true,false,undefined,null,"false",0]){
+      const changed=clone(raw);changed.episodes[0].ready=flag;
+      const parsed=parseDetail(work,changed);expect(parsed.chapters.length).to.equal(raw.episodes.length);
+      expect(visible(changed).some(c=>c.chapterId===target)).to.equal(flag!==false);
+    }
+    const allHidden=clone(raw);for(const row of allHidden.episodes)row.ready=false;expect(visible(allHidden)).to.deep.equal([]);
+    allHidden.episodes[0].ready=true;expect(visible(allHidden).map(c=>c.chapterId)).to.deep.equal([target]);
+    const duplicate=clone(raw);duplicate.episodes[0]={...duplicate.episodes[1],ready:false};expect(()=>visible(duplicate)).to.throw(/Duplicate/);
+    const malformed=clone(raw);malformed.episodes[0].ready=false;malformed.episodes[0].published_at="invalid";expect(()=>visible(malformed)).to.throw(/publication date/);
+    const missing=clone(raw);missing.episodes.pop();expect(()=>visible(missing)).to.throw(/inventory/);
+    expect(probe.requests.length).to.equal(before);
   });
   suite.test("Native reader preserves the complete 19-image API manifest and real first/last bytes",async()=>{
     expect(chapters,"Inventory prerequisite; no retry").not.to.equal(undefined);const selected=chapters!.find(c=>c.chapterId==="21331");expect(selected).not.to.equal(undefined);
@@ -96,6 +126,7 @@ export async function runTests(logger:TestLogger){
     const other=clone(reader) as any;other.item.work_id=21861;expect(()=>parseReader(other,"17155",selected)).to.throw(/identity/);
     const gap=clone(reader) as any;gap.item.body.splice(3,1);expect(()=>parseReader(gap,"17155",selected)).to.throw(/incomplete/);
     const unready=clone(reader) as any;unready.item.ready=false;expect(()=>parseReader(unready,"17155",selected)).to.throw(/not ready/);
+    const empty=clone(reader) as any;empty.item.body=[];expect(()=>parseReader(empty,"17155",selected)).to.throw(/inventory missing/);
     const catalog=clone(probe.json.get(`${ROOT}/api/works?mediaType=MANHWA&page=0&size=49`)) as any;catalog.items[0].adult="false";expect(()=>parseListing(catalog,0,false)).to.throw(/classification/);
     expect(()=>readerURL(LIST,"21861","21331")).to.throw(/episode-list/);expect(probe.requests.length).to.equal(before);
   });

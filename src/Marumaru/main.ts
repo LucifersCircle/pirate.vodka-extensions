@@ -36,7 +36,7 @@ import {
   requireAllowed,
 } from "./policy";
 import { chapters, sourceManga } from "./mapping";
-type Cached = { detail: APIDetail; at: number; sourceAdult: boolean };
+type Cached = { detail: APIDetail; at: number; sourceAdult: boolean; chaptersListed?: boolean };
 type Cursor = { scope: string; page: number; at: number };
 const empty = (value: unknown): boolean => {
   if (value == null) return true;
@@ -67,11 +67,11 @@ export class MarumaruExtension implements ExtensionImpl<typeof Config> {
     Application.setRedirectHandler(Application.Selector(this.interceptor, "handleRedirect"));
     this.rateLimiter.registerInterceptor();
   }
-  private async detail(work: string, saved: string): Promise<Cached> {
+  private async detail(work: string, saved: string, refreshChapters = false): Promise<Cached> {
     id(work);
     currentPolicy(saved);
     let cached = this.cache.get(work);
-    if (!cached || cached.at + 60000 <= Date.now()) {
+    if (!cached || cached.at + 60000 <= Date.now() || (refreshChapters && cached.chaptersListed)) {
       const metadata = parseWork(await fetchJSON(`${DOMAIN}/api/works/${work}`), work),
         at = Date.now();
       currentPolicy(saved);
@@ -88,6 +88,8 @@ export class MarumaruExtension implements ExtensionImpl<typeof Config> {
       issue(cached!.detail.cover, work, cached!.sourceAdult, cached!.at);
       return adult;
     });
+    // Share fresh details with the first list, but re-fetch on later list refreshes.
+    if (refreshChapters) cached.chaptersListed = true;
     return { ...cached, detail: { ...cached.detail, explicitlyAdult: adult } };
   }
   async getDiscoverSections(): Promise<DiscoverSection[]> {
@@ -180,7 +182,7 @@ export class MarumaruExtension implements ExtensionImpl<typeof Config> {
   }
   async getChapters(source: SourceManga): Promise<Chapter[]> {
     if (!source?.mangaInfo) throw new Error("Native Marumaru SourceManga is required.");
-    return chapters((await this.detail(source.mangaId, nativePolicy())).detail, source);
+    return chapters((await this.detail(source.mangaId, nativePolicy(), true)).detail, source);
   }
   async getChapterDetails(chapter: Chapter): Promise<ChapterDetails> {
     if (!chapter?.sourceManga?.mangaInfo) throw new Error("Native Marumaru Chapter is required.");
