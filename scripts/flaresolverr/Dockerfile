@@ -8,8 +8,14 @@ RUN --mount=type=secret,id=proxy_ca \
 
 # FlareSolverr disables TLS verification by default. Use Chromium's trust store.
 RUN sed -i '/options.add_argument.*--ignore-certificate-errors/d; /options.add_argument.*--ignore-ssl-errors/d' /app/utils.py
+# Refuse WebView execution if the browser accepts invalid certificates. Keep
+# ordinary Chromium TLS verification enabled for every source in this container.
+RUN sed -i '/options =.*ChromeOptions()/a\    options.set_capability("acceptInsecureCerts", False)' /app/utils.py \
+    && grep -q 'options.set_capability("acceptInsecureCerts", False)' /app/utils.py
 COPY --chmod=0444 browser_request.py /app/browser_request.py
 RUN sed -i '/^if __name__ == "__main__":/i\import browser_request\nbrowser_request.register(app)\n' /app/flaresolverr.py
+COPY --chmod=0444 paperback_webview.py /app/paperback_webview.py
+RUN sed -i '/^if __name__ == "__main__":/i\import paperback_webview\npaperback_webview.register(app)\n' /app/flaresolverr.py
 COPY --chmod=0555 start.sh /app/start-tests.sh
 USER flaresolverr
 ENTRYPOINT ["sh", "/app/start-tests.sh"]
