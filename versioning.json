@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-10-16T22:53:06.227Z",
+  "buildTime": "2026-10-17T00:45:46.655Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.92",
     "types": "1.0.0-alpha.92"
@@ -125,6 +125,28 @@
         }
       ],
       "id": "ManhwaNex"
+    },
+    {
+      "name": "Noveli",
+      "version": "0.0.1-alpha.1",
+      "icon": "icon.png",
+      "language": "en",
+      "description": "English web novels from Noveli, with search, curated lists and a text reader. Unclassified titles use Mature compatibility; source Adult warnings and Paperback’s filters are respected. Chapter publication dates are unavailable. Cover access may require reloading a title after restarting the source.",
+      "contentRating": "ADULT",
+      "capabilities": [
+        1,
+        4,
+        64
+      ],
+      "badges": [],
+      "developers": [
+        {
+          "name": "Lucifers Circle",
+          "website": "https://pirate.vodka",
+          "github": "https://github.com/LucifersCircle"
+        }
+      ],
+      "id": "Noveli"
     },
     {
       "name": "VortexScans",
