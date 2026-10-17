@@ -107,7 +107,7 @@ export async function runTests(logger: TestLogger) {
     expect(typeof Headers).to.equal("undefined");
     expect(typeof URLSearchParams).to.equal("undefined");
     expect(preferences().onlySafe).to.equal(false);
-    expect(info.version).to.equal("0.0.1-alpha.7");
+    expect(info.version).to.equal("0.0.1-alpha.8");
     expect(typeof Application.getState(PREFERENCES)).to.equal("string");
     expect((await MangaStash.getSettingsForm()).getSections()).not.to.be.empty;
   });
@@ -538,6 +538,32 @@ export async function runTests(logger: TestLogger) {
       logger.log("readerURLs", pages);
     },
   );
+  suite.test("reader: chapter-one number-only navigation preserves every page and real images", async () => {
+    const first = chapters.find((c) => c.chapterId === "ayashimon/chapter-1");
+    expect(first, "actual chapter-one regression canary").not.to.equal(undefined);
+    const result = await MangaStash.getChapterDetails(first!);
+    if (!("pages" in result)) throw new Error("Expected comic pages");
+    expect(result.id).to.equal(first!.chapterId);
+    expect(result.mangaId).to.equal(manga.mangaId);
+    const html = probe.responses.get(chapterURL(first!.chapterId, manga.mangaId))!,
+      $ = cheerio.load(html),
+      rows = $("#reader-pages > .reader-page").toArray(),
+      total = html.match(/^[ \t]*totalPages:\s*(\d+),[ \t]*$/m);
+    expect(total).not.to.equal(null);
+    expect(result.pages).to.have.length(Number(total![1]));
+    expect(result.pages).to.deep.equal(rows.map((row) => {
+      const img = $(row).find(".reader-page-inner > img");
+      return imageURL(img.attr("data-src") || img.attr("src") || "", manga.mangaId, first!.chapterId);
+    }));
+    for (const url of [result.pages[0], result.pages[result.pages.length - 1]]) {
+      const [response, data] = await Application.scheduleRequest({ url, method: "GET" });
+      expect(response.status).to.equal(200);
+      expect(response.headers["content-type"]).to.match(/^image\/jpe?g(?:;|$)/i);
+      const body = new Uint8Array(data);
+      expect(Array.from(body.subarray(0, 2))).to.deep.equal([0xff, 0xd8]);
+      expect(Array.from(body.subarray(body.length - 2))).to.deep.equal([0xff, 0xd9]);
+    }
+  });
   suite.test(
     "images: complete original cover and first/middle/last transport with exact persisted grants",
     async () => {
