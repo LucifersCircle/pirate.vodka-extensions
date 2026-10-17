@@ -6,6 +6,13 @@ import { validateDocumentURL } from "./MarumaruURLs";
 import { fetchDocument } from "./network";
 
 type ReaderProgress = { cuts: number; ready: number; missing: number; undecoded: number };
+type DetailProgress = {
+  page: number;
+  expected: number;
+  total: number;
+  rows: number;
+  collected: number;
+};
 type Snapshot = {
   ok: boolean;
   code?: string;
@@ -13,6 +20,8 @@ type Snapshot = {
   baseURI: string;
   html?: string;
   readerProgress?: ReaderProgress;
+  detailProgress?: DetailProgress;
+  failureStage?: string;
 };
 const RESULT_KEY = "__paperbackMarumaruDOMResult__";
 
@@ -26,6 +35,8 @@ export function collectDOM(expected: string, key: string): void {
     let hardDeadline: ReturnType<typeof setTimeout> | undefined;
     let waitingForDocument = false;
     let readerProgress: ReaderProgress | undefined;
+    let detailProgress: DetailProgress | undefined;
+    let failureStage: string | undefined;
     let observer: MutationObserver | undefined;
     let done = false;
     let previous = "";
@@ -54,8 +65,14 @@ export function collectDOM(expected: string, key: string): void {
         baseURI: document.baseURI,
         ...(html === undefined ? {} : { html }),
         ...(readerProgress === undefined ? {} : { readerProgress }),
+        ...(detailProgress === undefined ? {} : { detailProgress }),
+        ...(failureStage === undefined ? {} : { failureStage }),
       });
     };
+    function failDetail(stage: string): never {
+      failureStage = stage;
+      throw new Error("Marumaru detail guard failed");
+    }
     const serialize = (elements: Element[]) =>
       elements.map((element) => element.outerHTML).join("");
     const read = (): string | undefined => {
@@ -96,17 +113,24 @@ export function collectDOM(expected: string, key: string): void {
         return serialize(cuts);
       }
       if (/^\/manhwa\/[1-9]\d*$/.test(path)) {
+        detailProgress = {
+          page: 0,
+          expected: expectedPage,
+          total: 0,
+          rows: 0,
+          collected: chapterRows.length,
+        };
         const heroes = document.querySelectorAll(".hero-v2"),
           sections = document.querySelectorAll(".ep-section");
         const hero = heroes[0],
           section = sections[0];
         if (!hero?.querySelector(".hero-v2-title") || !section) return undefined;
-        if (heroes.length !== 1 || sections.length !== 1)
-          throw new Error("Marumaru detail identity is ambiguous");
+        if (heroes.length !== 1 || sections.length !== 1) failDetail("detail-ambiguous");
         const counts = section.querySelectorAll(".ep-section-count"),
           count = counts[0];
         const rows = [...section.querySelectorAll("a.ep-row-v2-link")];
         if (!count || !rows.length || section.querySelector(".ep-notice-body")) return undefined;
+        detailProgress.rows = rows.length;
         const rawCount = count.textContent?.trim() ?? "",
           total = Number(rawCount);
         if (
@@ -115,12 +139,13 @@ export function collectDOM(expected: string, key: string): void {
           !Number.isSafeInteger(total) ||
           total > 10000
         )
-          throw new Error("Marumaru chapter count is invalid or exceeds its limit");
+          failDetail("chapter-count-invalid");
+        detailProgress.total = total;
         const key = (href: string | null): string => {
           const path = href?.startsWith(expected + "/") ? href.slice(location.origin.length) : href;
           const prefix = location.pathname + "/";
           if (!path?.startsWith(prefix) || !/^[1-9]\d*$/.test(path.slice(prefix.length)))
-            throw new Error("Marumaru chapter link escaped title identity");
+            failDetail("chapter-link-identity");
           return path.slice(prefix.length);
         };
         const first = hero.querySelectorAll(".hero-v2-actions-bottom a.cta-ghost"),
@@ -128,7 +153,7 @@ export function collectDOM(expected: string, key: string): void {
         const firstLink = first[0],
           latestLink = latest[0];
         if (first.length !== 1 || latest.length !== 1 || !firstLink || !latestLink)
-          throw new Error("Marumaru chapter endpoints unavailable");
+          failDetail("chapter-endpoints");
         const firstID = key(firstLink.getAttribute("href")),
           latestID = key(latestLink.getAttribute("href"));
         const identity = JSON.stringify([
@@ -140,7 +165,7 @@ export function collectDOM(expected: string, key: string): void {
           hero.querySelector(".hero-v2-adult")?.textContent ?? "",
         ]);
         if (detailIdentity !== undefined && detailIdentity !== identity)
-          throw new Error("Marumaru detail changed during chapter pagination");
+          failDetail("detail-identity-drift");
         if (detailIdentity === undefined) {
           detailIdentity = identity;
           detailHero = hero.outerHTML;
@@ -151,38 +176,37 @@ export function collectDOM(expected: string, key: string): void {
           pager = pagers[0],
           active = pager?.querySelectorAll("a.pager-num.is-active");
         if (pagers.length > 1 || (pager && active?.length !== 1))
-          throw new Error("Marumaru chapter pagination is ambiguous");
+          failDetail("chapter-pager-ambiguous");
         const pageNumber = pager ? Number(active?.[0]?.textContent?.trim()) : 1;
         if (!Number.isSafeInteger(pageNumber) || pageNumber < 1 || pageNumber > 1000)
-          throw new Error("Marumaru chapter page is invalid");
+          failDetail("chapter-page-invalid");
+        detailProgress.page = pageNumber;
         if (pageNumber !== expectedPage) {
           if (previousRows && pageNumber === expectedPage - 1) return undefined;
-          throw new Error("Marumaru chapter page changed unexpectedly");
+          failDetail("chapter-page-unexpected");
         }
         const ids = rows.map((row) => key(row.getAttribute("href"))),
           signature = ids.join(",");
         // The page badge updates before the asynchronous row replacement.
         if (previousRows && signature === previousRows) return undefined;
         if (new Set(ids).size !== ids.length || ids.some((value) => chapterIDs.has(value)))
-          throw new Error("Marumaru chapter pagination repeats an identity");
-        if (!chapterRows.length && ids[0] !== latestID)
-          throw new Error("Marumaru chapter list does not begin at the latest episode");
+          failDetail("chapter-repeated-identity");
+        if (!chapterRows.length && ids[0] !== latestID) failDetail("chapter-latest-mismatch");
         rows.forEach((row) => {
           chapterIDs.add(key(row.getAttribute("href")));
           const html = row.outerHTML;
           chapterLength += html.length;
-          if (chapterLength > 4000000)
-            throw new Error("Marumaru chapter snapshot exceeds its limit");
+          if (chapterLength > 4000000) failDetail("chapter-snapshot-limit");
           chapterRows.push(html);
         });
-        if (chapterRows.length > total)
-          throw new Error("Marumaru chapter inventory exceeds its advertised count");
+        detailProgress.collected = chapterRows.length;
+        if (chapterRows.length > total) failDetail("chapter-count-exceeded");
         const next = pager
           ? [...pager.querySelectorAll<HTMLAnchorElement>("a.pager-btn")].filter(
               (link) => link.textContent?.trim() === "›",
             )
           : [];
-        if (next.length > 1) throw new Error("Marumaru chapter continuation is ambiguous");
+        if (next.length > 1) failDetail("chapter-continuation-ambiguous");
         const nextLink = next[0],
           enabled = !!nextLink && nextLink.getAttribute("aria-disabled") !== "true";
         if (chapterRows.length === total) {
@@ -191,7 +215,7 @@ export function collectDOM(expected: string, key: string): void {
             (pager && (!nextLink || nextLink.getAttribute("aria-disabled") !== "true")) ||
             ids[ids.length - 1] !== firstID
           )
-            throw new Error("Marumaru chapter inventory lacks a confirmed ending");
+            failDetail("chapter-ending-unconfirmed");
           completeDetail =
             detailHero +
             detailCount +
@@ -205,7 +229,7 @@ export function collectDOM(expected: string, key: string): void {
           nextLink.getAttribute("href") !== `#page-${expectedPage + 1}` ||
           expectedPage >= 1000
         )
-          throw new Error("Marumaru complete chapter continuation unavailable");
+          failDetail("chapter-continuation-unavailable");
         previousRows = signature;
         expectedPage++;
         nextLink.click();
@@ -331,7 +355,41 @@ export function renderedHTML(url: string): Promise<string> {
         safe === "render-timeout" && validProgress
           ? `; reader ${progress.ready}/${progress.cuts} ready, ${progress.missing} missing, ${progress.undecoded} undecoded`
           : "";
-      throw new Error(`Marumaru native DOM rendering failed (${safe}${detail}).`);
+      const stages = [
+        "detail-ambiguous",
+        "chapter-count-invalid",
+        "chapter-link-identity",
+        "chapter-endpoints",
+        "detail-identity-drift",
+        "chapter-pager-ambiguous",
+        "chapter-page-invalid",
+        "chapter-page-unexpected",
+        "chapter-repeated-identity",
+        "chapter-latest-mismatch",
+        "chapter-snapshot-limit",
+        "chapter-count-exceeded",
+        "chapter-continuation-ambiguous",
+        "chapter-ending-unconfirmed",
+        "chapter-continuation-unavailable",
+      ];
+      const stage = stages.includes(result?.failureStage ?? "")
+        ? `; stage ${result!.failureStage}`
+        : "";
+      const paging = result?.detailProgress;
+      const validPaging =
+        paging &&
+        [paging.page, paging.expected, paging.total, paging.rows, paging.collected].every(
+          (value) => Number.isSafeInteger(value) && value >= 0 && value <= 10000,
+        ) &&
+        paging.page <= 1000 &&
+        paging.expected >= 1 &&
+        paging.expected <= 1000;
+      const pagingDetail = validPaging
+        ? `; detail page ${paging.page}, expected ${paging.expected}, rows ${paging.rows}, collected ${paging.collected}/${paging.total}`
+        : "";
+      throw new Error(
+        `Marumaru native DOM rendering failed (${safe}${stage}${detail}${pagingDetail}).`,
+      );
     }
     if (!result.html || result.html.length > 4000000)
       throw new Error("Marumaru returned an invalid DOM snapshot.");
