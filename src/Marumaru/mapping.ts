@@ -31,14 +31,18 @@ export function sourceManga(detail: Detail): SourceManga {
 export function chapters(detail: Detail, source: SourceManga): Chapter[] {
   if (source.mangaId !== detail.id || !source.mangaInfo)
     throw new Error("Marumaru SourceManga identity mismatch");
-  return detail.chapters.map((chapter) => ({
-    chapterId: chapter.id,
-    sourceManga: source,
-    chapNum: chapter.sourceNumber,
-    title: chapter.title,
-    publishDate: chapter.date,
-    langCode: "ko",
-    sortingIndex: chapter.sourceNumber,
-    additionalInfo: { sourceNumber: String(chapter.sourceNumber) },
-  }));
+  // parseDetail validates the complete inventory before this availability filter.
+  // Missing or unknown readiness is not evidence that a chapter is unavailable.
+  return detail.chapters
+    .filter((chapter) => chapter.ready !== false)
+    .map((chapter) => ({
+      chapterId: chapter.id,
+      sourceManga: source,
+      chapNum: chapter.sourceNumber,
+      title: chapter.title,
+      publishDate: chapter.date,
+      langCode: "ko",
+      sortingIndex: chapter.sourceNumber,
+      additionalInfo: { sourceNumber: String(chapter.sourceNumber) },
+    }));
 }

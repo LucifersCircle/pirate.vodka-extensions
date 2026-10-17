@@ -10,6 +10,7 @@ export type Episode = {
   sourceNumber: number;
   title: string;
   date: Date;
+  ready?: boolean;
 };
 export type Detail = Card & {
   author?: string;
@@ -245,6 +246,7 @@ export function parseDetail(work: WorkResult, value: unknown): APIDetail {
         sourceNumber: number,
         title: text(item.title, "chapter title"),
         date: publicationDate(item.published_at),
+        ...(typeof item.ready === "boolean" ? { ready: item.ready } : {}),
       };
     })
     .sort((a, b) => b.sourceNumber - a.sourceNumber);
