@@ -13,12 +13,16 @@ import { binaryCoverWebP, binaryCoverJPEG } from "../Marumaru/images";
 // No saved provider fixture, substituted transport, WebView or extra oracle API.
 class Probe extends PaperbackInterceptor {
   requests:Request[]=[];
+  responses:{path:string;status:number;mime:string;bytes:number;challenge:boolean;sameURL:boolean}[]=[];
   json=new Map<string,unknown>();
   images=new Map<string,{response:Response;data:ArrayBuffer}>();
   override async interceptRequest(request:Request):Promise<Request>{this.requests.push(request);return request;}
   override async interceptResponse(request:Request,response:Response,data:ArrayBuffer):Promise<ArrayBuffer>{
+    const mime=Object.entries(response.headers).find(([k])=>k.toLowerCase()==="content-type")?.[1]??"";
+    const kind=/^application\/json(?:;|$)/i.test(mime)?"json":/^image\/(jpeg|png|webp)(?:;|$)/i.test(mime)?"image":/^application\/octet-stream(?:;|$)/i.test(mime)?"binary":/^text\/html(?:;|$)/i.test(mime)?"html":"other";
+    const challenge=Object.entries(response.headers).some(([key,value])=>key.toLowerCase()==="cf-mitigated"&&value.toLowerCase()==="challenge");
+    this.responses.push({path:request.url.split("?")[0],status:response.status,mime:kind,bytes:data.byteLength,challenge,sameURL:response.url===request.url});
     if(response.status===200){
-      const mime=Object.entries(response.headers).find(([k])=>k.toLowerCase()==="content-type")?.[1]??"";
       if(/^application\/json(?:;|$)/i.test(mime))this.json.set(request.url,JSON.parse(Application.arrayBufferToUTF8String(data)));
       else this.images.set(request.url,{response,data});
     }
@@ -43,9 +47,17 @@ export async function runTests(logger:TestLogger){
     firstIds=result.items.map(i=>i.mangaId);catalogCover=result.items[0].imageUrl;next=result.metadata;catalogReady=true;
     logger.log("catalogTransport",{requests:1,perTitle:0,count:result.items.length,webView:false});
   });
-  suite.test("Native response-scoped catalog continuation advances without overlap",async()=>{
+  suite.test("Native continuation matches the issued next offset-page response",async()=>{
     expect(catalogReady,"Catalog prerequisite; no retry").to.equal(true);expect(next).not.to.equal(undefined);
-    const result=await Marumaru.getSearchResults({title:""},next);expect(result.items.length).to.be.greaterThan(0);expect(result.items.some(i=>firstIds.includes(i.mangaId))).to.equal(false);
+    const before=probe.requests.length,result=await Marumaru.getSearchResults({title:""},next);
+    const url=`${ROOT}/api/works?mediaType=MANHWA&page=1&size=49`;
+    expect(probe.requests.slice(before).map(r=>r.url)).to.deep.equal([url]);
+    const expected=parseListing(probe.json.get(url),1,false);
+    expect(result.items.map(i=>({id:i.mangaId,title:i.title,cover:i.imageUrl}))).to.deep.equal(expected.items.map(i=>({id:i.id,title:i.title,cover:i.cover})));
+    expect(new Set(result.items.map(i=>i.mangaId)).size).to.equal(result.items.length);
+    // Offset pages are not a snapshot. Updates or tied ordering may overlap across requests.
+    const overlap=result.items.filter(i=>firstIds.includes(i.mangaId)).map(i=>i.mangaId);
+    logger.log("catalogContinuation",{page:1,count:result.items.length,overlapCount:overlap.length,overlapIds:overlap});
   });
   suite.test("Native queried API search retains Korean canonical identity",async()=>{
     expect(catalogReady,"Catalog prerequisite; no retry").to.equal(true);const result=await Marumaru.getSearchResults({title:"라멘 아카네코"});expect(result.items.some(i=>i.mangaId==="17155")).to.equal(true);expect(result.metadata).to.equal(undefined);
@@ -135,5 +147,5 @@ export async function runTests(logger:TestLogger){
     finally{Application.setState(raw,"Marumaru.imagePolicy.v1");}
     expect(detail!.mangaInfo.contentRating).to.equal(ContentRating.MATURE);
   });
-  try{await suite.run();}finally{probe.unregisterInterceptor();Application.setState(savedState,"Marumaru.imagePolicy.v1");}
+  try{await suite.run();}finally{logger.log("nativeResponses",probe.responses.slice(0,64));probe.unregisterInterceptor();Application.setState(savedState,"Marumaru.imagePolicy.v1");}
 }
