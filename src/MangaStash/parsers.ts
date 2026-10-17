@@ -413,7 +413,8 @@ export const parseReader = (html: string, chapter: Chapter): ChapterDetails => {
         throw new Error("Unsupported MangaStash readerConfig number.");
       values.set(key, value);
     } else if (["prevChapter", "nextChapter"].includes(key)) {
-      if (value !== "null" && !/^\{"number":\d+(?:\.\d+)?,"pages":\d+\}$/.test(value))
+      // Adjacent page counts are optional; this chapter still requires totalPages below.
+      if (value !== "null" && !/^\{"number":\d+(?:\.\d+)?(?:,"pages":\d+)?\}$/.test(value))
         throw new Error("Unsupported MangaStash readerConfig navigation literal.");
       values.set(key, value);
     } else throw new Error("Unknown MangaStash readerConfig key.");
