@@ -17,7 +17,16 @@ export class MarumaruInterceptor extends PaperbackInterceptor {
     if (request.method !== "GET" || request.body !== undefined || request.cookies !== undefined)
       throw new Error("Unsupported Marumaru request.");
     if (!documents.has(request.url)) authorizeImage(request.url);
-    // Retain Paperback's ordinary defaults. No identity, Origin, Referer or cookie override.
+    // Ask the current Paperback host for its own supported default. Never hardcode
+    // or copy another browser's identity, cookies, Origin or Referer.
+    if (!Object.keys(request.headers ?? {}).some((key) => key.toLowerCase() === "user-agent")) {
+      const userAgent = await Application.getDefaultUserAgent();
+      if (typeof userAgent !== "string" || !userAgent.trim() || /[\r\n]/.test(userAgent))
+        throw new Error("Paperback did not provide a valid default User-Agent.");
+      // Mutate the request itself: alpha.92's test host gives each interceptor
+      // the original request, so a returned replacement can be lost to the limiter.
+      request.headers = { ...request.headers, "user-agent": userAgent };
+    }
     return request;
   }
   override async interceptResponse(

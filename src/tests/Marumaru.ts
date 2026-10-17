@@ -51,7 +51,9 @@ export async function runTests(logger: TestLogger) {
   suite.test("Native chapter inventory preserves special source labels and references", async () => {
     expect(detail, "Native details prerequisite failed; no retry").not.to.equal(undefined);
     chapters = await Marumaru.getChapters(detail!);
-    expect(chapters.length).to.be.greaterThan(100);
+    expect(chapters.length, "Observed complete chapter inventory across four UI pages").to.equal(103);
+    expect(chapters[0]?.chapterId).to.equal("1738175");
+    expect(chapters.at(-1)?.chapterId).to.equal("21333");
     expect(new Set(chapters.map((chapter) => chapter.chapterId)).size).to.equal(chapters.length);
     for (const chapter of chapters) {
       expect(chapter.sourceManga).to.equal(detail);

@@ -32,7 +32,9 @@ function cover(value: string | undefined, workId: string): string {
   if (!value || /\/(?:\.|\.\.)$/.test(value)) throw new Error("Marumaru cover missing or invalid");
   if (
     !new RegExp(
-      "^https://peer\\.storagewebtoon\\.store/manhwa/" + id(workId) + "/[A-Za-z0-9._-]+$",
+      "^https://peer\\.storagewebtoon\\.store/(?:manhwa|webtoon)/" +
+        id(workId) +
+        "/[A-Za-z0-9._-]+$",
     ).test(value)
   )
     throw new Error("Marumaru cover identity does not match title");
@@ -83,6 +85,16 @@ export function parseDetail(html: string, workId: string): Detail {
   const $ = cheerio.load(html),
     title = $(".hero-v2-title").text().trim();
   if (!title) throw new Error("Marumaru rendered detail unavailable; no title was returned");
+  const chapterCount = $(".ep-section-count"),
+    rawTotal = chapterCount.text().trim(),
+    total = Number(rawTotal);
+  if (
+    chapterCount.length !== 1 ||
+    !/^[1-9]\d*$/.test(rawTotal) ||
+    !Number.isSafeInteger(total) ||
+    total > 10000
+  )
+    throw new Error("Marumaru complete chapter count unavailable");
   const chapters: Episode[] = [],
     seen = new Set<string>();
   $("a.ep-row-v2-link").each((_, element) => {
@@ -120,7 +132,8 @@ export function parseDetail(html: string, workId: string): Detail {
     seen.add(target.episodeId);
     chapters.push({ id: target.episodeId, workId, sourceNumber, title: label, date });
   });
-  if (!chapters.length) throw new Error("Marumaru chapter list unavailable");
+  if (chapters.length !== total)
+    throw new Error("Marumaru chapter inventory differs from its advertised count");
   const rawScore = $(".cs-rating-num strong").text().trim(),
     rawCount = $(".cs-rating-cnt strong").text().trim();
   const score = Number(rawScore),

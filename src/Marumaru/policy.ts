@@ -50,7 +50,7 @@ export function validateImage(url: string, work: string, episode?: string): void
   if (episode) id(episode);
   const pattern = episode
     ? `^https://peer\\.storagewebtoon\\.store/api/media/episode/${episode}/[1-9]\\d*\\.webp$`
-    : `^https://peer\\.storagewebtoon\\.store/manhwa/${work}/[A-Za-z0-9._-]+$`;
+    : `^https://peer\\.storagewebtoon\\.store/(?:manhwa|webtoon)/${work}/[A-Za-z0-9._-]+$`;
   if (/\/(?:\.|\.\.)$/.test(url) || !new RegExp(pattern).test(url))
     throw new Error("Invalid Marumaru image ownership.");
 }

@@ -19,6 +19,15 @@ export function collectDOM(expected: string, key: string): void {
     let done = false;
     let previous = "";
     let stableAt = 0;
+    const chapterRows: string[] = [],
+      chapterIDs = new Set<string>();
+    let detailIdentity: string | undefined,
+      detailHero = "",
+      detailCount = "";
+    let chapterLength = 0;
+    let expectedPage = 1,
+      previousRows = "",
+      completeDetail: string | undefined;
     const finish = (code: string | undefined, html?: string) => {
       if (done) return;
       done = true;
@@ -70,18 +79,120 @@ export function collectDOM(expected: string, key: string): void {
         return serialize(cuts);
       }
       if (/^\/manhwa\/[1-9]\d*$/.test(path)) {
-        const hero = document.querySelector(".hero-v2");
-        const rows = [...document.querySelectorAll("a.ep-row-v2-link")];
-        if (!hero?.querySelector(".hero-v2-title")?.textContent?.trim() || !rows.length) return;
-        if (rows.length > 20000) {
-          finish("chapter-limit");
-          return;
+        const heroes = document.querySelectorAll(".hero-v2"),
+          sections = document.querySelectorAll(".ep-section");
+        const hero = heroes[0],
+          section = sections[0];
+        if (!hero?.querySelector(".hero-v2-title") || !section) return undefined;
+        if (heroes.length !== 1 || sections.length !== 1)
+          throw new Error("Marumaru detail identity is ambiguous");
+        const counts = section.querySelectorAll(".ep-section-count"),
+          count = counts[0];
+        const rows = [...section.querySelectorAll("a.ep-row-v2-link")];
+        if (!count || !rows.length || section.querySelector(".ep-notice-body")) return undefined;
+        const rawCount = count.textContent?.trim() ?? "",
+          total = Number(rawCount);
+        if (
+          counts.length !== 1 ||
+          !/^[1-9]\d*$/.test(rawCount) ||
+          !Number.isSafeInteger(total) ||
+          total > 10000
+        )
+          throw new Error("Marumaru chapter count is invalid or exceeds its limit");
+        const key = (href: string | null): string => {
+          const path = href?.startsWith(expected + "/") ? href.slice(location.origin.length) : href;
+          const prefix = location.pathname + "/";
+          if (!path?.startsWith(prefix) || !/^[1-9]\d*$/.test(path.slice(prefix.length)))
+            throw new Error("Marumaru chapter link escaped title identity");
+          return path.slice(prefix.length);
+        };
+        const first = hero.querySelectorAll(".hero-v2-actions-bottom a.cta-ghost"),
+          latest = hero.querySelectorAll(".hero-v2-actions-bottom a.cta-primary");
+        const firstLink = first[0],
+          latestLink = latest[0];
+        if (first.length !== 1 || latest.length !== 1 || !firstLink || !latestLink)
+          throw new Error("Marumaru chapter endpoints unavailable");
+        const firstID = key(firstLink.getAttribute("href")),
+          latestID = key(latestLink.getAttribute("href"));
+        const identity = JSON.stringify([
+          total,
+          firstID,
+          latestID,
+          hero.querySelector(".hero-v2-title")?.textContent,
+          hero.querySelector(".hero-v2-thumb img")?.getAttribute("src"),
+          hero.querySelector(".hero-v2-adult")?.textContent ?? "",
+        ]);
+        if (detailIdentity !== undefined && detailIdentity !== identity)
+          throw new Error("Marumaru detail changed during chapter pagination");
+        if (detailIdentity === undefined) {
+          detailIdentity = identity;
+          detailHero = hero.outerHTML;
+          detailCount = count.outerHTML;
         }
-        return (
-          hero.outerHTML +
-          serialize(rows) +
-          (document.querySelector(".cs-rating-card")?.outerHTML ?? "")
-        );
+        if (completeDetail !== undefined) return completeDetail;
+        const pagers = section.querySelectorAll(".pager"),
+          pager = pagers[0],
+          active = pager?.querySelectorAll("a.pager-num.is-active");
+        if (pagers.length > 1 || (pager && active?.length !== 1))
+          throw new Error("Marumaru chapter pagination is ambiguous");
+        const pageNumber = pager ? Number(active?.[0]?.textContent?.trim()) : 1;
+        if (!Number.isSafeInteger(pageNumber) || pageNumber < 1 || pageNumber > 1000)
+          throw new Error("Marumaru chapter page is invalid");
+        if (pageNumber !== expectedPage) {
+          if (previousRows && pageNumber === expectedPage - 1) return undefined;
+          throw new Error("Marumaru chapter page changed unexpectedly");
+        }
+        const ids = rows.map((row) => key(row.getAttribute("href"))),
+          signature = ids.join(",");
+        // The page badge updates before the asynchronous row replacement.
+        if (previousRows && signature === previousRows) return undefined;
+        if (new Set(ids).size !== ids.length || ids.some((value) => chapterIDs.has(value)))
+          throw new Error("Marumaru chapter pagination repeats an identity");
+        if (!chapterRows.length && ids[0] !== latestID)
+          throw new Error("Marumaru chapter list does not begin at the latest episode");
+        rows.forEach((row) => {
+          chapterIDs.add(key(row.getAttribute("href")));
+          const html = row.outerHTML;
+          chapterLength += html.length;
+          if (chapterLength > 4000000)
+            throw new Error("Marumaru chapter snapshot exceeds its limit");
+          chapterRows.push(html);
+        });
+        if (chapterRows.length > total)
+          throw new Error("Marumaru chapter inventory exceeds its advertised count");
+        const next = pager
+          ? [...pager.querySelectorAll<HTMLAnchorElement>("a.pager-btn")].filter(
+              (link) => link.textContent?.trim() === "›",
+            )
+          : [];
+        if (next.length > 1) throw new Error("Marumaru chapter continuation is ambiguous");
+        const nextLink = next[0],
+          enabled = !!nextLink && nextLink.getAttribute("aria-disabled") !== "true";
+        if (chapterRows.length === total) {
+          if (
+            enabled ||
+            (pager && (!nextLink || nextLink.getAttribute("aria-disabled") !== "true")) ||
+            ids[ids.length - 1] !== firstID
+          )
+            throw new Error("Marumaru chapter inventory lacks a confirmed ending");
+          completeDetail =
+            detailHero +
+            detailCount +
+            chapterRows.join("") +
+            (document.querySelector(".cs-rating-card")?.outerHTML ?? "");
+          return completeDetail;
+        }
+        if (
+          !enabled ||
+          !nextLink ||
+          nextLink.getAttribute("href") !== `#page-${expectedPage + 1}` ||
+          expectedPage >= 1000
+        )
+          throw new Error("Marumaru complete chapter continuation unavailable");
+        previousRows = signature;
+        expectedPage++;
+        nextLink.click();
+        return undefined;
       }
       if (path === "/search") {
         const forms = document.querySelectorAll("form.search-page-form");
