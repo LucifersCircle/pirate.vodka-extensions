@@ -20,6 +20,9 @@ try {
 const cli = fileURLToPath(
   new URL("../node_modules/@paperback/toolchain/dist/cli.mjs", import.meta.url),
 );
+const nativeRuntime = fileURLToPath(
+  new URL("./paperback-test-native-runtime.mjs", import.meta.url),
+);
 const bridge = fileURLToPath(new URL("./paperback-test-network.mjs", import.meta.url));
 const webView = fileURLToPath(new URL("./paperback-test-webview-preload.mjs", import.meta.url));
 console.log(`FlareSolverr: ${process.env.FLARESOLVERR_URL ?? "http://127.0.0.1:8191"}`);
@@ -30,6 +33,8 @@ function runCLI(sources, output) {
     process.execPath,
     [
       "--use-env-proxy",
+      "--import",
+      nativeRuntime,
       "--import",
       bridge,
       "--import",

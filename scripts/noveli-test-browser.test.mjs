@@ -264,7 +264,9 @@ void test("Noveli transport keeps raw guards, isolated sessions, native covers, 
         headers: challenge
           ? { "cf-mitigated": "challenge", "content-type": "text/html" }
           : { "content-type": "application/json" },
-        body: "{}",
+        ...(payload.url.startsWith("https://kagane.org/")
+          ? { body: Buffer.from("{}").toString("base64"), encoding: "base64", byteLength: 2 }
+          : { body: "{}" }),
       });
     }
     return new Response("native");
@@ -430,4 +432,109 @@ void test("Noveli transport keeps raw guards, isolated sessions, native covers, 
     await Promise.all(cleanups.map((cleanup) => cleanup()));
     globalThis.fetch = originalFetch;
   }
+});
+
+void test("Kagane Chromium script preserves binary API bytes instead of UTF-8 replacement characters", async () => {
+  const { runInNewContext } = await import("node:vm");
+  const extracted = spawnSync(
+    "python3",
+    [
+      "-c",
+      `
+import ast, json, sys
+module = ast.parse(open(sys.argv[1]).read())
+print(json.dumps({node.targets[0].id: ast.literal_eval(node.value) for node in module.body
+  if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+  and node.targets[0].id in ('FETCH_SCRIPT', 'NOVELI_FETCH_SCRIPT')}))
+`,
+      fileURLToPath(new URL("./flaresolverr/browser_request.py", import.meta.url)),
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(extracted.status, 0, extracted.stderr);
+  const scripts = JSON.parse(extracted.stdout);
+  // Generated protocol bytes, not an image/source fixture. Invalid UTF-8 is deliberate.
+  const bytes = Buffer.from(Array.from({ length: 100003 }, (_, index) => index % 256));
+  assert.notDeepEqual(
+    Buffer.from(bytes.toString("utf8")),
+    bytes,
+    "Old text transport corrupts this payload",
+  );
+  const execute = (script, input) =>
+    new Promise((resolve) => {
+      const fn = runInNewContext(`(function () { ${script} })`, {
+        fetch: globalThis.fetch,
+        AbortSignal,
+        btoa,
+      });
+      // The actual fetch implementation and helper script, with zero provider requests.
+      fn(
+        {
+          url: `data:application/octet-stream;base64,${input.toString("base64")}`,
+          method: "GET",
+          headers: {},
+          body: null,
+        },
+        resolve,
+      );
+    });
+  const encoded = await execute(scripts.FETCH_SCRIPT, bytes);
+  assert.equal(encoded.status, 200);
+  assert.equal(encoded.encoding, "base64");
+  assert.equal(encoded.byteLength, bytes.length);
+  assert.deepEqual(Buffer.from(encoded.body, "base64"), bytes);
+  const text = Buffer.from('{"title":"日本語 café"}');
+  const noveli = await execute(scripts.NOVELI_FETCH_SCRIPT, text);
+  assert.equal(noveli.body, text.toString("utf8"));
+  assert.equal(noveli.encoding, undefined);
+});
+
+void test("native browser bridge decodes only explicit exact binary envelopes and retains Noveli text", () => {
+  const bridge = new URL("./paperback-test-network.mjs", import.meta.url).href;
+  const child = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `
+    import assert from 'node:assert/strict';
+    const bytes=Buffer.from(Array.from({length:100003},(_,i)=>i%256));
+    const headers={'content-type':'image/webp','content-length':String(bytes.length),'x-contract':'unchanged'};
+    let mode='valid';const sent=[];
+    const valid={status:200,url:'https://kagane.org/api/v2/image/contract',headers,encoding:'base64',byteLength:bytes.length,body:bytes.toString('base64')};
+    // Only the existing gateway protocol is simulated; no source methods or native SDK are replaced.
+    globalThis.fetch=async function gateway(url,init){
+      const target=String(url),payload=JSON.parse(init.body);sent.push(payload);
+      if(target.endsWith('/v1'))return Response.json({status:'ok',solution:{userAgent:'contract',url:payload.url,status:200,response:'<html>public</html>',headers:{},cookies:[]}});
+      assert(target.endsWith('/browser/request'));
+      if(payload.url.startsWith('https://noveli.to/'))return Response.json({status:200,url:payload.url,headers:{'content-type':'application/json'},body:'{"title":"日本語 café"}'});
+      const value={...valid,url:payload.url};
+      if(mode==='missing')delete value.encoding;
+      if(mode==='text')value.encoding='utf8';
+      if(mode==='length')value.byteLength++;
+      if(mode==='noncanonical'){value.body='AB==';value.byteLength=1;}
+      if(mode==='invalid'){value.body='@@@@';value.byteLength=3;}
+      if(mode==='oversized'){value.body='';value.byteLength=16*1024*1024+1;}
+      if(mode==='array')value.body=[];
+      if(mode==='json'){value.body=Buffer.from('{"title":"日本語 café"}').toString('base64');value.byteLength=Buffer.byteLength('{"title":"日本語 café"}');value.headers={'content-type':'application/json'};}
+      return Response.json(value);
+    };
+    await import(${JSON.stringify(bridge)});
+    const response=await fetch(valid.url,{method:'GET',headers:{referer:'https://kagane.org/'}});
+    assert.equal(response.url,valid.url);assert.equal(response.status,200);
+    assert.equal(response.headers.get('content-length'),String(bytes.length));
+    assert.equal(response.headers.get('content-type'),'image/webp');assert.equal(response.headers.get('x-contract'),'unchanged');
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()),bytes);
+    mode='json';const body='{"title":"日本語 café"}';
+    const json=await fetch('https://kagane.org/api/v2/search/series',{method:'POST',headers:{'content-type':'application/json'},body});
+    assert.deepEqual(await json.json(),{title:'日本語 café'});assert.equal(sent.at(-1).body,body);assert.equal(sent.at(-1).method,'POST');
+    for(mode of ['missing','text','length','noncanonical','invalid','oversized','array'])await assert.rejects(fetch(valid.url),/Invalid browser API binary envelope/);
+    const novel=await fetch('https://noveli.to/api/novels/tags',{method:'GET'});assert.deepEqual(await novel.json(),{title:'日本語 café'});
+    console.log('exact bytes, headers, JSON POST and Noveli text retained; malformed envelopes rejected');
+  `,
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(child.status, 0, child.stderr);
+  assert.match(child.stdout, /exact bytes, headers, JSON POST and Noveli text retained/);
 });
