@@ -49,6 +49,13 @@ export const readerURL = (id: string, chapter: string): string => {
 };
 export const coverURL = (value: unknown): string => {
   if (typeof value !== "string") throw new Error("Missing Noveli cover URL.");
+  // The source advertises this exact shared cover for EPUB-uploaded novels.
+  // Preserve it verbatim; this is not a general external-host or query grant.
+  if (
+    value ===
+    "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=500&auto=format&fit=crop&q=80"
+  )
+    return value;
   const url = value.startsWith("/uploads/covers/") ? BASE_URL + value : value;
   if (
     !/^https:\/\/noveli\.to\/uploads\/covers\/[A-Za-z0-9_~.-]+\.(?:webp|png|jpe?g|avif)$/.test(

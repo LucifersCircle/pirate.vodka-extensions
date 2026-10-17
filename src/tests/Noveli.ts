@@ -23,7 +23,10 @@ import { Noveli, NoveliExtension } from "../Noveli/main.js";
 import sourceInfo from "../Noveli/pbconfig.js";
 import { NoveliSearchForm } from "../Noveli/forms.js";
 import { assertPublic } from "../Noveli/models.js";
-import { isMetadataURL } from "../Noveli/urls.js";
+import { coverURL, isMetadataURL } from "../Noveli/urls.js";
+import { ContentPolicy } from "../Noveli/policy.js";
+import { NoveliInterceptor } from "../Noveli/network.js";
+import { parseCard } from "../Noveli/parsers.js";
 import { assertChapterDetails, TestSuite } from "./suite.js";
 
 const BASE = "https://noveli.to";
@@ -172,6 +175,7 @@ const assertCoverBytes = async (url: string, logger: TestLogger) => {
     magic.startsWith("\x89PNG\r\n\x1a\n") || magic.startsWith("GIF8") ||
     (magic.startsWith("RIFF") && magic.slice(8, 12) === "WEBP") || /^....ftypavi[fs]/s.test(magic),
   "Cover contains supported image bytes").to.equal(true);
+  return { response, data };
 };
 function assertReader(reader: ChapterDetails, chapter: Chapter, payload: RawReader) {
   assertChapterDetails(reader, chapter);
@@ -278,6 +282,40 @@ export async function runTests(logger: TestLogger) {
         expect(await Noveli.getDiscoverSectionItems(section, metadata)).to.deep.equal(rankingRows.get(section.id));
     }
     expect(probe.requests.length, "Warm home and every native first-page representation reuse both responses").to.equal(warm);
+    // Exercise only an exact cover advertised and emitted by this same live response.
+    const sharedURL = "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=500&auto=format&fit=crop&q=80";
+    const advertised = HOME.filter(([id]) => id !== "catalog").flatMap(([id]) => rankings.rankings[id]).find((row) => row.cover_image === sharedURL);
+    if (advertised) {
+      const emitted = [...rankingRows.values()].flatMap((row) => row.items).find((item) => "mangaId" in item && item.mangaId === String(advertised.id) && item.imageUrl === sharedURL);
+      expect(emitted && "imageUrl" in emitted ? emitted.imageUrl : undefined, "Same-response external cover preserved without rewriting").to.equal(sharedURL);
+      const { response, data } = await assertCoverBytes(sharedURL, logger);
+      const policy = new ContentPolicy(), guard = new NoveliInterceptor("Noveli.cover-boundary", policy);
+      const request: Request = { url: sharedURL, method: "GET" };
+      await rejects(() => guard.interceptRequest(request), /evidence.*missing/i);
+      const card = parseCard(advertised);
+      policy.issue(card.imageUrl, card.mangaId, card.sourceRating, Date.now());
+      expect(await guard.interceptRequest(request)).to.equal(request);
+      expect(await guard.interceptResponse(request, response, data)).to.equal(data);
+      for (const changed of [sharedURL.replace("https:", "http:"), sharedURL.replace("images.unsplash.com", "images.unsplash.com.evil.test"), sharedURL.replace("https://", "https://user@"), sharedURL.replace("ca5e3f4abd8c", "ca5e3f4abd8d"), sharedURL.replace("w=500", "w=501"), sharedURL.replace("&q=80", ""), sharedURL + "&q=80", sharedURL + "#fragment", sharedURL.replace("images.unsplash.com", "images.unsplash.com:443"), sharedURL.replace("w=500&auto=format", "auto=format&w=500"), ...["\n", "\r", "\u0000", " "].map((suffix) => sharedURL + suffix)]) {
+        expect(() => coverURL(changed)).to.throw(/cover URL/i);
+        await rejects(() => guard.interceptRequest({ ...request, url: changed }), /cover URL/i);
+      }
+      await rejects(() => guard.interceptResponse(request, { ...response, url: sharedURL + "&extra=1" }, data), /redirected/i);
+      await rejects(() => guard.interceptResponse(request, { ...response, status: 302 }, data), /redirected/i);
+      await rejects(() => guard.interceptResponse(request, { ...response, headers: { "content-type": "text/html" } }, data), /invalid cover/i);
+      await rejects(() => guard.interceptResponse(request, response, buffer({ not: "image" })), /invalid cover/i);
+      const mature = Object.getOwnPropertyDescriptor(Application, "filterMatureTitles")!;
+      const adult = Object.getOwnPropertyDescriptor(Application, "filterAdultTitles")!;
+      try {
+        Object.defineProperty(Application, "filterMatureTitles", { ...mature, value: true });
+        Object.defineProperty(Application, "filterAdultTitles", { ...adult, value: true });
+        await rejects(() => guard.interceptRequest(request), /excluded/i);
+      } finally {
+        Object.defineProperty(Application, "filterMatureTitles", mature);
+        Object.defineProperty(Application, "filterAdultTitles", adult);
+      }
+      logger.log("sharedCoverCoverage", "actual same-response cover exercised");
+    } else { logger.log("sharedCoverCoverage", "unexercised: exact shared cover absent from current rankings"); }
   });
   test("getSearchResults: native first pages, exact next-page order and terminal keyword search", async () => {
     catalog = await Noveli.getSearchResults({ title: "" });
@@ -285,7 +323,9 @@ export async function runTests(logger: TestLogger) {
     for (const metadata of [null, {}, Object.create(null)] as Metadata[])
       expect(await Noveli.getSearchResults({ title: "" }, metadata)).to.deep.equal(catalog);
     expect(probe.requests.length).to.equal(warm);
-    expect(cards(catalog.items)).to.deep.equal(cards(rankingRows.get("catalog")!.items));
+    const homeCatalog = rankingRows.get("catalog");
+    expect(homeCatalog, "Unmet Noveli prerequisite: home catalog did not complete").not.to.equal(undefined);
+    expect(cards(catalog.items)).to.deep.equal(cards(homeCatalog!.items));
     expect(catalog.metadata).not.to.equal(undefined);
     const second = await Noveli.getSearchResults({ title: "" }, catalog.metadata);
     const consumed = probe.responses.filter(({ request }) => new globalThis.URL(request.url).pathname === "/api/novels");
@@ -512,6 +552,7 @@ export async function runTests(logger: TestLogger) {
   test("pagination: native-filtered pages advance with complete raw IDs or end honestly", async () => {
     const first = probe.responses.find(({ request }) => request.url === `${BASE}/api/novels?sort=popular&page=1&limit=36`)!;
     const second = probe.responses.find(({ request }) => request.url === `${BASE}/api/novels?sort=popular&page=2&limit=36`)!;
+    raw(first); raw(second); // Fail explicitly when an earlier live page was not captured.
     const original = Object.getOwnPropertyDescriptor(Application, "filterAdultTitles")!;
     try {
       Object.defineProperty(Application, "filterAdultTitles", { ...original, value: true });
@@ -671,6 +712,16 @@ export async function runTests(logger: TestLogger) {
     } finally { Object.defineProperty(Application, "filterAdultTitles", original); }
   });
   test("transport: denied, redirected, non-JSON and malformed responses have no fallback requests", async () => {
+    const readerCapture = probe.find(`/api/novels/${SAMPLE}/chapters/${chapters[0].chapterId}`);
+    const guard = new NoveliInterceptor("Noveli.reader-denial", new ContentPolicy());
+    const reflected = "untrusted-provider-text-must-not-be-reflected";
+    const denied = { ...readerCapture.response, status: 403 };
+    let refusal: unknown;
+    try { await guard.interceptResponse(readerCapture.request, denied, buffer({ success: false, message: reflected })); }
+    catch (error) { refusal = error; }
+    expect(String(refusal)).to.equal("Error: Noveli refused access to this chapter (403). Please read it on the website.");
+    expect(String(refusal)).not.to.include(reflected);
+    await rejects(() => guard.interceptResponse(readerCapture.request, { ...denied, url: `${BASE}/login` }, buffer({ message: reflected })), /failed or redirected/i);
     const capture = probe.find(`/api/novels/${SAMPLE}`);
     const schedule = Application.scheduleRequest;
     try {

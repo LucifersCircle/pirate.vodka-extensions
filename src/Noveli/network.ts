@@ -9,7 +9,14 @@ const responseType = (response: Response): string =>
   response.mimeType ??
   "";
 const checkResponse = (request: Request, response: Response): void => {
-  if (response.status !== 200 || response.url !== request.url)
+  if (response.url !== request.url)
+    throw new Error(`Noveli request failed or redirected (${response.status}).`);
+  if (
+    response.status === 403 &&
+    /^https:\/\/noveli\.to\/api\/novels\/[1-9]\d*\/chapters\/[1-9]\d*$/.test(request.url)
+  )
+    throw new Error("Noveli refused access to this chapter (403). Please read it on the website.");
+  if (response.status !== 200)
     throw new Error(`Noveli request failed or redirected (${response.status}).`);
 };
 export class NoveliInterceptor extends PaperbackInterceptor {
