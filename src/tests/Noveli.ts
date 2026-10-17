@@ -23,7 +23,7 @@ import { Noveli, NoveliExtension } from "../Noveli/main.js";
 import sourceInfo from "../Noveli/pbconfig.js";
 import { NoveliSearchForm } from "../Noveli/forms.js";
 import { assertPublic } from "../Noveli/models.js";
-import { coverURL, isMetadataURL } from "../Noveli/urls.js";
+import { coverURL, isMetadataURL, labelId } from "../Noveli/urls.js";
 import { ContentPolicy } from "../Noveli/policy.js";
 import { NoveliInterceptor } from "../Noveli/network.js";
 import { parseCard } from "../Noveli/parsers.js";
@@ -282,6 +282,22 @@ export async function runTests(logger: TestLogger) {
         expect(await Noveli.getDiscoverSectionItems(section, metadata)).to.deep.equal(rankingRows.get(section.id));
     }
     expect(probe.requests.length, "Warm home and every native first-page representation reuse both responses").to.equal(warm);
+
+    const serverCover = Object.values(rankings.rankings).flat().find((row) => row.cover_image.startsWith("/server-1/"));
+    if (serverCover) {
+      const imageURL = BASE + serverCover.cover_image;
+      expect([...rankingRows.values()].flatMap((row) => row.items).some((item) => "imageUrl" in item && item.imageUrl === imageURL)).to.equal(true);
+      // The site currently serves its SPA HTML for this advertised path. Preserve
+      // the source URL without making one broken image erase every ranking row;
+      // the media interceptor still rejects non-image responses.
+      const card = parseCard(serverCover), policy = new ContentPolicy();
+      policy.issue(imageURL, card.mangaId, card.sourceRating, Date.now());
+      const guard = new NoveliInterceptor("Noveli.site-cover-boundary", policy);
+      const request: Request = { url: imageURL, method: "GET" };
+      expect(await guard.interceptRequest(request)).to.equal(request);
+      await rejects(() => guard.interceptResponse(request, { url: imageURL, status: 200, headers: { "content-type": "text/html" }, cookies: [] } as Response, buffer("<!doctype html>")), /invalid cover/i);
+      for (const invalid of [imageURL + "\n", imageURL + "\r", imageURL + " ", imageURL + "?x=1", imageURL + "#fragment", imageURL.replace("/server-1/", "/server-2/"), imageURL.replace("/server-1/", "/server-1/../"), imageURL.replace("noveli.to", "noveli.to.evil.test"), imageURL.replace("https:", "http:"), imageURL.replace("/server-1/", "/server-1/%2e%2e/")]) expect(() => coverURL(invalid)).to.throw(/cover URL/i);
+    }
     // Exercise only an exact cover advertised and emitted by this same live response.
     const sharedURL = "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=500&auto=format&fit=crop&q=80";
     const advertised = HOME.filter(([id]) => id !== "catalog").flatMap(([id]) => rankings.rankings[id]).find((row) => row.cover_image === sharedURL);
@@ -349,20 +365,43 @@ export async function runTests(logger: TestLogger) {
     if (!("form" in genres) || !(genres.form instanceof SelectForm) || !("form" in status) || !(status.form instanceof SelectForm))
       throw new Error("Missing native selection forms");
     const genreForm = genres.form, statusForm = status.form;
-    expect(Array.from(genreForm.getSections()[0].items, (item) => item.id)).to.deep.equal([...new Set(taxonomy)]);
-    expect(Array.from(statusForm.getSections()[0].items, (item) => item.id)).to.deep.equal(["", "Ongoing", "Completed"]);
+    const nativeID = /^[A-Za-z0-9._@()[\]%?#+=/&:-]+$/;
+    for (const selection of [genreForm, statusForm])
+      for (const row of selection.getSections()[0].items) expect(row.id).to.match(nativeID);
+    const labels = [...taxonomy, "Martial Arts", "Martial%20Arts", "Cultivation~Cult", "L’auteur's Path!", "修仙"];
+    for (const label of labels) {
+      expect(labelId(label)).to.match(nativeID);
+      expect(decodeURIComponent(labelId(label).slice("label:".length))).to.equal(label);
+    }
+    expect(new Set(labels.map(labelId)).size).to.equal(new Set(labels).size);
+
+    expect(Array.from(genreForm.getSections()[0].items, (item) => item.id)).to.deep.equal([...new Set(taxonomy)].map(labelId));
+    expect(Array.from(statusForm.getSections()[0].items, (item) => item.id)).to.deep.equal(["all", "Ongoing", "Completed"]);
     const select = async (selection: SelectForm, id: string) => {
       const row = selection.getSections()[0].items.find((item) => item.id === id)!;
       if (!("onSelect" in row) || typeof row.onSelect !== "string") throw new Error("Missing native selection callback");
       await Application.SelectorRegistry.selector<() => Promise<void>>(row.onSelect)();
     };
-    for (const genre of taxonomy.slice(0, 2)) await select(genreForm, genre);
+    for (const genre of taxonomy.slice(0, 2)) await select(genreForm, labelId(genre));
     await genreForm.formDidSubmit();
     await select(statusForm, "Completed");
     await statusForm.formDidSubmit();
     expect(form.getSearchQueryMetadata()).to.deep.equal({ genres: taxonomy.slice(0, 2), status: "Completed" });
     await rejects(() => form.setGenres(["not-an-advertised-Noveli-genre"]), /unknown|genre/i);
     await rejects(() => form.setStatus(["Completed", "Ongoing"]), /status/i);
+    for (const invalid of [[""], [undefined], ["unknown"]]) await rejects(() => form.setStatus(invalid as string[]), /status/i);
+    const reopened = new NoveliSearchForm({ title: TITLE, metadata: form.getSearchQueryMetadata() }, taxonomy);
+    expect(reopened.getSearchQueryMetadata()).to.deep.equal(form.getSearchQueryMetadata());
+    await reopened.setStatus(["all"]);
+    expect(reopened.getSearchQueryMetadata()).to.deep.equal({ genres: taxonomy.slice(0, 2), status: "" });
+    const specialLabels = ["Martial Arts", "Martial%20Arts", "L’auteur's Path!~", "修仙"];
+    const special = new NoveliSearchForm({ title: TITLE }, specialLabels);
+    const specialRow = special.getSections()[0].items.find((item) => item.id === "genres")!;
+    if (!("form" in specialRow) || !(specialRow.form instanceof SelectForm)) throw new Error("Missing special-label selection form");
+    for (const label of specialLabels) await select(specialRow.form, labelId(label));
+    await specialRow.form.formDidSubmit();
+    expect(special.getSearchQueryMetadata()).to.deep.equal({ genres: specialLabels, status: "" });
+
     await form.reset();
     expect(form.getSearchQueryMetadata()).to.deep.equal({ genres: [], status: "" });
   });
@@ -433,6 +472,11 @@ export async function runTests(logger: TestLogger) {
     expect(source.mangaInfo.additionalInfo?.["Original language"]).to.equal(detail.original_language);
     expect(source.mangaInfo.additionalInfo?.["Reading language"]).to.equal("English");
     expect(source.mangaInfo.tagGroups?.find((group) => group.id === "genres")?.tags.map((tag) => tag.title)).to.deep.equal([...new Set(detail.genres)]);
+    for (const group of source.mangaInfo.tagGroups ?? []) for (const tag of group.tags) {
+      expect(tag.id).to.equal(labelId(tag.title));
+      expect(tag.id).to.match(/^[A-Za-z0-9._@()[\]%?#+=/&:-]+$/);
+    }
+
     expect(source.mangaInfo.tagGroups?.find((group) => group.id === "tags")?.tags.map((tag) => tag.title)).to.deep.equal([...new Set(detail.tags)].filter((tag) => !detail.genres?.includes(tag)));
     expect(source.mangaInfo.shareUrl).to.equal(`${BASE}/novel/${detail.slug}`);
     const description = cheerio.load(detail.description);

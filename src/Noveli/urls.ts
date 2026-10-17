@@ -47,6 +47,14 @@ export const readerURL = (id: string, chapter: string): string => {
   if (!validId(chapter)) throw new Error("Noveli requires a canonical numeric chapter ID.");
   return `${BASE_URL}/api/novels/${id}/chapters/${chapter}`;
 };
+// Native IDs cannot contain spaces, quotes or Unicode. Keep labels unchanged and
+// use a reversible, collision-free spelling only at Paperback identity boundaries.
+export const labelId = (label: string): string =>
+  "label:" +
+  encodeURIComponent(label).replace(
+    /[!'*~]/g,
+    (value) => "%" + value.charCodeAt(0).toString(16).toUpperCase(),
+  );
 export const coverURL = (value: unknown): string => {
   if (typeof value !== "string") throw new Error("Missing Noveli cover URL.");
   // The source advertises this exact shared cover for EPUB-uploaded novels.
@@ -56,12 +64,18 @@ export const coverURL = (value: unknown): string => {
     "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=500&auto=format&fit=crop&q=80"
   )
     return value;
-  const url = value.startsWith("/uploads/covers/") ? BASE_URL + value : value;
+  const url =
+    value.startsWith("/uploads/covers/") || value.startsWith("/server-1/")
+      ? BASE_URL + value
+      : value;
   if (
-    !/^https:\/\/noveli\.to\/uploads\/covers\/[A-Za-z0-9_~.-]+\.(?:webp|png|jpe?g|avif)$/.test(
+    !/^https:\/\/noveli\.to\/(?:uploads\/covers|server-1)\/[A-Za-z0-9_~.-]+\.(?:webp|png|jpe?g|avif)$/.test(
       url,
     ) ||
-    url.includes("/..")
+    url.includes("/..") ||
+    Array.from(url).some(
+      (character) => character.charCodeAt(0) <= 32 || character.charCodeAt(0) === 127,
+    )
   )
     throw new Error("Unsupported Noveli cover URL.");
   return url;
