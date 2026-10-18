@@ -16,6 +16,8 @@ COPY --chmod=0444 browser_request.py /app/browser_request.py
 RUN sed -i '/^if __name__ == "__main__":/i\import browser_request\nbrowser_request.register(app)\n' /app/flaresolverr.py
 COPY --chmod=0444 paperback_webview.py /app/paperback_webview.py
 RUN sed -i '/^if __name__ == "__main__":/i\import paperback_webview\npaperback_webview.register(app)\n' /app/flaresolverr.py
+COPY --chmod=0444 cloudflare_assistance.py cloudflare_assistance_contract.py /app/
+RUN sed -i '/^if __name__ == "__main__":/i\import cloudflare_assistance\ncloudflare_assistance.register(app)\n' /app/flaresolverr.py
 COPY --chmod=0555 start.sh /app/start-tests.sh
 USER flaresolverr
 ENTRYPOINT ["sh", "/app/start-tests.sh"]

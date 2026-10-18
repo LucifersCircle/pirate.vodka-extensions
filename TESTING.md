@@ -78,7 +78,23 @@ Counts represent calls made through native `Application.scheduleRequest`, includ
 actual image GETs. The existing optional test transport bridge's own bootstrap traffic
 is not hidden inside these numbers or claimed to be device traffic. The direct baseline
 above did not need that bridge. Failed runs and access prerequisites remain failures;
-no challenge solver or substitute payload makes them pass.
+no substitute payload makes them pass.
+
+## Bounded passive challenge assistance
+
+The [test-only passive assistance path](scripts/flaresolverr/CLOUDFLARE_ASSISTANCE.md)
+extends verified public GET coverage beyond the existing Kagane/Noveli/Vortex bridge.
+It runs only after confirmed Cloudflare response evidence, never for ordinary 406s,
+network failures or explicit access denials. At most three helper operations per
+source are allowed; unresolved/CAPTCHA/security failures stop further assistance.
+The new path does not invoke FlareSolverr's CAPTCHA solver. Native source interceptors
+still authorize requests first and consume the actual replay bytes/status/headers.
+
+`cloudflareAssistance` counters in each affected report are separate from native SDK
+budgets. They record local helper calls and reported navigation/replay attempts, not
+browser subresources or legacy helper traffic. Neither counter set is total provider
+traffic. Browser-managed identity and cookies are not claimed identical to app state.
+See the linked contract for exact limits, supported routes and unresolved outcomes.
 
 ## Test-host compatibility, not device proof
 
