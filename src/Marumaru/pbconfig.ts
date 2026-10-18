@@ -4,7 +4,7 @@
 import { ContentRating, SourceIntents, type ExtensionInfo } from "@paperback/types";
 export default {
   name: "Marumaru",
-  version: "0.0.1-alpha.3",
+  version: "0.0.1-alpha.4",
   icon: "icon.png",
   language: "ko",
   description:

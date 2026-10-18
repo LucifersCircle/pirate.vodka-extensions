@@ -137,8 +137,10 @@ export function parseListing(
   const page = integer(result.page, "page");
   const size = integer(result.size, "page size", 1);
   const total = integer(result.total, "result count");
-  if (page !== requested || size !== (search ? 24 : 49))
-    throw new Error("Marumaru listing pagination does not match request");
+  if (page !== requested || size !== (search ? 70 : 49))
+    throw new Error(
+      `Marumaru listing pagination does not match request (expected page=${requested}, size=${search ? 70 : 49}; actual page=${page}, size=${size})`,
+    );
   const offset = page * size;
   if (!Number.isSafeInteger(offset) || !Array.isArray(result.items))
     throw new Error("Incomplete Marumaru listing");
