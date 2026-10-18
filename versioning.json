@@ -1,5 +1,5 @@
 {
-  "buildTime": "2026-10-17T23:45:29.261Z",
+  "buildTime": "2026-10-18T15:58:29.411Z",
   "builtWith": {
     "toolchain": "1.0.0-alpha.92",
     "types": "1.0.0-alpha.92"
@@ -128,7 +128,7 @@
     },
     {
       "name": "Marumaru",
-      "version": "0.0.1-alpha.3",
+      "version": "0.0.1-alpha.4",
       "icon": "icon.png",
       "language": "ko",
       "description": "Korean manga catalog and reader through the site-advertised public API. Unclassified titles use Mature compatibility, not a source age rating. Explicit adult warnings and original chapter labels are preserved.",
