@@ -36,7 +36,8 @@ void test("missing or malformed helper accounting is an explicit error without e
       unknownHelperOutcomes: 0,
       refusedAttempts: 0,
       successfulReplays: 0,
-      stopReason: "unresolved",
+      stopReason: "operation",
+      stopDetail: "browser-command-failed",
       assistanceLimit: 3,
       browserSubresourcesCounted: false,
     };
@@ -45,6 +46,8 @@ void test("missing or malformed helper accounting is an explicit error without e
     assert.deepEqual(report.Marumaru.cloudflareAssistance, stats);
     assert.deepEqual(report.Marumaru.tests, before.Marumaru.tests);
     for (const changes of [
+      { stopDetail: "secret-not-for-logs" },
+      { stopReason: undefined },
       { assistanceAttempts: 4 },
       { navigationAttempts: 4 },
       { replayAttempts: 2 },

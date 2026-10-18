@@ -314,3 +314,42 @@ void test("caller signal cannot disable the fixed helper deadline", async () => 
     clearTimeout(keepAlive);
   }
 });
+
+void test("helper diagnostics preserve only fixed reason enums and never provider text", async () => {
+  for (const reason of [
+    "browser-command-failed",
+    "observer-unavailable",
+    "resource-blocked",
+    "secret-not-for-logs",
+    { token: "secret-not-for-logs" },
+  ]) {
+    const { host, calls, messages } = fixture({
+      assist: () =>
+        Response.json(
+          {
+            error: "secret-not-for-logs",
+            code: "operation",
+            reason,
+            metrics: { navigationAttempts: 2, replayAttempts: 0 },
+          },
+          { status: 502 },
+        ),
+    });
+    const original = await host.fetch(target, options);
+    assert.equal(original.status, 403);
+    assert.equal(await original.text(), html);
+    const stats = host.stats("Marumaru");
+    assert.equal(stats.stopReason, "operation");
+    assert.equal(
+      stats.stopDetail,
+      typeof reason === "string" && reason !== "secret-not-for-logs" ? reason : undefined,
+    );
+    assert(!JSON.stringify(stats).includes("secret-not-for-logs"));
+    assert(!messages.join("").includes("secret-not-for-logs"));
+    await host.fetch(target.replace("17155", "17156"), options);
+    assert.equal(calls.filter((call) => call.path === "/browser/assist").length, 1);
+    assert.equal(stats.navigationAttempts, 2);
+    assert.equal(stats.replayAttempts, 0);
+    await host.close();
+  }
+});

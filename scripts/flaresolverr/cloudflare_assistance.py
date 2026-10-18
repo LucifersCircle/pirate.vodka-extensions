@@ -31,6 +31,7 @@ MAX_NAVIGATIONS = 3
 OPERATION_SECONDS = 57
 WORLD = 'source-test-passive-assistance'
 BINDING = '__source_test_assistance_notice__'
+SCAN_EXPRESSION = 'globalThis.__source_test_assistance_scan__()'
 LOCKS = {}
 LOCKS_GUARD = threading.Lock()
 CODES = frozenset({'operation', 'unresolved', 'denied', 'security', 'captcha'})
@@ -51,6 +52,10 @@ class AssistanceFailure(Exception):
         self.reason = reason if reason in REASONS else 'browser-operation-failed'
         self.code = code if code in CODES else 'operation'
         super().__init__(self.reason)
+
+
+class SafetyNavigationChanged(Exception):
+    """Internal signal: observe an already-authorized reload, never retry I/O."""
 
 
 def fail(reason, code='operation'):
@@ -337,6 +342,9 @@ class PassiveBrowser:
         self.sessions, self.safety_contexts = set(), {}
         self.committed = self.ready = self.fetching = self.closing = False
         self.challenge_pending = self.managed_challenge_observed = False
+        self.navigation_generation = 0
+        self.committed_generation = None
+        self.awaiting_navigation = False
         self.safety_source = SAFETY_SCRIPT.replace('EXPECTED_URL', json.dumps(payload['url']))
 
     def remaining(self):
@@ -355,11 +363,24 @@ class PassiveBrowser:
         return self.serial
 
     def call(self, method, params=None, session=None):
+        generation = self.navigation_generation
         identifier = self.send(method, params, session)
         while identifier not in self.replies:
             self.pump()
         reply = self.replies.pop(identifier)
         if 'error' in reply:
+            error = reply['error']
+            # A permitted managed same-URL reload can destroy a scan's isolated
+            # context while the command is in flight. Only these known CDP
+            # context-loss errors may restart observation, never navigation or
+            # replay. All other command errors and all fetch-stage errors fail.
+            if (method == 'Runtime.evaluate' and (params or {}).get('expression') == SCAN_EXPRESSION
+                    and not self.fetching and self.navigation_generation != generation
+                    and self.managed_challenge_observed
+                    and type(error) is dict and error.get('code') == -32000
+                    and error.get('message') in {'Cannot find context with specified id',
+                                                 'Execution context was destroyed.'}):
+                raise SafetyNavigationChanged()
             fail('browser-command-failed')
         return reply.get('result', {})
 
@@ -381,6 +402,7 @@ class PassiveBrowser:
         self.sessions.add(session)
         for method in ('Page.enable', 'Runtime.enable', 'Network.enable', 'Security.enable'):
             self.call(method, session=session)
+        self.call('Page.setLifecycleEventsEnabled', {'enabled': True}, session)
         self.call('Network.setBypassServiceWorker', {'bypass': True}, session)
         self.call('Network.setCacheDisabled', {'cacheDisabled': True}, session)
         self.call('Network.setBlockedURLs', {'urls': ['ws://*', 'wss://*', 'http://*', 'ftp://*', 'file://*']}, session)
@@ -434,9 +456,13 @@ class PassiveBrowser:
                 if len(self.safety_contexts) > 128:
                     fail('resource-limit')
         elif method == 'Runtime.executionContextDestroyed':
-            self.safety_contexts.pop((session, data.get('executionContextId')), None)
+            frame = self.safety_contexts.pop((session, data.get('executionContextId')), None)
+            if session == self.session and frame == self.frame:
+                self.context_lost()
         elif method == 'Runtime.executionContextsCleared':
             self.safety_contexts = {key: value for key, value in self.safety_contexts.items() if key[0] != session}
+            if session == self.session:
+                self.context_lost()
         elif method == 'Runtime.bindingCalled' and data.get('name') == BINDING:
             # Only a registered isolated-world context can report a gate.
             if (session, data.get('executionContextId')) not in self.safety_contexts:
@@ -459,13 +485,31 @@ class PassiveBrowser:
                 fail('document-identity-changed')
         elif method == 'Page.frameNavigated' and session == self.session and data['frame']['id'] == self.frame:
             frame = data['frame']
-            if frame.get('url') != self.payload['url'] or self.fetching:
+            if frame.get('url') != self.payload['url'] or self.fetching or not self.awaiting_navigation:
                 fail('document-identity-changed')
             self.loader, self.committed, self.ready = frame.get('loaderId'), True, False
-        elif method == 'Page.domContentEventFired' and session == self.session and self.committed:
-            self.ready = True
+            self.committed_generation = self.navigation_generation
+        elif (method == 'Page.lifecycleEvent' and session == self.session and self.committed
+              and data.get('name') == 'DOMContentLoaded' and data.get('frameId') == self.frame
+              and data.get('loaderId') == self.loader
+              and self.committed_generation == self.navigation_generation):
+            self.ready, self.awaiting_navigation = True, False
         elif method == 'Fetch.requestPaused':
             self.request_paused(data, session)
+
+    def context_lost(self):
+        # Context destruction is expected only while observing an already
+        # intercepted/authorized main-document navigation. It never authorizes
+        # a new request or permits the replay to be retried.
+        if self.fetching:
+            fail('document-identity-changed')
+        if self.committed and not self.awaiting_navigation:
+            fail('observer-unavailable')
+        self.ready = False
+
+    def ready_to_scan(self):
+        return self.ready and any(session == self.session and frame == self.frame
+                                  for (session, _), frame in self.safety_contexts.items())
 
     def request_paused(self, data, session):
         self.resources += 1
@@ -497,6 +541,8 @@ class PassiveBrowser:
                 if self.metrics['navigationAttempts'] and not (self.challenge_pending and self.managed_challenge_observed):
                     fail('document-identity-changed')
                 self.metrics['navigationAttempts'] += 1
+                self.navigation_generation += 1
+                self.ready, self.awaiting_navigation = False, True
             elif replay:
                 if self.metrics['replayAttempts']:
                     fail('resource-blocked')
@@ -516,18 +562,23 @@ class PassiveBrowser:
         self.call('Fetch.continueRequest', {'requestId': identifier}, session)
 
     def check_safety(self):
+        generation = self.navigation_generation
         main_context = None
         pending = False
         for (session, context), frame in list(self.safety_contexts.items()):
             if session == self.session and frame == self.frame:
                 main_context = context
-            result = self.call('Runtime.evaluate', {'expression': 'globalThis.__source_test_assistance_scan__()',
+            result = self.call('Runtime.evaluate', {'expression': SCAN_EXPRESSION,
                                'contextId': context, 'returnByValue': True,
                                'timeout': max(1, int(self.remaining() * 1000))}, session)
             if result.get('exceptionDetails'):
                 fail('observer-unavailable')
             state = result.get('result', {}).get('value')
             self.notice(state)
+            if not self.fetching and self.navigation_generation != generation:
+                # A stale 'ready' response cannot clear the new document's
+                # pending gate. Re-observe its exact loader and isolated world.
+                raise SafetyNavigationChanged()
             pending = pending or state == 'pending'
         if main_context is None:
             fail('observer-unavailable')
@@ -549,9 +600,12 @@ class PassiveBrowser:
         if navigation.get('errorText'):
             fail('navigation-failed')
         while True:
-            while not self.ready:
+            while not self.ready_to_scan():
                 self.pump()
-            context, pending = self.check_safety()
+            try:
+                context, pending = self.check_safety()
+            except SafetyNavigationChanged:
+                continue
             if not pending:
                 break
             self.pump(timeout=.2)

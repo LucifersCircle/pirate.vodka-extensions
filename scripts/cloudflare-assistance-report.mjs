@@ -1,5 +1,6 @@
 // Keep helper accounting independent of native source pass/fail results.
 import { readFileSync } from "node:fs";
+import { isHelperFailureReason } from "./cloudflare-assistance.mjs";
 const counters = [
   "positiveChallenges",
   "assistanceAttempts",
@@ -34,12 +35,18 @@ export function readAssistanceReport(path, report) {
         stats.browserSubresourcesCounted !== false ||
         Object.keys(stats).some(
           (key) =>
-            ![...counters, "assistanceLimit", "browserSubresourcesCounted", "stopReason"].includes(
-              key,
-            ),
+            ![
+              ...counters,
+              "assistanceLimit",
+              "browserSubresourcesCounted",
+              "stopReason",
+              "stopDetail",
+            ].includes(key),
         ) ||
         (stats.stopReason !== undefined &&
           (typeof stats.stopReason !== "string" || !/^[a-z-]{1,40}$/.test(stats.stopReason))) ||
+        (stats.stopDetail !== undefined &&
+          (stats.stopReason === undefined || !isHelperFailureReason(stats.stopDetail))) ||
         stats.assistanceAttempts > 3 ||
         stats.replayAttempts > stats.assistanceAttempts ||
         stats.navigationAttempts > 3 * stats.assistanceAttempts ||

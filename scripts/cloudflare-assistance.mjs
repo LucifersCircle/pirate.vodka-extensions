@@ -16,6 +16,37 @@ const failures = new Set([
   "operation",
 ]);
 
+// Fixed helper diagnostics only. Never retain provider URLs, text or exceptions.
+const helperFailureReasons = new Set([
+  "invalid-request",
+  "session-not-found",
+  "session-busy",
+  "invalid-response",
+  "insecure-capability",
+  "debugger-unavailable",
+  "browser-command-failed",
+  "operation-timeout",
+  "challenge-unresolved",
+  "access-denied",
+  "captcha-visible",
+  "security-warning",
+  "document-identity-changed",
+  "redirect-blocked",
+  "resource-blocked",
+  "resource-limit",
+  "navigation-limit",
+  "navigation-failed",
+  "unexpected-target",
+  "unexpected-dialog",
+  "observer-unavailable",
+  "replay-failed",
+  "response-too-large",
+  "browser-operation-failed",
+]);
+export function isHelperFailureReason(value) {
+  return helperFailureReasons.has(value);
+}
+
 async function challenge(response) {
   if (
     ![403, 503].includes(response.status) ||
@@ -187,6 +218,12 @@ export function createCloudflareAssistance({
       result.error ||
       (path === "/v1" && result.status !== "ok")
     ) {
+      if (
+        path === "/browser/assist" &&
+        failures.has(result?.code) &&
+        isHelperFailureReason(result.reason)
+      )
+        state.stopDetail = result.reason;
       throw new Error(failures.has(result?.code) ? result.code : "helper-failed");
     }
     return result;
@@ -229,7 +266,7 @@ export function createCloudflareAssistance({
       ]);
       state.stopReason = known.has(error.message) ? error.message : "operation";
       log(
-        `[cloudflare-assistance] ${request.source}: stopped (${state.stopReason}); original response retained`,
+        `[cloudflare-assistance] ${request.source}: stopped (${state.stopReason}${state.stopDetail ? `: ${state.stopDetail}` : ""}); original response retained`,
       );
       return null;
     } finally {

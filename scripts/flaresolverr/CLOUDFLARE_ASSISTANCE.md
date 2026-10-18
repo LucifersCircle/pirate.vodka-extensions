@@ -79,7 +79,9 @@ The report's `cloudflareAssistance` entry measures only this new path:
 - `navigationAttempts` and `replayAttempts`: provider attempts actually reported by
   the helper, including permitted same-URL managed reloads;
 - `unknownHelperOutcomes`: calls whose provider outcome could not be established;
-- `refusedAttempts`, `successfulReplays` and optional `stopReason`.
+- `refusedAttempts`, `successfulReplays` and optional `stopReason`;
+- optional `stopDetail`: a fixed helper failure enum, never provider text, URLs or
+  browser exception contents.
 
 These are separate from native SDK request budgets. Browser-loaded subresources are
 not counted (`browserSubresourcesCounted: false`), and legacy Kagane/Noveli/Vortex

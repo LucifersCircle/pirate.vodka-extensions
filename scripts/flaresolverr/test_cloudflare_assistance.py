@@ -307,7 +307,7 @@ class ProtocolSocket:
                 {'method':'Runtime.executionContextCreated','sessionId':'main','params':{
                     'context':{'id':3,'name':host.WORLD,'auxData':{'frameId':'frame'}}}},
                 {'method':'Page.frameNavigated','sessionId':'main','params':{'frame':{'id':'frame','url':URL,'loaderId':'loader'}}},
-                {'method':'Page.domContentEventFired','sessionId':'main','params':{}}])
+                {'method':'Page.lifecycleEvent','sessionId':'main','params':{'name':'DOMContentLoaded','frameId':'frame','loaderId':'loader'}}])
             self.loaded=True;result={'frameId':'frame','loaderId':'loader'}
         elif method=='Runtime.evaluate' and 'awaitPromise' not in item['params']:
             result={'result':{'value':'ready'}}
@@ -325,6 +325,71 @@ class ProtocolSocket:
         value=self.queue.pop(0)
         if value=='timeout':raise TimeoutError('Secret internal diagnostic')
         return json.dumps(value)
+
+
+class ReloadProtocolSocket(ProtocolSocket):
+    """A permitted reload destroys a pending scan's realm before its reply."""
+    def __init__(self, mode='context-lost'):
+        super().__init__()
+        self.mode, self.reloaded, self.scan_replied = mode, False, False
+
+    def send(self, raw):
+        item = json.loads(raw)
+        method, args = item['method'], item['params']
+        if method == 'Page.getFrameTree' and self.reloaded:
+            self.sent.append(item)
+            self.queue.append({'id':item['id'], 'result':{'frameTree':{'frame':{
+                'id':'frame', 'url':URL, 'loaderId':'replacement-loader'}}}})
+            return
+        if method == 'Runtime.evaluate' and 'awaitPromise' in args and self.mode == 'lost-after-replay':
+            self.sent.append(item)
+            request = paused(resource='Fetch'); request['request']['headers'] = {'x-site':'marumaru'}
+            self.queue.extend([
+                {'method':'Fetch.requestPaused', 'sessionId':'main', 'params':request},
+                {'method':'Runtime.executionContextDestroyed', 'sessionId':'main', 'params':{'executionContextId':3}},
+                {'id':item['id'], 'error':{'code':-32000, 'message':'Execution context was destroyed.'}},
+            ])
+            return
+        if method == 'Runtime.evaluate' and 'awaitPromise' not in args and not self.scan_replied:
+            self.scan_replied = True
+            if self.mode == 'lost-after-replay':
+                super().send(raw)
+                return
+            self.sent.append(item)
+            if self.mode == 'no-managed-reload':
+                self.queue.append({'id':item['id'], 'error':{
+                    'code':-32000, 'message':'Cannot find context with specified id'}})
+                return
+            request = paused(URL + '&unapproved=1' if self.mode == 'foreign-url' else URL)
+            request['requestId'] = 'managed-reload'
+            self.queue.extend([
+                {'method':'Runtime.bindingCalled', 'sessionId':'main', 'params':{
+                    'name':host.BINDING, 'executionContextId':3, 'payload':'{"reason":"managed-challenge"}'}},
+                {'method':'Fetch.requestPaused', 'sessionId':'main', 'params':request},
+                {'method':'Runtime.executionContextDestroyed', 'sessionId':'main', 'params':{'executionContextId':3}},
+                {'method':'Runtime.executionContextsCleared', 'sessionId':'main', 'params':{}},
+                {'method':'Page.frameNavigated', 'sessionId':'main', 'params':{
+                    'frame':{'id':'frame', 'url':URL, 'loaderId':'replacement-loader'}}},
+                {'method':'Runtime.executionContextCreated', 'sessionId':'main', 'params':{
+                    'context':{'id':4, 'name':host.WORLD, 'auxData':{'frameId':'frame'}}}},
+                # An old load event must not mark the replacement document ready.
+                {'method':'Page.lifecycleEvent', 'sessionId':'main', 'params':{
+                    'name':'DOMContentLoaded', 'frameId':'frame', 'loaderId':'loader'}},
+                {'method':'Page.lifecycleEvent', 'sessionId':'main', 'params':{
+                    'name':'DOMContentLoaded', 'frameId':'frame', 'loaderId':'replacement-loader'}},
+            ])
+            self.reloaded = True
+            if self.mode in {'stale-ready', 'captcha-visible', 'security-warning', 'access-denied'}:
+                self.queue.append({'id':item['id'], 'result':{'result':{
+                    'value':'ready' if self.mode == 'stale-ready' else self.mode}}})
+            else:
+                message = {'context-lost':'Cannot find context with specified id',
+                           'context-destroyed':'Execution context was destroyed.',
+                           'unknown-error':'Unexpected browser diagnostic with secret text',
+                           'foreign-url':'Cannot find context with specified id'}[self.mode]
+                self.queue.append({'id':item['id'], 'error':{'code':-32000, 'message':message}})
+            return
+        super().send(raw)
 
 
 class LifecycleTests(unittest.TestCase):
@@ -360,6 +425,94 @@ class LifecycleTests(unittest.TestCase):
 
     def test_cleanup_failure_never_masquerades_as_success(self):
         with self.assertRaises(host.AssistanceFailure):self.execute(ProtocolSocket(cleanup_error=True))
+
+
+class ManagedReloadTests(unittest.TestCase):
+    execute = LifecycleTests.execute
+
+    def test_old_scan_context_loss_reobserves_replacement_without_new_navigation(self):
+        for mode in ('context-lost', 'context-destroyed', 'stale-ready'):
+            with self.subTest(mode=mode):
+                socket = ReloadProtocolSocket(mode)
+                self.assertEqual(self.execute(socket), {**envelope(), 'metrics':{
+                    'navigationAttempts':2, 'replayAttempts':1}})
+                self.assertEqual(sum(item['method']=='Page.navigate' for item in socket.sent), 1)
+                scans = [item['params']['contextId'] for item in socket.sent
+                         if item['method']=='Runtime.evaluate' and 'awaitPromise' not in item['params']]
+                self.assertEqual(scans, [3, 4, 4])
+                replays = [item for item in socket.sent
+                           if item['method']=='Runtime.evaluate' and 'awaitPromise' in item['params']]
+                self.assertEqual(len(replays), 1)
+                self.assertEqual(replays[0]['params']['contextId'], 4)
+                self.assertEqual(socket.sent[-1]['method'], 'Target.disposeBrowserContext')
+
+    def test_only_known_context_loss_during_verified_reload_is_recoverable(self):
+        for mode, reason in [('no-managed-reload','browser-command-failed'),
+                             ('unknown-error','browser-command-failed'),
+                             ('foreign-url','document-identity-changed')]:
+            with self.subTest(mode=mode):
+                socket = ReloadProtocolSocket(mode)
+                with self.assertRaises(host.AssistanceFailure) as caught:
+                    self.execute(socket)
+                self.assertEqual(caught.exception.reason, reason)
+                self.assertFalse(any(item['method']=='Runtime.evaluate' and 'awaitPromise' in item['params']
+                                     for item in socket.sent))
+                self.assertEqual(socket.sent[-1]['method'], 'Target.disposeBrowserContext')
+
+    def test_existing_gate_results_are_never_swallowed_as_reload_races(self):
+        for mode, code in [('captcha-visible','captcha'), ('security-warning','security'), ('access-denied','denied')]:
+            with self.subTest(mode=mode):
+                socket = ReloadProtocolSocket(mode)
+                with self.assertRaises(host.AssistanceFailure) as caught:
+                    self.execute(socket)
+                self.assertEqual(caught.exception.code, code)
+                self.assertFalse(any(item['method']=='Runtime.evaluate' and 'awaitPromise' in item['params']
+                                     for item in socket.sent))
+
+    def test_context_loss_after_replay_started_never_retries_fetch(self):
+        socket = ReloadProtocolSocket('lost-after-replay')
+        with self.assertRaises(host.AssistanceFailure) as caught:
+            self.execute(socket)
+        self.assertEqual(caught.exception.reason, 'document-identity-changed')
+        replays = [item for item in socket.sent
+                   if item['method']=='Runtime.evaluate' and 'awaitPromise' in item['params']]
+        self.assertEqual(len(replays), 1)
+        self.assertEqual(sum(item['method']=='Page.navigate' for item in socket.sent), 1)
+
+    def test_context_gap_and_old_lifecycle_cannot_leave_ready_true(self):
+        browser = RecordingBrowser()
+        browser.committed = browser.ready = browser.challenge_pending = browser.managed_challenge_observed = True
+        browser.loader = 'old-loader'
+        browser.safety_contexts[('main',3)] = 'frame'
+        browser.metrics['navigationAttempts'] = browser.navigation_generation = 1
+        browser.committed_generation = 1
+        deadline = browser.deadline
+        browser.request_paused(paused(), 'main')
+        self.assertFalse(browser.ready)
+        browser.event({'method':'Runtime.executionContextsCleared', 'sessionId':'main', 'params':{}})
+        self.assertFalse(browser.ready_to_scan())
+        browser.event({'method':'Page.lifecycleEvent', 'sessionId':'main', 'params':{
+            'name':'DOMContentLoaded', 'frameId':'frame', 'loaderId':'old-loader'}})
+        self.assertFalse(browser.ready_to_scan())
+        browser.event({'method':'Page.frameNavigated', 'sessionId':'main', 'params':{
+            'frame':{'id':'frame', 'url':URL, 'loaderId':'new-loader'}}})
+        browser.event({'method':'Runtime.executionContextCreated', 'sessionId':'main', 'params':{
+            'context':{'id':4,'name':host.WORLD,'auxData':{'frameId':'frame'}}}})
+        browser.event({'method':'Page.lifecycleEvent', 'sessionId':'main', 'params':{
+            'name':'DOMContentLoaded', 'frameId':'frame', 'loaderId':'old-loader'}})
+        self.assertFalse(browser.ready_to_scan())
+        browser.event({'method':'Page.lifecycleEvent', 'sessionId':'main', 'params':{
+            'name':'DOMContentLoaded', 'frameId':'frame', 'loaderId':'new-loader'}})
+        self.assertTrue(browser.ready_to_scan())
+        self.assertEqual(browser.deadline, deadline)
+        self.assertEqual(browser.metrics, {'navigationAttempts':2,'replayAttempts':0})
+
+    def test_unexpected_context_clear_without_reload_remains_fail_closed(self):
+        browser = RecordingBrowser(); browser.committed = browser.ready = True
+        browser.safety_contexts[('main',3)] = 'frame'
+        with self.assertRaises(host.AssistanceFailure) as caught:
+            browser.event({'method':'Runtime.executionContextsCleared','sessionId':'main','params':{}})
+        self.assertEqual(caught.exception.reason, 'observer-unavailable')
 
 
 class JavaScriptTests(unittest.TestCase):
