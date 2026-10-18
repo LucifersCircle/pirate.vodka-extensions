@@ -39,7 +39,9 @@ REASONS = frozenset({
     'invalid-request', 'session-not-found', 'session-busy', 'invalid-response',
     'insecure-capability', 'debugger-unavailable', 'browser-command-failed',
     'operation-timeout', 'challenge-unresolved', 'access-denied', 'captcha-visible',
-    'security-warning', 'document-identity-changed', 'redirect-blocked',
+    'security-warning', 'document-identity-changed', 'document-url-mismatch',
+    'navigation-during-replay', 'unexpected-navigation-state', 'unverified-reload',
+    'replay-context-lost', 'replay-loader-changed', 'redirect-blocked',
     'resource-blocked', 'resource-limit', 'navigation-limit', 'navigation-failed',
     'unexpected-target', 'unexpected-dialog', 'observer-unavailable',
     'replay-failed', 'response-too-large', 'browser-operation-failed',
@@ -482,11 +484,15 @@ class PassiveBrowser:
             fail('unexpected-dialog')
         elif method == 'Page.navigatedWithinDocument' and session == self.session and data.get('frameId') == self.frame:
             if data.get('url') != self.payload['url']:
-                fail('document-identity-changed')
+                fail('document-url-mismatch')
         elif method == 'Page.frameNavigated' and session == self.session and data['frame']['id'] == self.frame:
             frame = data['frame']
-            if frame.get('url') != self.payload['url'] or self.fetching or not self.awaiting_navigation:
-                fail('document-identity-changed')
+            if frame.get('url') != self.payload['url']:
+                fail('document-url-mismatch')
+            if self.fetching:
+                fail('navigation-during-replay')
+            if not self.awaiting_navigation:
+                fail('unexpected-navigation-state')
             self.loader, self.committed, self.ready = frame.get('loaderId'), True, False
             self.committed_generation = self.navigation_generation
         elif (method == 'Page.lifecycleEvent' and session == self.session and self.committed
@@ -502,7 +508,7 @@ class PassiveBrowser:
         # intercepted/authorized main-document navigation. It never authorizes
         # a new request or permits the replay to be retried.
         if self.fetching:
-            fail('document-identity-changed')
+            fail('replay-context-lost')
         if self.committed and not self.awaiting_navigation:
             fail('observer-unavailable')
         self.ready = False
@@ -533,13 +539,15 @@ class PassiveBrowser:
             if request.get('method') != 'GET' or request.get('hasPostData') or request.get('postData'):
                 fail('resource-blocked')
             if main:
-                if url != self.payload['navigationURL'] or self.fetching:
-                    fail('document-identity-changed')
+                if url != self.payload['navigationURL']:
+                    fail('document-url-mismatch')
+                if self.fetching:
+                    fail('navigation-during-replay')
                 if self.metrics['navigationAttempts'] >= MAX_NAVIGATIONS:
                     fail('navigation-limit', 'unresolved')
                 # Subsequent navigations may only reload the managed challenge.
                 if self.metrics['navigationAttempts'] and not (self.challenge_pending and self.managed_challenge_observed):
-                    fail('document-identity-changed')
+                    fail('unverified-reload')
                 self.metrics['navigationAttempts'] += 1
                 self.navigation_generation += 1
                 self.ready, self.awaiting_navigation = False, True
@@ -623,8 +631,10 @@ class PassiveBrowser:
         if self.metrics['replayAttempts'] != 1:
             fail('replay-failed')
         frame = self.call('Page.getFrameTree', session=self.session)['frameTree']['frame']
-        if frame.get('url') != self.payload['url'] or frame.get('loaderId') != loader:
-            fail('document-identity-changed')
+        if frame.get('url') != self.payload['url']:
+            fail('document-url-mismatch')
+        if frame.get('loaderId') != loader:
+            fail('replay-loader-changed')
         try:
             _, pending = self.check_safety()
         except AssistanceFailure as error:

@@ -45,6 +45,19 @@ void test("missing or malformed helper accounting is an explicit error without e
     readAssistanceReport(path, report);
     assert.deepEqual(report.Marumaru.cloudflareAssistance, stats);
     assert.deepEqual(report.Marumaru.tests, before.Marumaru.tests);
+    for (const stopDetail of [
+      "document-url-mismatch",
+      "navigation-during-replay",
+      "unexpected-navigation-state",
+      "unverified-reload",
+      "replay-context-lost",
+      "replay-loader-changed",
+    ]) {
+      writeFileSync(path, JSON.stringify({ Marumaru: { ...stats, stopDetail } }));
+      readAssistanceReport(path, report);
+      assert.equal(report.Marumaru.cloudflareAssistance.stopDetail, stopDetail);
+      assert.deepEqual(report.Marumaru.tests, before.Marumaru.tests);
+    }
     for (const changes of [
       { stopDetail: "secret-not-for-logs" },
       { stopReason: undefined },

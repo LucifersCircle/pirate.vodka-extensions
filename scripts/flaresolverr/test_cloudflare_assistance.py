@@ -427,6 +427,70 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaises(host.AssistanceFailure):self.execute(ProtocolSocket(cleanup_error=True))
 
 
+class IdentityDiagnosticTests(unittest.TestCase):
+    """Fixed enums distinguish rejected protocol states without changing gates."""
+    def test_navigation_diagnostics_retain_failure_and_request_budget(self):
+        cases = [
+            ('url', 'document-url-mismatch'),
+            ('replay', 'navigation-during-replay'),
+            ('state', 'unexpected-navigation-state'),
+            ('reload', 'unverified-reload'),
+            ('context', 'replay-context-lost'),
+        ]
+        for mode, reason in cases:
+            with self.subTest(mode=mode):
+                browser = RecordingBrowser()
+                browser.fetching = mode in {'replay', 'context'}
+                browser.metrics['navigationAttempts'] = 1
+                before = dict(browser.metrics)
+                with self.assertRaises(host.AssistanceFailure) as caught:
+                    if mode == 'reload':
+                        browser.request_paused(paused(), 'main')
+                    elif mode == 'context':
+                        browser.context_lost()
+                    else:
+                        browser.event({'method':'Page.frameNavigated', 'sessionId':'main', 'params':{
+                            'frame':{'id':'frame', 'url':URL + '#different' if mode == 'url' else URL}}})
+                self.assertEqual(caught.exception.reason, reason)
+                self.assertEqual(caught.exception.code, 'operation')
+                self.assertEqual(browser.metrics, before)
+                self.assertEqual(browser.calls, [])
+                self.assertNotIn(URL, json.dumps(host.failure_payload(caught.exception, browser.metrics)))
+
+    def test_main_request_and_same_document_url_mismatch_remain_rejected(self):
+        for event in (False, True):
+            browser = RecordingBrowser()
+            with self.assertRaises(host.AssistanceFailure) as caught:
+                if event:
+                    browser.event({'method':'Page.navigatedWithinDocument', 'sessionId':'main',
+                                   'params':{'frameId':'frame', 'url':URL + '#changed'}})
+                else:
+                    browser.request_paused(paused(URL + '#changed'), 'main')
+            self.assertEqual(caught.exception.reason, 'document-url-mismatch')
+            self.assertEqual(browser.metrics['navigationAttempts'], 0)
+            self.assertEqual(browser.calls, [])
+
+    def test_final_frame_url_and_loader_mismatch_still_dispose_without_retry(self):
+        for field, value, reason in [('url', URL + '#changed', 'document-url-mismatch'),
+                                      ('loaderId', 'other-loader', 'replay-loader-changed')]:
+            with self.subTest(field=field):
+                class ChangedFinalFrame(ProtocolSocket):
+                    def send(self, raw):
+                        item = json.loads(raw)
+                        super().send(raw)
+                        if item['method'] == 'Page.getFrameTree' and self.loaded:
+                            self.queue[-1]['result']['frameTree']['frame'][field] = value
+                socket = ChangedFinalFrame()
+                with self.assertRaises(host.AssistanceFailure) as caught:
+                    LifecycleTests.execute(self, socket)
+                self.assertEqual(caught.exception.reason, reason)
+                self.assertEqual(caught.exception.code, 'operation')
+                self.assertEqual(socket.sent[-1]['method'], 'Target.disposeBrowserContext')
+                self.assertEqual(sum(item['method'] == 'Page.navigate' for item in socket.sent), 1)
+                self.assertEqual(sum(item['method'] == 'Runtime.evaluate' and 'awaitPromise' in item['params']
+                                     for item in socket.sent), 1)
+
+
 class ManagedReloadTests(unittest.TestCase):
     execute = LifecycleTests.execute
 
@@ -449,7 +513,7 @@ class ManagedReloadTests(unittest.TestCase):
     def test_only_known_context_loss_during_verified_reload_is_recoverable(self):
         for mode, reason in [('no-managed-reload','browser-command-failed'),
                              ('unknown-error','browser-command-failed'),
-                             ('foreign-url','document-identity-changed')]:
+                             ('foreign-url','document-url-mismatch')]:
             with self.subTest(mode=mode):
                 socket = ReloadProtocolSocket(mode)
                 with self.assertRaises(host.AssistanceFailure) as caught:
@@ -473,7 +537,7 @@ class ManagedReloadTests(unittest.TestCase):
         socket = ReloadProtocolSocket('lost-after-replay')
         with self.assertRaises(host.AssistanceFailure) as caught:
             self.execute(socket)
-        self.assertEqual(caught.exception.reason, 'document-identity-changed')
+        self.assertEqual(caught.exception.reason, 'replay-context-lost')
         replays = [item for item in socket.sent
                    if item['method']=='Runtime.evaluate' and 'awaitPromise' in item['params']]
         self.assertEqual(len(replays), 1)
