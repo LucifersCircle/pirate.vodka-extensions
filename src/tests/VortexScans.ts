@@ -81,6 +81,7 @@ export async function runTests(logger: TestLogger) {
         "ONGOING",
       );
     },
+    guardPrerequisites: ["source"],
     async guard({ source: manga }) {
       expect(contentSettings().excludeNSFW).to.equal(true);
       expect(manga).not.to.equal(undefined);

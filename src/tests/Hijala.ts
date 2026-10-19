@@ -75,6 +75,7 @@ export async function runTests(logger: TestLogger) {
         "MANGA",
       );
     },
+    guardPrerequisites: ["chapters"],
     async guard({ extension, chapters }) {
       expect(preferences().excludeNSFW).to.equal(true);
       expect(preferences().hidePaid).to.equal(true);

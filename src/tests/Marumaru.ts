@@ -45,6 +45,7 @@ export async function runTests(logger: TestLogger) {
       if (!("pages" in reader)) throw new Error("Expected image reader");
       expect(reader.pages).to.deep.equal(raw.item.body.map((page) => page.url));
     },
+    guardPrerequisites: ["chapters"],
     async guard({ extension, chapters }) {
       expect(chapters).not.to.equal(undefined);
       await rejects(
