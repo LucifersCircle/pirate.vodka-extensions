@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { build } from "rolldown";
+import { Worker } from "node:worker_threads";
 
 void test("native observer preserves SDK request headers and fences budgets before actual data transport", async () => {
   const suiteCode = readFileSync(new URL("../src/tests/suite.ts", import.meta.url), "utf8");
@@ -18,6 +19,24 @@ void test("native observer preserves SDK request headers and fences budgets befo
       suiteCode.indexOf("await extension.initialise()"),
   );
   const temp = mkdtempSync(join(tmpdir(), "paperback-native-probe-"));
+  const server = new Worker(
+    `
+    const { parentPort } = require('node:worker_threads');
+    const http = require('node:http');
+    http.createServer((req, res) => {
+      if (req.url === '/challenge') res.setHeader('CF-Mitigated', 'challenge');
+      if (req.url === '/benign') res.setHeader('cf-ray', 'test-ray');
+      if (req.url === '/wrong-value') res.setHeader('cf-mitigated', 'none');
+      if (req.url === '/plain403') res.statusCode = 403;
+      res.end('native harness response');
+    }).listen(0, '127.0.0.1', function() { parentPort.postMessage(this.address().port); });
+  `,
+    { eval: true },
+  );
+  const port = await new Promise((resolve, reject) => {
+    server.once("message", resolve);
+    server.once("error", reject);
+  });
   try {
     const file = join(temp, "probe.mjs");
     await build({
@@ -31,8 +50,8 @@ void test("native observer preserves SDK request headers and fences budgets befo
           load(id) {
             if (id === "probe-entry")
               return `
-          import { NativeProbe } from ${JSON.stringify(new URL("../src/tests/suite.ts", import.meta.url).pathname)};
-          import { PaperbackInterceptor } from '@paperback/types';
+          import { NativeProbe, TestSuite } from ${JSON.stringify(new URL("../src/tests/suite.ts", import.meta.url).pathname)};
+          import { PaperbackInterceptor, CloudflareError } from '@paperback/types';
           export async function runTests(logger) {
             let delivered = 0;
             class HeaderCopy extends PaperbackInterceptor {
@@ -55,6 +74,49 @@ void test("native observer preserves SDK request headers and fences budgets befo
             }
             logger.log('imageAttempts',imageProbe.counts()); logger.log('finalDispatched',delivered);
             imageProbe.unregisterInterceptor();headers.unregisterInterceptor();
+            // Local HTTP fixtures exercise the real SDK bridge with actual headers.
+            const challengeProbe = new NativeProbe('challenge-observer'); challengeProbe.registerInterceptor();
+            const classified = new TestSuite('classification', logger.scope('classification'));
+            classified.test('benign Cloudflare headers', async () => {
+              challengeProbe.beginTest('benign Cloudflare headers');
+              await Application.scheduleRequest({url:'http://127.0.0.1:${String(port)}/benign',method:'GET'});
+              await Application.scheduleRequest({url:'http://127.0.0.1:${String(port)}/wrong-value',method:'GET'});
+            });
+            classified.test('challenge origin', async () => {
+              challengeProbe.beginTest('challenge origin');
+              try {
+                await Application.scheduleRequest({url:'http://127.0.0.1:${String(port)}/challenge',method:'GET'});
+              } catch (error) {
+                // Same discrimination as Kagane: SDK challenges must survive.
+                if (error instanceof CloudflareError) throw error;
+                throw new Error('source swallowed non-SDK transport error');
+              }
+            });
+            classified.test('dependent access', async () => { challengeProbe.requireAccess(); });
+            classified.test('dependent guard', async () => { challengeProbe.requireGuardAccess(false); });
+            classified.test('guard with existing prerequisites', async () => { challengeProbe.requireGuardAccess(true); });
+            classified.test('independent assertion', async () => { throw new Error('genuine guard defect'); });
+            await classified.run();
+            challengeProbe.unregisterInterceptor();
+            const plainProbe = new NativeProbe('plain-observer'); plainProbe.registerInterceptor();
+            const plain = new TestSuite('plain403', logger.scope('plain403'));
+            plain.test('plain denial', async () => {
+              plainProbe.beginTest('plain denial');
+              await Application.scheduleRequest({url:'http://127.0.0.1:${String(port)}/plain403',method:'GET'});
+              plainProbe.requireAccess();
+            });
+            await plain.run();
+            plainProbe.unregisterInterceptor();
+            const swallowedProbe = new NativeProbe('swallowed-observer'); swallowedProbe.registerInterceptor();
+            const swallowed = new TestSuite('swallowed', logger.scope('swallowed'));
+            swallowed.test('swallowed challenge', async () => {
+              swallowedProbe.beginTest('swallowed challenge');
+              try { await Application.scheduleRequest({url:'http://127.0.0.1:${String(port)}/challenge',method:'GET'}); }
+              catch { /* Simulate a source returning cached data after a transport denial. */ }
+              swallowedProbe.requireCompletedAccess();
+            });
+            await swallowed.run();
+            swallowedProbe.unregisterInterceptor();
           }`;
           },
         },
@@ -92,7 +154,31 @@ void test("native observer preserves SDK request headers and fences budgets befo
       blockedAttempts: 1,
     });
     assert.equal(result.finalDispatched, 4);
+    assert.deepEqual(
+      (({ duration: _duration, ...counts }) => counts)(result.classification.summary),
+      { passed: 2, failed: 1, cloudflared: 1, blocked: 2, total: 6 },
+    );
+    const classified = result.classification.tests;
+    assert.equal(classified[0].status, "pass");
+    assert.equal(classified[1].status, "cloudflared");
+    assert.deepEqual(classified[1].evidence, {
+      kind: "cloudflare-challenge",
+      header: "cf-mitigated",
+      value: "challenge",
+    });
+    assert.equal(classified[2].status, "blocked");
+    assert.equal(classified[2].blockedBy, "challenge origin");
+    assert.equal(classified[3].status, "blocked");
+    assert.equal(classified[3].blockedBy, "challenge origin");
+    assert.equal(classified[4].status, "pass");
+    assert.equal(classified[5].status, "fail");
+    assert.match(classified[5].error, /genuine guard defect/);
+    assert.equal(result.plain403.tests[0].status, "fail");
+    assert.equal(result.plain403.summary.cloudflared, 0);
+    assert.equal(result.swallowed.tests[0].status, "cloudflared");
+    assert.equal(result.swallowed.summary.passed, 0);
   } finally {
+    await server.terminate();
     rmSync(temp, { recursive: true, force: true });
   }
 });

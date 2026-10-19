@@ -62,6 +62,7 @@ export async function runTests(logger: TestLogger) {
         "on-going",
       );
     },
+    guardPrerequisites: ["chapters"],
     async guard({ extension, chapters }) {
       expect(preferences().excludeNSFW).to.equal(true);
       expect(chapters).not.to.equal(undefined);

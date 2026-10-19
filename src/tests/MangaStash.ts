@@ -83,6 +83,7 @@ export async function runTests(logger: TestLogger) {
       );
       expect(new globalThis.URL(capture.request.url).searchParams.get("language[]")).to.equal("EN");
     },
+    guardPrerequisites: ["source", "chapters"],
     async guard({ extension, chapters, source }) {
       expect(chapters).not.to.equal(undefined);
       expect(source).not.to.equal(undefined);

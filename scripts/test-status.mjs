@@ -2,13 +2,19 @@ import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { discoverSources, reportIssues } from "./test-sources.mjs";
+import { discoverSources, reportIssues, testCounts } from "./test-sources.mjs";
 import { allSelection, readSelection, validateSelection } from "./changed-sources.mjs";
 
 export const START = "<!-- LIVE_TEST_STATUS:START -->";
 export const END = "<!-- LIVE_TEST_STATUS:END -->";
 
-const LABELS = { pass: "✅ Pass", fail: "❌ Fail", error: "⚠️ Error" };
+const LABELS = {
+  pass: "✅ Pass",
+  fail: "❌ Fail",
+  error: "⚠️ Error",
+  cloudflared: "☁️ Cloudflared",
+  blocked: "⏸️ Blocked",
+};
 
 function cell(value) {
   return String(value ?? "")
@@ -48,20 +54,16 @@ export function createSnapshot(report, options = {}) {
   const sources = {};
   const reportedFailure = names.some((name) => {
     const data = report?.[name];
-    return data?.error || data?.summary?.failed > 0 || !data?.tests?.length;
+    return (
+      issues[name] || data?.tests?.some((test) => test?.status !== "pass") || !data?.tests?.length
+    );
   });
   for (const name of names) {
     const data = report?.[name];
     const tests = Array.isArray(data?.tests) ? data.tests : [];
-    const passed = tests.filter((test) => test?.status === "pass").length;
-    const failed = tests.filter((test) => test?.status === "fail").length;
-    const valid =
-      tests.length > 0 &&
-      tests.every((test) => test && typeof test.name === "string") &&
-      passed + failed === tests.length &&
-      data?.summary?.total === tests.length &&
-      data.summary.passed === passed &&
-      data.summary.failed === failed;
+    const counts = testCounts(tests);
+    const { pass: passed, fail: failed, cloudflared, blocked } = counts;
+    const valid = !issues[name];
     const error =
       options.selectionError ||
       issues[name] ||
@@ -69,7 +71,15 @@ export function createSnapshot(report, options = {}) {
       (!valid
         ? "No complete test report. Check the workflow logs for setup or runtime errors."
         : "");
-    let status = error ? "error" : failed ? "fail" : "pass";
+    let status = error
+      ? "error"
+      : failed
+        ? "fail"
+        : cloudflared
+          ? "cloudflared"
+          : blocked
+            ? "blocked"
+            : "pass";
     if (
       status === "pass" &&
       options.outcome &&
@@ -81,12 +91,16 @@ export function createSnapshot(report, options = {}) {
       status,
       passed,
       failed,
+      cloudflared,
+      blocked,
       total: tests.length,
       duration: data?.summary?.duration,
       error: error || (status === "error" ? `Test step outcome: ${options.outcome}` : ""),
       tests: tests.map((test) => ({
         name: test?.name ?? "Unknown test",
-        status: test?.status === "pass" ? "pass" : "fail",
+        status: Object.hasOwn(LABELS, test?.status) ? test.status : "error",
+        ...(test?.status === "cloudflared" && !issues[name] ? { evidence: test.evidence } : {}),
+        ...(test?.status === "blocked" && !issues[name] ? { blockedBy: test.blockedBy } : {}),
         duration: test?.duration,
         error: test?.error,
       })),
@@ -104,6 +118,8 @@ export function createSnapshot(report, options = {}) {
       completed: names.filter((name) => sources[name].status !== "error").length,
       passed: Object.values(sources).reduce((sum, source) => sum + source.passed, 0),
       failed: Object.values(sources).reduce((sum, source) => sum + source.failed, 0),
+      cloudflared: Object.values(sources).reduce((sum, source) => sum + source.cloudflared, 0),
+      blocked: Object.values(sources).reduce((sum, source) => sum + source.blocked, 0),
       total: Object.values(sources).reduce((sum, source) => sum + source.total, 0),
     },
     notSelectedSources: selection.discoveredSources.filter((name) => !names.includes(name)),
@@ -152,20 +168,20 @@ export function renderStatus(snapshot, history) {
     );
   if (snapshot.sourceCounts)
     lines.push(
-      `Selected tests: ${snapshot.sourceCounts.passed}/${snapshot.sourceCounts.total} passed; ${snapshot.sourceCounts.failed} failed.`,
+      `Selected tests: ${snapshot.sourceCounts.passed}/${snapshot.sourceCounts.total} passed; ${snapshot.sourceCounts.failed} failed; ${snapshot.sourceCounts.cloudflared ?? 0} Cloudflared; ${snapshot.sourceCounts.blocked ?? 0} blocked. Cloudflared and blocked tests are not verified passes.`,
     );
   if (snapshot.startedAt) lines.push(`Started: ${timestamp(snapshot.startedAt)}`);
   if (snapshot.sha) lines.push(`Tested commit: \`${snapshot.sha.slice(0, 7)}\``);
   lines.push(
     "",
-    "| Extension | Result | Passed | Failed | Duration |",
-    "| --- | --- | ---: | ---: | ---: |",
+    "| Extension | Result | Passed | Failed | Cloudflared | Blocked | Duration |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
   );
   const diagnostics = [];
   for (const name of names) {
     const result = snapshot.sources[name];
     lines.push(
-      `| ${name} | ${LABELS[result.status]} | ${result.passed}/${result.total} | ${result.failed} | ${duration(result.duration)} |`,
+      `| ${name} | ${LABELS[result.status]} | ${result.passed}/${result.total} | ${result.failed} | ${result.cloudflared ?? 0} | ${result.blocked ?? 0} | ${duration(result.duration)} |`,
     );
     if (result.error) diagnostics.push(`${name}: ${cell(result.error)}`);
   }
@@ -184,7 +200,7 @@ export function renderStatus(snapshot, history) {
     }
     for (const test of snapshot.sources[name].tests) {
       lines.push(
-        `| ${name} | ${cell(test.name)} | ${LABELS[test.status]} | ${duration(test.duration)} | ${cell(test.error) || "—"} |`,
+        `| ${name} | ${cell(test.name)} | ${LABELS[test.status]} | ${duration(test.duration)} | ${cell(test.error) || (test.blockedBy ? `Blocked by: ${cell(test.blockedBy)}` : "—")} |`,
       );
     }
   }

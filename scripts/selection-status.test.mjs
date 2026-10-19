@@ -64,6 +64,8 @@ void test("partial snapshots count only expected suites and explicitly label omi
     completed: 1,
     passed: 1,
     failed: 0,
+    cloudflared: 0,
+    blocked: 0,
     total: 1,
   });
   assert.equal(snapshot.sources[selected[0]].status, "pass");
@@ -191,6 +193,34 @@ void test("full capture and README/history publication work without installed de
     assert.match(readFileSync(join(dir, "README.md"), "utf8"), /Live scope: all/);
     const history = JSON.parse(readFileSync(join(dir, "reports/live-tests-history.json"), "utf8"));
     assert.deepEqual(Object.keys(history[0].sources), names);
+    const obstructed = fullReport();
+    obstructed[names[0]] = {
+      summary: { total: 2, passed: 0, failed: 0, cloudflared: 1, blocked: 1 },
+      tests: [
+        {
+          name: "inventory",
+          status: "cloudflared",
+          evidence: { kind: "cloudflare-challenge", header: "cf-mitigated", value: "challenge" },
+        },
+        { name: "reader", status: "blocked", blockedBy: "inventory" },
+      ],
+    };
+    put(join(dir, "bundles/live-test-results.json"), JSON.stringify(obstructed));
+    env.TEST_OUTCOME = "failure";
+    assert.equal(
+      invoke("capture").status,
+      1,
+      "challenge obstruction must never pass the capture gate",
+    );
+    const blocked = JSON.parse(
+      readFileSync(join(dir, "bundles/live-status/snapshot.json"), "utf8"),
+    );
+    assert.equal(blocked.sources[names[0]].status, "cloudflared");
+    assert.equal(blocked.sources[names[1]].status, "pass");
+    assert.equal(blocked.sourceCounts.cloudflared, 1);
+    assert.equal(blocked.sourceCounts.blocked, 1);
+    assert.equal(invoke("publish").status, 0, "full nonpass reports may publish honest status");
+    assert.match(readFileSync(join(dir, "README.md"), "utf8"), /Cloudflared/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

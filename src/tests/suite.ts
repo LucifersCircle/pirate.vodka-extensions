@@ -5,6 +5,7 @@
 // Custom contracts call the real SDK methods, with no alternate transport or mock source.
 import {
   ContentRating,
+  CloudflareError,
   DiscoverSectionType,
   PaperbackInterceptor,
   SourceIntents,
@@ -31,6 +32,25 @@ import { expect } from "chai";
 import * as cheerio from "cheerio";
 import { verifyRasterImageBytes } from "./image";
 
+export class CloudflareChallengeError extends CloudflareError {
+  readonly evidence = {
+    kind: "cloudflare-challenge",
+    header: "cf-mitigated",
+    value: "challenge",
+  } as const;
+  constructor(request: Request) {
+    // Preserve SDK identity for source catches that rethrow CloudflareError.
+    // The original request stays in memory only; reports log sanitized evidence
+    // and String(error), never resolutionRequest, headers or the response body.
+    super(request, "Native response was blocked by an explicit Cloudflare challenge; not verified.");
+  }
+}
+export class BlockedNativeTestError extends Error {
+  constructor(readonly blockedBy: string) {
+    super(`Native access blocked by ${blockedBy}; no automatic retry.`);
+  }
+}
+
 export class TestSuite {
   readonly state: Record<string, unknown> = {};
   private readonly notApplicable: { contract: string; reason: string }[] = [];
@@ -51,7 +71,9 @@ export class TestSuite {
     const started = Date.now(),
       tests = this.logger.list("tests");
     let passed = 0,
-      failed = 0;
+      failed = 0,
+      cloudflared = 0,
+      blocked = 0;
     for (const test of this.tests) {
       const logger = tests.scope(test.name),
         start = Date.now();
@@ -60,8 +82,18 @@ export class TestSuite {
         passed++;
         logger.log("status", "pass");
       } catch (error) {
-        failed++;
-        logger.log("status", "fail");
+        if (error instanceof CloudflareChallengeError) {
+          cloudflared++;
+          logger.log("status", "cloudflared");
+          logger.log("evidence", error.evidence);
+        } else if (error instanceof BlockedNativeTestError) {
+          blocked++;
+          logger.log("status", "blocked");
+          logger.log("blockedBy", error.blockedBy);
+        } else {
+          failed++;
+          logger.log("status", "fail");
+        }
         logger.log("error", String(error));
       }
       logger.log("duration", Date.now() - start);
@@ -70,6 +102,8 @@ export class TestSuite {
     this.logger.log("summary", {
       passed,
       failed,
+      cloudflared,
+      blocked,
       total: this.tests.length,
       duration: Date.now() - started,
     });
@@ -94,6 +128,12 @@ export class NativeProbe extends PaperbackInterceptor {
   readonly imageURLs = new Set<string>();
   noNetwork = false;
   private stopped = false;
+  private activeTest = "Native response prerequisite";
+  private challengeOwner: string | undefined;
+  private challengeError: CloudflareChallengeError | undefined;
+  beginTest(name: string): void {
+    this.activeTest = name;
+  }
   private blockedAttempts = 0;
   private refuse(message: string): never {
     this.blockedAttempts++;
@@ -120,9 +160,26 @@ export class NativeProbe extends PaperbackInterceptor {
     if (response.status === 401 || response.status === 403 || challenge) this.stopped = true;
     this.captures.push({ request, response, data });
     if (/^image\//i.test(mime)) this.imageURLs.add(request.url);
+    // Fail at the actual challenged response, not at an unrelated later assertion.
+    // Never infer this status from cf-ray, a generic 403 or an HTML error body.
+    if (challenge) {
+      this.challengeOwner ??= this.activeTest;
+      this.challengeError ??= new CloudflareChallengeError(request);
+      throw this.challengeError;
+    }
     return data;
   }
+  requireCompletedAccess(): void {
+    // A source may catch a transport exception. It still cannot turn a fatal
+    // challenge into verified coverage by returning cached or empty results.
+    if (this.challengeOwner === this.activeTest && this.challengeError) throw this.challengeError;
+  }
+  requireGuardAccess(prerequisitesPresent: boolean): void {
+    if (!prerequisitesPresent && this.challengeOwner)
+      throw new BlockedNativeTestError(this.challengeOwner);
+  }
   requireAccess(): void {
+    if (this.challengeOwner) throw new BlockedNativeTestError(this.challengeOwner);
     if (this.stopped) throw new Error("Native access prerequisite failed; no automatic retry.");
   }
   find(match: (capture: Capture) => boolean): Capture {
@@ -172,6 +229,7 @@ export type NativeContractOptions = {
   assertFiltered?: (
     context: NativeContext & { query: SearchQuery<Metadata>; items: SearchResultItem[] },
   ) => void;
+  guardPrerequisites?: ("source" | "chapters")[];
   guard: (context: NativeContext) => Promise<void>;
   documentBudget?: { maximum: number; reason: string };
 };
@@ -328,11 +386,13 @@ export function registerNativeContracts(
   });
   const test = (name: string, fn: (logger: TestLogger) => Promise<void>) =>
     suite.test(name, async (logger) => {
-      expect(initialized, "initialisation prerequisite").to.equal(true);
+      probe.beginTest(name);
       probe.requireAccess();
+      expect(initialized, "initialisation prerequisite").to.equal(true);
       const before = probe.counts();
       try {
         await fn(logger);
+        probe.requireCompletedAccess();
       } finally {
         const after = probe.counts();
         logger.log("requests", {
@@ -342,6 +402,7 @@ export function registerNativeContracts(
       }
     });
   suite.test("01 initialise and advertised native methods", async () => {
+    probe.beginTest("01 initialise and advertised native methods");
     probe.registerInterceptor();
     text(info.name, "extension name");
     text(info.version, "extension version");
@@ -380,6 +441,7 @@ export function registerNativeContracts(
     // Keep observer first: alpha.92 passes the original request to each interceptor.
     // Moving this no-op observer last would discard source-created header copies.
     await extension.initialise();
+    probe.requireCompletedAccess();
     initialized = true;
   });
   if (caps & SourceIntents.DISCOVER_SECTION_PROVIDING)
@@ -560,7 +622,11 @@ export function registerNativeContracts(
       } else logger.log("advancedFilter", "N/A: optional method absent");
     });
   suite.test("08 fail-closed ownership/policy guard and request budget", async (logger) => {
+    if (!initialized) probe.requireAccess();
     expect(initialized, "initialisation prerequisite").to.equal(true);
+    probe.requireGuardAccess(
+      options.guardPrerequisites?.every((key) => suite.state[key] !== undefined) ?? true,
+    );
     const before = probe.requests.length;
     probe.noNetwork = true;
     try {

@@ -89,6 +89,7 @@ export async function runTests(logger: TestLogger) {
         "Completed",
       );
     },
+    guardPrerequisites: ["source", "chapters"],
     async guard({ extension, source, chapters }) {
       expect(source).not.to.equal(undefined);
       expect(chapters).not.to.equal(undefined);

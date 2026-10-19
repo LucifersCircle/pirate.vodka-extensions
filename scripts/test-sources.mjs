@@ -22,6 +22,28 @@ export function selectSources(args, sources = discoverSources()) {
   return args.length ? [...args].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)) : sources;
 }
 
+// Only the explicit response challenge marker is evidence, never edge headers or status codes.
+export function validChallengeEvidence(evidence) {
+  return (
+    evidence &&
+    typeof evidence === "object" &&
+    !Array.isArray(evidence) &&
+    Object.keys(evidence).sort().join(",") === "header,kind,value" &&
+    evidence.kind === "cloudflare-challenge" &&
+    evidence.header === "cf-mitigated" &&
+    evidence.value === "challenge"
+  );
+}
+
+export function testCounts(tests) {
+  return Object.fromEntries(
+    ["pass", "fail", "cloudflared", "blocked"].map((status) => [
+      status,
+      Array.isArray(tests) ? tests.filter((test) => test?.status === status).length : 0,
+    ]),
+  );
+}
+
 // Validate the expected set, not whichever suites happened to emit output.
 export function reportIssues(report, sources) {
   const issues = {};
@@ -32,22 +54,48 @@ export function reportIssues(report, sources) {
   for (const source of sources) {
     const data = validReport && Object.hasOwn(report, source) ? report[source] : undefined;
     const tests = data?.tests;
-    const passed = Array.isArray(tests)
-      ? tests.filter((test) => test?.status === "pass").length
-      : 0;
-    const failed = Array.isArray(tests)
-      ? tests.filter((test) => test?.status === "fail").length
-      : 0;
+    const counts = testCounts(tests);
+    const validTests =
+      Array.isArray(tests) &&
+      tests.length > 0 &&
+      new Set(tests.map((test) => test?.name)).size === tests.length &&
+      tests.every((test, index) => {
+        if (
+          !test ||
+          typeof test.name !== "string" ||
+          !test.name.trim() ||
+          !Object.hasOwn(counts, test.status)
+        )
+          return false;
+        if (test.status === "cloudflared")
+          return validChallengeEvidence(test.evidence) && test.blockedBy === undefined;
+        if (test.status === "blocked")
+          return (
+            typeof test.blockedBy === "string" &&
+            test.blockedBy.trim() &&
+            test.blockedBy !== test.name &&
+            tests
+              .slice(0, index)
+              .some(
+                (dependency) =>
+                  dependency?.name === test.blockedBy &&
+                  ["fail", "cloudflared", "blocked"].includes(dependency.status),
+              ) &&
+            test.evidence === undefined
+          );
+        return test.evidence === undefined && test.blockedBy === undefined;
+      });
     if (unexpected.length) issues[source] = "Report contains unexpected sources";
     else if (data?.error) issues[source] = String(data.error);
     else if (
-      !Array.isArray(tests) ||
-      !tests.length ||
-      tests.some((test) => !test || typeof test.name !== "string" || !test.name.trim()) ||
-      passed + failed !== tests.length ||
+      !validTests ||
       data.summary?.total !== tests.length ||
-      data.summary.passed !== passed ||
-      data.summary.failed !== failed
+      data.summary.passed !== counts.pass ||
+      data.summary.failed !== counts.fail ||
+      (data.summary.cloudflared ?? 0) !== counts.cloudflared ||
+      (data.summary.blocked ?? 0) !== counts.blocked ||
+      (Object.hasOwn(data.summary, "cloudflared") && !Number.isInteger(data.summary.cloudflared)) ||
+      (Object.hasOwn(data.summary, "blocked") && !Number.isInteger(data.summary.blocked))
     )
       issues[source] = "Missing, empty, malformed, or inconsistent test report";
   }
@@ -56,7 +104,9 @@ export function reportIssues(report, sources) {
 
 export function failedSources(report, sources) {
   const issues = reportIssues(report, sources);
-  return sources.filter((source) => issues[source] || report?.[source]?.summary?.failed !== 0);
+  return sources.filter(
+    (source) => issues[source] || report[source].tests.some((test) => test.status !== "pass"),
+  );
 }
 
 // Each invocation has its own output file. Continue after failures to retain every selected result.
