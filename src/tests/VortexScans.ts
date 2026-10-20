@@ -10,7 +10,11 @@ import {
   DOMAIN_API,
   type VortexChaptersResponse,
 } from "../VortexScans/implementations/shared/models";
-import { assertMangaAllowed, contentSettings } from "../VortexScans/implementations/shared/content";
+import {
+  assertMangaAllowed,
+  assertReaderAllowed,
+  contentSettings,
+} from "../VortexScans/implementations/shared/content";
 import * as cheerio from "cheerio";
 import { TestSuite, registerNativeContracts, rejects, type NativeExtension } from "./suite";
 export async function runTests(logger: TestLogger) {
@@ -18,8 +22,19 @@ export async function runTests(logger: TestLogger) {
   const suite = new TestSuite("VortexScans native contracts", logger);
   const probe = registerNativeContracts(suite, source as unknown as NativeExtension, sourceInfo, {
     discoverySectionId: "featured",
-    query: { title: "Got a Gallery in the Wild" },
-    mangaId: "658:got-a-gallery-in-the-wild",
+    query: { title: "The Lord Who Levels Up by Absorbing Powers" },
+    chooseResult(items) {
+      const item = items.find(
+        (entry) => entry.title === "The Lord Who Levels Up by Absorbing Powers",
+      );
+      if (!item) throw new Error("Missing reported VortexScans reader title");
+      return item;
+    },
+    chooseChapter(chapters) {
+      const chapter = chapters.find((entry) => entry.chapNum === 1);
+      if (!chapter) throw new Error("Missing reported VortexScans chapter 1");
+      return chapter;
+    },
     assertInventory({ probe, source, chapters }) {
       const raw = probe.json<VortexChaptersResponse>(
         ({ request }) =>
@@ -82,7 +97,7 @@ export async function runTests(logger: TestLogger) {
       );
     },
     guardPrerequisites: ["source"],
-    async guard({ source: manga }) {
+    async guard({ source: manga, reader }) {
       expect(contentSettings().excludeNSFW).to.equal(true);
       expect(manga).not.to.equal(undefined);
       expect(() =>
@@ -91,6 +106,9 @@ export async function runTests(logger: TestLogger) {
           mangaInfo: { ...manga!.mangaInfo, contentRating: ContentRating.ADULT },
         }),
       ).to.throw(/hidden/);
+      if (reader && "pages" in reader) {
+        for (const page of reader.pages) expect(() => assertReaderAllowed(page)).to.throw(/hidden/);
+      }
       await rejects(() => source.getSearchResults({ title: "" }, { page: 0 }), /cursor/);
     },
   });

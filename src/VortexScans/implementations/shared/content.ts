@@ -44,9 +44,23 @@ export async function withContentSettings<T>(operation: () => Promise<T>): Promi
   // A concurrent native callback may have learned a positive source warning while
   // this callback awaited. Never release that now-blocked card/detail/reader.
   const ids: string[] = [];
+  const covers: [string, string][] = [];
   const collect = (value: unknown): void => {
     if (!value || typeof value !== "object") return;
-    if ("mangaId" in value && typeof value.mangaId === "string") ids.push(value.mangaId);
+    if ("mangaId" in value && typeof value.mangaId === "string") {
+      ids.push(value.mangaId);
+      if ("imageUrl" in value && typeof value.imageUrl === "string" && value.imageUrl)
+        covers.push([value.imageUrl, key(value.mangaId)]);
+      if (
+        "mangaInfo" in value &&
+        value.mangaInfo &&
+        typeof value.mangaInfo === "object" &&
+        "thumbnailUrl" in value.mangaInfo &&
+        typeof value.mangaInfo.thumbnailUrl === "string" &&
+        value.mangaInfo.thumbnailUrl
+      )
+        covers.push([value.mangaInfo.thumbnailUrl, key(value.mangaId)]);
+    }
     if ("sourceManga" in value) collect(value.sourceManga);
   };
   if (Array.isArray(result)) result.forEach(collect);
@@ -57,6 +71,7 @@ export async function withContentSettings<T>(operation: () => Promise<T>): Promi
   }
   if (ids.some((id) => !contentAllowed(id)))
     throw new Error("VortexScans content warnings changed. Reload this page.");
+  bindCovers(covers);
   return result;
 }
 function key(mangaId: string): string {
@@ -130,31 +145,135 @@ export function assertMangaAllowed(manga: SourceManga): void {
   if (!contentAllowed(manga.mangaId, names))
     throw new Error("This title is hidden by VortexScans' Exclude NSFW content setting.");
 }
-// Persist exact issued URLs so newly observed warnings can revoke old readers.
-// This is safety evidence, not an evictable response cache. State grows with use.
-export function bindReaderPages(mangaId: string, pages: string[]): void {
-  const raw = Application.getState(READER_KEY);
-  const bindings = new Map<string, string>(
-    Array.isArray(raw)
-      ? raw.filter(
-          (entry) =>
-            Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "string",
-        )
-      : [],
-  );
-  for (const page of pages) {
-    if (bindings.has(page) && bindings.get(page) !== key(mangaId))
-      throw new Error("VortexScans returned a conflicting reader image identity.");
-    bindings.set(page, key(mangaId));
+// This is a working set, not reading history. Exact source-issued image URLs
+// authorize requests only while retained; old images require a fresh source load.
+interface ReaderGroup {
+  owner: string;
+  pages: string[];
+}
+interface ImageCache {
+  version: 3;
+  chapters: ReaderGroup[];
+  covers: [string, string][];
+}
+const MAX_CACHE_BYTES = 96 * 1024;
+const MAX_CHAPTERS = 4;
+// Three search pages (48 each), also covering adjacent 36-item Discover pages.
+const MAX_COVERS = 144;
+function serializedBytes(value: unknown): number {
+  let bytes = 0;
+  for (const char of JSON.stringify(value)) {
+    const code = char.codePointAt(0)!;
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
   }
-  Application.setState([...bindings], READER_KEY);
+  return bytes;
+}
+function imageCache(): ImageCache {
+  const raw = Application.getState(READER_KEY);
+  if (raw === undefined || raw === null || Array.isArray(raw)) {
+    const empty: ImageCache = { version: 3, chapters: [], covers: [] };
+    // Replace legacy history instead of copying or indefinitely retaining it.
+    // Unknown image requests below fail closed, so discarded bindings cannot
+    // silently bypass content checks. Settings and positive warnings stay intact.
+    if (Array.isArray(raw)) Application.setState(empty, READER_KEY);
+    return empty;
+  }
+  const saved = raw as ImageCache;
+  if (
+    saved.version !== 3 ||
+    !Array.isArray(saved.chapters) ||
+    saved.chapters.length > MAX_CHAPTERS ||
+    !saved.chapters.every(
+      (group) =>
+        group &&
+        typeof group.owner === "string" &&
+        Array.isArray(group.pages) &&
+        group.pages.length > 0 &&
+        group.pages.length <= 2000 &&
+        group.pages.every((page) => typeof page === "string"),
+    ) ||
+    !Array.isArray(saved.covers) ||
+    saved.covers.length > MAX_COVERS ||
+    !saved.covers.every(
+      (entry) =>
+        Array.isArray(entry) &&
+        entry.length === 2 &&
+        typeof entry[0] === "string" &&
+        typeof entry[1] === "string",
+    ) ||
+    serializedBytes(saved) > MAX_CACHE_BYTES
+  )
+    throw new Error("Invalid saved VortexScans image cache.");
+  return saved;
+}
+function imageOwner(url: string, cache: ImageCache): string | undefined {
+  const owners = new Set([
+    ...cache.chapters.filter((group) => group.pages.includes(url)).map((group) => group.owner),
+    ...cache.covers.filter(([image]) => image === url).map(([, owner]) => owner),
+  ]);
+  if (owners.size > 1) throw new Error("VortexScans returned a conflicting reader image identity.");
+  return owners.values().next().value;
+}
+function assertImageOwner(url: string, owner: string, cache: ImageCache): void {
+  const previous = imageOwner(url, cache);
+  if (previous !== undefined && previous !== owner)
+    throw new Error("VortexScans returned a conflicting reader image identity.");
+}
+export function bindReaderPages(mangaId: string, pages: string[]): void {
+  const owner = key(mangaId),
+    cache = imageCache();
+  if (!pages.length || pages.length > 2000 || pages.some((page) => typeof page !== "string"))
+    throw new Error("Invalid VortexScans reader page manifest.");
+  for (const page of pages) assertImageOwner(page, owner, cache);
+  const current = { owner, pages: [...new Set(pages)] };
+  const next: ImageCache = {
+    version: 3,
+    chapters: [...cache.chapters.filter((group) => group.pages[0] !== pages[0]), current].slice(
+      -MAX_CHAPTERS,
+    ),
+    covers: [...cache.covers],
+  };
+  // Keep complete recent chapters. Never silently drop pages from this chapter.
+  while (serializedBytes(next) > MAX_CACHE_BYTES && next.covers.length) next.covers.shift();
+  while (serializedBytes(next) > MAX_CACHE_BYTES && next.chapters.length > 1) next.chapters.shift();
+  if (serializedBytes(next) > MAX_CACHE_BYTES)
+    throw new Error("This VortexScans chapter exceeds the safe reader cache size.");
+  // One synchronous replacement: a failed native write does not release details.
+  Application.setState(next, READER_KEY);
+}
+function bindCovers(covers: [string, string][]): void {
+  if (!covers.length) return;
+  const cache = imageCache();
+  const incoming = new Map<string, string>();
+  for (const [url, owner] of covers) {
+    assertImageOwner(url, owner, cache);
+    const previous = incoming.get(url);
+    if (previous !== undefined && previous !== owner)
+      throw new Error("VortexScans returned a conflicting reader image identity.");
+    incoming.set(url, owner);
+  }
+  if (incoming.size > MAX_COVERS)
+    throw new Error("This VortexScans result exceeds the safe image cache size.");
+  const merged = new Map(cache.covers);
+  for (const [url, owner] of covers) {
+    merged.delete(url);
+    merged.set(url, owner);
+  }
+  const next: ImageCache = { ...cache, covers: [...merged].slice(-MAX_COVERS) };
+  // Browsing must not evict an active/prefetched reader chapter.
+  while (serializedBytes(next) > MAX_CACHE_BYTES && next.covers.length > incoming.size)
+    next.covers.shift();
+  if (serializedBytes(next) > MAX_CACHE_BYTES)
+    throw new Error("This VortexScans result exceeds the safe image cache size.");
+  Application.setState(next, READER_KEY);
 }
 export function assertReaderAllowed(url: string): void {
-  if (!contentSettings().excludeNSFW) return;
-  const raw = Application.getState(READER_KEY);
-  const binding = Array.isArray(raw)
-    ? raw.find((entry) => Array.isArray(entry) && entry[0] === url)
-    : undefined;
-  if (binding && !contentAllowed(binding[1]))
+  const binding = imageOwner(url, imageCache());
+  if (binding === undefined) {
+    if (/^https?:\/\/[^?#]+\.(?:webp|jpe?g|png|gif|avif)(?:[?#]|$)/i.test(url))
+      throw new Error("VortexScans image authorization expired. Reload the title or chapter.");
+    return;
+  }
+  if (!contentAllowed(binding))
     throw new Error("This reader is hidden by VortexScans' Exclude NSFW content setting.");
 }
