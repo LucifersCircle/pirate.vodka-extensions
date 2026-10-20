@@ -130,31 +130,67 @@ export function assertMangaAllowed(manga: SourceManga): void {
   if (!contentAllowed(manga.mangaId, names))
     throw new Error("This title is hidden by VortexScans' Exclude NSFW content setting.");
 }
-// Persist exact issued URLs so newly observed warnings can revoke old readers.
-// This is safety evidence, not an evictable response cache. State grows with use.
-export function bindReaderPages(mangaId: string, pages: string[]): void {
+// Keep the old aggregate read-only: it may already be near the native per-value
+// state limit. Old URLs must retain their ownership and later-warning revocation.
+// New bindings are separate, bounded records, not an evictable response cache.
+const READER_RECORD_PREFIX = "VortexScans.readerTitle.v2:";
+const MAX_RECORD_CODE_UNITS = 16_384;
+function readerRecordKey(url: string): string {
+  const stateKey = `${READER_RECORD_PREFIX}${url}`;
+  // JSON UTF-8 uses at most three bytes per UTF-16 code unit. This conservative
+  // bound also accounts for escaped controls and leaves ample native overhead.
+  if (JSON.stringify(stateKey).length > MAX_RECORD_CODE_UNITS)
+    throw new Error("VortexScans reader image identity is too large to store safely.");
+  return stateKey;
+}
+function legacyReaderBindings(): Map<string, string> {
   const raw = Application.getState(READER_KEY);
-  const bindings = new Map<string, string>(
-    Array.isArray(raw)
-      ? raw.filter(
-          (entry) =>
-            Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "string",
-        )
-      : [],
-  );
-  for (const page of pages) {
-    if (bindings.has(page) && bindings.get(page) !== key(mangaId))
-      throw new Error("VortexScans returned a conflicting reader image identity.");
-    bindings.set(page, key(mangaId));
+  if (raw === undefined || raw === null) return new Map();
+  if (!Array.isArray(raw)) throw new Error("Invalid saved VortexScans reader identities.");
+  const bindings = new Map<string, string>();
+  for (const entry of raw) {
+    if (
+      !Array.isArray(entry) ||
+      entry.length !== 2 ||
+      typeof entry[0] !== "string" ||
+      typeof entry[1] !== "string" ||
+      (bindings.has(entry[0]) && bindings.get(entry[0]) !== entry[1])
+    )
+      throw new Error("Invalid saved VortexScans reader identities.");
+    bindings.set(entry[0], entry[1]);
   }
-  Application.setState([...bindings], READER_KEY);
+  return bindings;
+}
+function readerOwner(url: string, legacy: Map<string, string>): string | undefined {
+  const current = Application.getState(readerRecordKey(url));
+  if (current !== undefined && typeof current !== "string")
+    throw new Error("Invalid saved VortexScans reader identity.");
+  const previous = legacy.get(url);
+  if (current !== undefined && previous !== undefined && current !== previous)
+    throw new Error("VortexScans returned a conflicting reader image identity.");
+  return current ?? previous;
+}
+export function bindReaderPages(mangaId: string, pages: string[]): void {
+  const owner = key(mangaId);
+  if (JSON.stringify(owner).length > MAX_RECORD_CODE_UNITS)
+    throw new Error("VortexScans reader title identity is too large to store safely.");
+  const legacy = legacyReaderBindings();
+  // Validate the complete chapter before writing. A native write failure still
+  // propagates, so incomplete persistence never releases chapter details.
+  const pending = new Map<string, string>();
+  for (const page of pages) {
+    const existing = readerOwner(page, legacy);
+    if (existing !== undefined && existing !== owner)
+      throw new Error("VortexScans returned a conflicting reader image identity.");
+    if (existing === undefined) pending.set(readerRecordKey(page), owner);
+  }
+  // Synchronous reads/writes contain no await point, preserving concurrent
+  // chapter callback updates without rewriting a shared aggregate snapshot.
+  for (const [stateKey, value] of pending) Application.setState(value, stateKey);
 }
 export function assertReaderAllowed(url: string): void {
   if (!contentSettings().excludeNSFW) return;
-  const raw = Application.getState(READER_KEY);
-  const binding = Array.isArray(raw)
-    ? raw.find((entry) => Array.isArray(entry) && entry[0] === url)
-    : undefined;
-  if (binding && !contentAllowed(binding[1]))
+  const binding = readerOwner(url, legacyReaderBindings());
+  if (binding !== undefined && !contentAllowed(binding))
     throw new Error("This reader is hidden by VortexScans' Exclude NSFW content setting.");
 }
