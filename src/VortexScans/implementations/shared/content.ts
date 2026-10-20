@@ -203,7 +203,7 @@ function imageCache(): ImageCache {
     ) ||
     serializedBytes(saved) > MAX_CACHE_BYTES
   )
-    throw new Error("Invalid saved VortexScans image cache. Reload the extension.");
+    throw new Error("Invalid saved VortexScans image cache.");
   return saved;
 }
 function imageOwner(url: string, cache: ImageCache): string | undefined {
@@ -264,9 +264,7 @@ function bindCovers(covers: [string, string][]): void {
   while (serializedBytes(next) > MAX_CACHE_BYTES && next.covers.length > incoming.size)
     next.covers.shift();
   if (serializedBytes(next) > MAX_CACHE_BYTES)
-    throw new Error(
-      "This VortexScans result exceeds the safe image cache size. Reload the extension.",
-    );
+    throw new Error("This VortexScans result exceeds the safe image cache size.");
   Application.setState(next, READER_KEY);
 }
 export function assertReaderAllowed(url: string): void {
