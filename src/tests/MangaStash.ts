@@ -46,9 +46,9 @@ export async function runTests(logger: TestLogger) {
       const url = chapterURL(chapter.chapterId, chapter.sourceManga.mangaId);
       const $ = cheerio.load(probe.text(({ request }) => request.url === url));
       expect($("link[rel=canonical]").attr("href")).to.equal(url);
-      const selected = $(".chapter-select option[selected]");
+      const selected = $("a.rd-sheet__row.is-current");
       expect(selected).to.have.length(1);
-      expect(new globalThis.URL(selected.attr("value")!, url).href).to.equal(url);
+      expect(new globalThis.URL(selected.attr("href")!, url).href).to.equal(url);
       const rows = $("#reader-pages > .reader-page").toArray();
       const config = $("script:not([src])")
         .toArray()
