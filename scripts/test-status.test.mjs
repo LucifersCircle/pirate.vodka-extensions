@@ -262,3 +262,30 @@ void test("legacy reports and benign Cloudflare response errors are never inferr
   data.summary.cloudflared = null;
   assert.ok(reportIssues({ Kagane: data }, ["Kagane"]).Kagane);
 });
+
+void test("rerun history keeps prior failure and exact tested SHA within 24 entries", () => {
+  const sha = "82340886f297f4d2de6ae74f54014800e4fb16f0";
+  const report = Object.fromEntries(discoverSources().map((name) => [name, suite()]));
+  report.Kagane = suite(["pass", "fail"]);
+  const failed = createSnapshot(report, { checkedAt, runUrl, sha, outcome: "failure" });
+  const prior = Array.from({ length: 24 }, (_, i) => ({
+    ...updateHistory([], failed)[0],
+    checkedAt: new Date(Date.parse(checkedAt) - (i + 1) * 1000).toISOString(),
+  }));
+  const first = updateHistory(prior, failed);
+  report.Kagane = suite();
+  const recovered = createSnapshot(report, {
+    checkedAt: "2026-10-14T12:30:04.000Z",
+    runUrl,
+    sha,
+    outcome: "success",
+  });
+  const history = updateHistory(first, recovered);
+  assert.equal(history.length, 24);
+  assert.equal(history[0].sources.Kagane.status, "pass");
+  assert.equal(history[1].sources.Kagane.status, "fail");
+  assert.equal(history[0].runUrl, history[1].runUrl);
+  assert.equal(history[0].sha, sha);
+  assert.equal(history[1].sha, sha);
+  assert.match(renderStatus(recovered, history), /Tested commit: `8234088`/);
+});
