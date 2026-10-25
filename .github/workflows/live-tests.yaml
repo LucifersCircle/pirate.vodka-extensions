@@ -18,6 +18,8 @@ jobs:
     name: Test extensions
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      results-artifact-id: ${{ steps.results.outputs.artifact-id }}
     env:
       LIVE_TEST_SELECTION: bundles/live-status/selection.json
     steps:
@@ -66,10 +68,11 @@ jobs:
             cp bundles/live-test-results.json bundles/live-status/paperback.json
           fi
       - name: Upload results and logs
+        id: results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: live-test-results
+          name: live-test-results-${{ github.run_attempt }}
           retention-days: 7
           path: bundles/live-status/
       - name: Stop FlareSolverr
@@ -96,10 +99,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Require this test job artifact
+        env:
+          RESULTS_ARTIFACT_ID: ${{ needs.live-tests.outputs.results-artifact-id }}
+        run: |
+          [[ "$RESULTS_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || {
+            echo "Missing test-job artifact ID; refusing ambiguous download." >&2
+            exit 1
+          }
       - name: Download results
         uses: actions/download-artifact@v4
         with:
-          name: live-test-results
+          artifact-ids: ${{ needs.live-tests.outputs.results-artifact-id }}
+          merge-multiple: true
           path: bundles/live-status
       - name: Install the README formatter
         run: npm ci --ignore-scripts
