@@ -306,8 +306,7 @@ are retained in the source files.
 
 **Discover and search**
 
-- Popular This Month, New Additions and Latest Updates retain the website's
-  distinct feeds. Catalog browsing uses the site's declared filters and sorts;
+- Popular Now and Latest Updates retain the website's distinct feeds. Catalog browsing uses the site's declared filters and sorts;
   title search uses its separate search endpoint rather than silently ignoring
   unsupported combinations.
 - Pagination retains the original query scope, canonical IDs and source order.
