@@ -9,8 +9,7 @@ import {
 } from "@paperback/types";
 export const BASE_URL = "https://mangastash.org";
 export const SECTIONS: DiscoverSection[] = [
-  { id: "popular", title: "Popular This Month", type: DiscoverSectionType.simpleCarousel },
-  { id: "new", title: "New Additions", type: DiscoverSectionType.simpleCarousel },
+  { id: "popular", title: "Popular Now", type: DiscoverSectionType.simpleCarousel },
   { id: "latest", title: "Latest Updates", type: DiscoverSectionType.simpleCarousel },
 ];
 export const SORTS = [

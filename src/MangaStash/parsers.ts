@@ -369,18 +369,28 @@ export const parseReader = (html: string, chapter: Chapter): ChapterDetails => {
   const article = schema($, "Article"),
     owner = article.isPartOf as { url?: unknown; name?: unknown } | undefined;
   const title = chapter.sourceManga.mangaInfo.primaryTitle;
+  const ownerLinks = $(".reader #rd-rail a.rd-rail__btn[href]").filter((_, node) => {
+    try {
+      return sourceURL($(node).attr("href") ?? "").href === seriesURL(id);
+    } catch {
+      return false;
+    }
+  });
+  const heading = $(".reader h1.rd-sr-only");
   if (
     article.url !== url ||
     article["@id"] !== url ||
     owner?.url !== seriesURL(id) ||
     owner.name !== title ||
-    seriesId($("a.reader-back").attr("href") ?? "") !== id ||
-    text($(".reader-chapter-title").text()) !== article.headline ||
+    ownerLinks.length !== 1 ||
+    seriesId(ownerLinks.attr("href") ?? "") !== id ||
+    heading.length !== 1 ||
+    text(heading.text()) !== article.headline ||
     !String(article.headline).startsWith(title + " Ch. ")
   )
     throw new Error("MangaStash reader owner identity mismatch.");
-  const selected = $(".chapter-select option[selected]");
-  if (selected.length !== 1 || chapterId(selected.attr("value") ?? "", id) !== chapter.chapterId)
+  const selected = $("a.rd-sheet__row.is-current");
+  if (selected.length !== 1 || chapterId(selected.attr("href") ?? "", id) !== chapter.chapterId)
     throw new Error("MangaStash reader selected chapter mismatch.");
   const scripts = $("script:not([src])")
     .toArray()
@@ -438,7 +448,7 @@ export const parseReader = (html: string, chapter: Chapter): ChapterDetails => {
     Number(literal("seriesId", "number")) < 1 ||
     !Number.isSafeInteger(Number(literal("chapterId", "number"))) ||
     Number(literal("chapterId", "number")) < 1 ||
-    text($(".reader-chapter-title").text()) !== `${title} Ch. ${num}`
+    text(heading.text()) !== `${title} Ch. ${num}`
   )
     throw new Error("MangaStash readerConfig identity mismatch.");
   const rows = $("#reader-pages > .reader-page");
