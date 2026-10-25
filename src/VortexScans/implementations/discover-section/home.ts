@@ -46,7 +46,9 @@ export function parseHome(html: string): HomeSnapshot {
     .map((element) => $(element).text())
     .filter(
       (script) =>
-        script.startsWith('(self.$R=self.$R||{})["tsr"]=[];') && script.includes("$_TSR.router="),
+        (script.startsWith('(self.$R=self.$R||{})["tsr"]=[];') ||
+          script.startsWith("$_TSR.router=")) &&
+        script.includes("$_TSR.router="),
     );
   if (scripts.length !== 1) throw new Error("VortexScans returned ambiguous homepage data.");
   const field = <T>(key: string): T => serializedProperty<T>(scripts[0], key);
