@@ -406,7 +406,15 @@ export const parseReader = (html: string, chapter: Chapter): ChapterDetails => {
     throw new Error("Unsupported MangaStash readerConfig line separator.");
   const values = new Map<string, string>();
   const stringKeys = ["seriesSlug", "format"],
-    numberKeys = ["chapterNum", "chapterId", "seriesId", "midrollInterval", "totalPages"];
+    numberKeys = [
+      "chapterNum",
+      "chapterId",
+      "seriesId",
+      "midrollInterval",
+      "totalPages",
+      "totalChapters",
+      "resumePage",
+    ];
   for (const raw of normalized.split("\n")) {
     const line = raw.trim();
     if (!line || line.startsWith("//")) continue;
@@ -418,6 +426,21 @@ export const parseReader = (html: string, chapter: Chapter): ChapterDetails => {
       const match = value.match(/^'([a-z0-9-]+)'$/);
       if (!match) throw new Error("Unsupported MangaStash readerConfig string.");
       values.set(key, match[1]);
+    } else if (key === "chapterLabel") {
+      // Presentation only: never substitute this label for canonical identity.
+      if (
+        !/^(?:'[^'\\]{0,128}'|"[^"\\]{0,128}")$/.test(value) ||
+        value
+          .split("")
+          .some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
+      )
+        throw new Error("Unsupported MangaStash readerConfig chapter label.");
+      values.set(key, value);
+    } else if (["hasPrev", "hasNext"].includes(key)) {
+      const flag = value.trim();
+      if (flag !== "true" && flag !== "false")
+        throw new Error("Unsupported MangaStash readerConfig navigation flag.");
+      values.set(key, flag);
     } else if (numberKeys.includes(key)) {
       if (!/^\d+(?:\.\d+)?$/.test(value))
         throw new Error("Unsupported MangaStash readerConfig number.");
@@ -437,6 +460,26 @@ export const parseReader = (html: string, chapter: Chapter): ChapterDetails => {
   };
   const total = Number(literal("totalPages", "number")),
     num = Number(literal("chapterNum", "number"));
+  if (values.has("totalChapters")) {
+    const count = Number(values.get("totalChapters"));
+    if (!Number.isSafeInteger(count) || count < 1)
+      throw new Error("Invalid MangaStash readerConfig chapter count.");
+  }
+  if (values.has("resumePage")) {
+    const page = Number(values.get("resumePage"));
+    if (!Number.isSafeInteger(page) || page < 0 || page > total)
+      throw new Error("Invalid MangaStash readerConfig resume page.");
+  }
+  for (const [flag, adjacent] of [
+    ["hasPrev", "prevChapter"],
+    ["hasNext", "nextChapter"],
+  ]) {
+    if (
+      values.has(flag) &&
+      (!values.has(adjacent) || (values.get(flag) === "true") !== (values.get(adjacent) !== "null"))
+    )
+      throw new Error("MangaStash readerConfig navigation flag mismatch.");
+  }
   if (
     literal("seriesSlug", "string") !== id ||
     num !== chapter.chapNum ||
