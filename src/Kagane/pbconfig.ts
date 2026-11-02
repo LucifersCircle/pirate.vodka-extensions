@@ -6,7 +6,7 @@ import { ContentRating, SourceIntents } from "@paperback/types";
 
 export default {
   name: "Kagane",
-  description: "Extension that pulls content from kagane.org.",
+  description: "Extension that pulls content from kagane.moe.",
   version: "0.0.1-alpha.18",
   icon: "icon.png",
   language: "en",
