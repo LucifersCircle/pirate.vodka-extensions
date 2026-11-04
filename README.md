@@ -20,90 +20,90 @@ workflow run list for PR-specific results.
 
 <!-- LIVE_TEST_STATUS:START -->
 
-Last checked: **2026-11-04 11:36:56 UTC** · [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/41822213793)
+Last checked: **2026-11-04 18:54:05 UTC** · [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/41891456379)
 Live scope: all; 8/8 sources selected; 8 complete reports. Non-PR events run the full live suite
 Selected tests: 52/63 passed; 11 failed; 0 Cloudflared; 0 blocked. Cloudflared and blocked tests are not verified passes.
-Started: 2026-11-04 11:36:00 UTC
-Tested commit: `4ada1b7`
+Started: 2026-11-04 18:52:54 UTC
+Tested commit: `5154fff`
 
 | Extension   | Result  | Passed | Failed | Cloudflared | Blocked | Duration |
 | ----------- | ------- | -----: | -----: | ----------: | ------: | -------: |
-| Hijala      | ✅ Pass |    8/8 |      0 |           0 |       0 |    8.47s |
-| Kagane      | ❌ Fail |    7/8 |      1 |           0 |       0 |   11.35s |
-| MangaStash  | ❌ Fail |    4/8 |      4 |           0 |       0 |    5.21s |
-| MangaSushi  | ✅ Pass |    8/8 |      0 |           0 |       0 |   10.29s |
-| ManhwaNex   | ✅ Pass |    8/8 |      0 |           0 |       0 |    8.49s |
-| Marumaru    | ❌ Fail |    1/7 |      6 |           0 |       0 |    4.49s |
-| Noveli      | ✅ Pass |    8/8 |      0 |           0 |       0 |   12.47s |
-| VortexScans | ✅ Pass |    8/8 |      0 |           0 |       0 |   14.88s |
+| Hijala      | ✅ Pass |    8/8 |      0 |           0 |       0 |   13.51s |
+| Kagane      | ❌ Fail |    7/8 |      1 |           0 |       0 |    7.43s |
+| MangaStash  | ❌ Fail |    4/8 |      4 |           0 |       0 |    4.50s |
+| MangaSushi  | ✅ Pass |    8/8 |      0 |           0 |       0 |    7.82s |
+| ManhwaNex   | ✅ Pass |    8/8 |      0 |           0 |       0 |    5.50s |
+| Marumaru    | ❌ Fail |    1/7 |      6 |           0 |       0 |    2.70s |
+| Noveli      | ✅ Pass |    8/8 |      0 |           0 |       0 |   10.27s |
+| VortexScans | ✅ Pass |    8/8 |      0 |           0 |       0 |   27.03s |
 
 <details>
 <summary>Test output</summary>
 
 | Extension   | Test                                                               | Result  | Duration | Failure                                                                                    |
 | ----------- | ------------------------------------------------------------------ | ------- | -------: | ------------------------------------------------------------------------------------------ |
-| Hijala      | 01 initialise and advertised native methods                        | ✅ Pass |    0.20s | —                                                                                          |
-| Hijala      | 02 discover schema and one content section                         | ✅ Pass |    3.94s | —                                                                                          |
-| Hijala      | 03 search schema, exact title identity and one continuation        | ✅ Pass |    1.27s | —                                                                                          |
-| Hijala      | 04 native details identity, schema and complete cover bytes        | ✅ Pass |    0.98s | —                                                                                          |
-| Hijala      | 05 complete native chapter inventory, references and order         | ✅ Pass |    0.77s | —                                                                                          |
-| Hijala      | 06 native reader identity and real first/last images or novel text | ✅ Pass |    0.61s | —                                                                                          |
-| Hijala      | 07 advertised forms, sorts and one representative filter roundtrip | ✅ Pass |    0.70s | —                                                                                          |
+| Hijala      | 01 initialise and advertised native methods                        | ✅ Pass |    0.16s | —                                                                                          |
+| Hijala      | 02 discover schema and one content section                         | ✅ Pass |    5.47s | —                                                                                          |
+| Hijala      | 03 search schema, exact title identity and one continuation        | ✅ Pass |    1.69s | —                                                                                          |
+| Hijala      | 04 native details identity, schema and complete cover bytes        | ✅ Pass |    2.56s | —                                                                                          |
+| Hijala      | 05 complete native chapter inventory, references and order         | ✅ Pass |    0.45s | —                                                                                          |
+| Hijala      | 06 native reader identity and real first/last images or novel text | ✅ Pass |    2.69s | —                                                                                          |
+| Hijala      | 07 advertised forms, sorts and one representative filter roundtrip | ✅ Pass |    0.49s | —                                                                                          |
 | Hijala      | 08 fail-closed ownership/policy guard and request budget           | ✅ Pass |    0.00s | —                                                                                          |
-| Kagane      | 01 initialise and advertised native methods                        | ✅ Pass |    0.17s | —                                                                                          |
-| Kagane      | 02 discover schema and one content section                         | ✅ Pass |    4.10s | —                                                                                          |
-| Kagane      | 03 search schema, exact title identity and one continuation        | ✅ Pass |    2.08s | —                                                                                          |
-| Kagane      | 04 native details identity, schema and complete cover bytes        | ✅ Pass |    1.00s | —                                                                                          |
-| Kagane      | 05 complete native chapter inventory, references and order         | ✅ Pass |    1.69s | —                                                                                          |
-| Kagane      | 06 native reader identity and real first/last images or novel text | ❌ Fail |    0.45s | AssertionError: image HTTP status: expected 404 to equal 200                               |
-| Kagane      | 07 advertised forms, sorts and one representative filter roundtrip | ✅ Pass |    1.87s | —                                                                                          |
+| Kagane      | 01 initialise and advertised native methods                        | ✅ Pass |    0.13s | —                                                                                          |
+| Kagane      | 02 discover schema and one content section                         | ✅ Pass |    1.68s | —                                                                                          |
+| Kagane      | 03 search schema, exact title identity and one continuation        | ✅ Pass |    1.82s | —                                                                                          |
+| Kagane      | 04 native details identity, schema and complete cover bytes        | ✅ Pass |    0.51s | —                                                                                          |
+| Kagane      | 05 complete native chapter inventory, references and order         | ✅ Pass |    1.35s | —                                                                                          |
+| Kagane      | 06 native reader identity and real first/last images or novel text | ❌ Fail |    0.79s | AssertionError: image HTTP status: expected 404 to equal 200                               |
+| Kagane      | 07 advertised forms, sorts and one representative filter roundtrip | ✅ Pass |    1.15s | —                                                                                          |
 | Kagane      | 08 fail-closed ownership/policy guard and request budget           | ✅ Pass |    0.00s | —                                                                                          |
-| MangaStash  | 01 initialise and advertised native methods                        | ✅ Pass |    0.14s | —                                                                                          |
-| MangaStash  | 02 discover schema and one content section                         | ✅ Pass |    1.55s | —                                                                                          |
-| MangaStash  | 03 search schema, exact title identity and one continuation        | ✅ Pass |    1.71s | —                                                                                          |
-| MangaStash  | 04 native details identity, schema and complete cover bytes        | ❌ Fail |    0.74s | Error: MangaStash chapter inventory is incomplete or repeated.                             |
+| MangaStash  | 01 initialise and advertised native methods                        | ✅ Pass |    0.11s | —                                                                                          |
+| MangaStash  | 02 discover schema and one content section                         | ✅ Pass |    1.60s | —                                                                                          |
+| MangaStash  | 03 search schema, exact title identity and one continuation        | ✅ Pass |    1.01s | —                                                                                          |
+| MangaStash  | 04 native details identity, schema and complete cover bytes        | ❌ Fail |    0.87s | Error: MangaStash chapter inventory is incomplete or repeated.                             |
 | MangaStash  | 05 complete native chapter inventory, references and order         | ❌ Fail |    0.00s | AssertionError: details prerequisite: expected undefined to not equal undefined            |
 | MangaStash  | 06 native reader identity and real first/last images or novel text | ❌ Fail |    0.00s | AssertionError: complete inventory prerequisite: expected undefined to not equal undefined |
-| MangaStash  | 07 advertised forms, sorts and one representative filter roundtrip | ✅ Pass |    1.07s | —                                                                                          |
+| MangaStash  | 07 advertised forms, sorts and one representative filter roundtrip | ✅ Pass |    0.91s | —                                                                                          |
 | MangaStash  | 08 fail-closed ownership/policy guard and request budget           | ❌ Fail |    0.00s | AssertionError: expected undefined to not equal undefined                                  |
-| MangaSushi  | 01 initialise and advertised native methods                        | ✅ Pass |    0.11s | —                                                                                          |
-| MangaSushi  | 02 discover schema and one content section                         | ✅ Pass |    4.65s | —                                                                                          |
-| MangaSushi  | 03 search schema, exact title identity and one continuation        | ✅ Pass |    2.52s | —                                                                                          |
-| MangaSushi  | 04 native details identity, schema and complete cover bytes        | ✅ Pass |    0.23s | —                                                                                          |
-| MangaSushi  | 05 complete native chapter inventory, references and order         | ✅ Pass |    0.89s | —                                                                                          |
-| MangaSushi  | 06 native reader identity and real first/last images or novel text | ✅ Pass |    0.68s | —                                                                                          |
-| MangaSushi  | 07 advertised forms, sorts and one representative filter roundtrip | ✅ Pass |    1.22s | —                                                                                          |
+| MangaSushi  | 01 initialise and advertised native methods                        | ✅ Pass |    0.08s | —                                                                                          |
+| MangaSushi  | 02 discover schema and one content section                         | ✅ Pass |    2.58s | —                                                                                          |
+| MangaSushi  | 03 search schema, exact title identity and one continuation        | ✅ Pass |    1.92s | —                                                                                          |
+| MangaSushi  | 04 native details identity, schema and complete cover bytes        | ✅ Pass |    0.36s | —                                                                                          |
+| MangaSushi  | 05 complete native chapter inventory, references and order         | ✅ Pass |    0.64s | —                                                                                          |
+| MangaSushi  | 06 native reader identity and real first/last images or novel text | ✅ Pass |    0.89s | —                                                                                          |
+| MangaSushi  | 07 advertised forms, sorts and one representative filter roundtrip | ✅ Pass |    1.34s | —                                                                                          |
 | MangaSushi  | 08 fail-closed ownership/policy guard and request budget           | ✅ Pass |    0.00s | —                                                                                          |
-| ManhwaNex   | 01 initialise and advertised native methods                        | ✅ Pass |    0.08s | —                                                                                          |
-| ManhwaNex   | 02 discover schema and one content section                         | ✅ Pass |    3.36s | —                                                                                          |
-| ManhwaNex   | 03 search schema, exact title identity and one continuation        | ✅ Pass |    0.57s | —                                                                                          |
-| ManhwaNex   | 04 native details identity, schema and complete cover bytes        | ✅ Pass |    0.73s | —                                                                                          |
-| ManhwaNex   | 05 complete native chapter inventory, references and order         | ✅ Pass |    0.85s | —                                                                                          |
-| ManhwaNex   | 06 native reader identity and real first/last images or novel text | ✅ Pass |    1.83s | —                                                                                          |
-| ManhwaNex   | 07 advertised forms, sorts and one representative filter roundtrip | ✅ Pass |    1.07s | —                                                                                          |
+| ManhwaNex   | 01 initialise and advertised native methods                        | ✅ Pass |    0.06s | —                                                                                          |
+| ManhwaNex   | 02 discover schema and one content section                         | ✅ Pass |    1.67s | —                                                                                          |
+| ManhwaNex   | 03 search schema, exact title identity and one continuation        | ✅ Pass |    0.51s | —                                                                                          |
+| ManhwaNex   | 04 native details identity, schema and complete cover bytes        | ✅ Pass |    0.26s | —                                                                                          |
+| ManhwaNex   | 05 complete native chapter inventory, references and order         | ✅ Pass |    0.45s | —                                                                                          |
+| ManhwaNex   | 06 native reader identity and real first/last images or novel text | ✅ Pass |    1.54s | —                                                                                          |
+| ManhwaNex   | 07 advertised forms, sorts and one representative filter roundtrip | ✅ Pass |    1.02s | —                                                                                          |
 | ManhwaNex   | 08 fail-closed ownership/policy guard and request budget           | ✅ Pass |    0.00s | —                                                                                          |
-| Marumaru    | 01 initialise and advertised native methods                        | ✅ Pass |    0.06s | —                                                                                          |
-| Marumaru    | 02 discover schema and one content section                         | ❌ Fail |    3.27s | Error: Marumaru response redirected.                                                       |
-| Marumaru    | 03 search schema, exact title identity and one continuation        | ❌ Fail |    1.16s | Error: Marumaru response redirected.                                                       |
+| Marumaru    | 01 initialise and advertised native methods                        | ✅ Pass |    0.04s | —                                                                                          |
+| Marumaru    | 02 discover schema and one content section                         | ❌ Fail |    0.48s | Error: Marumaru response redirected.                                                       |
+| Marumaru    | 03 search schema, exact title identity and one continuation        | ❌ Fail |    2.17s | Error: Marumaru response redirected.                                                       |
 | Marumaru    | 04 native details identity, schema and complete cover bytes        | ❌ Fail |    0.00s | AssertionError: search prerequisite: expected undefined to not equal undefined             |
 | Marumaru    | 05 complete native chapter inventory, references and order         | ❌ Fail |    0.00s | AssertionError: details prerequisite: expected undefined to not equal undefined            |
 | Marumaru    | 06 native reader identity and real first/last images or novel text | ❌ Fail |    0.00s | AssertionError: complete inventory prerequisite: expected undefined to not equal undefined |
 | Marumaru    | 08 fail-closed ownership/policy guard and request budget           | ❌ Fail |    0.00s | AssertionError: expected undefined to not equal undefined                                  |
-| Noveli      | 01 initialise and advertised native methods                        | ✅ Pass |    0.03s | —                                                                                          |
-| Noveli      | 02 discover schema and one content section                         | ✅ Pass |    7.53s | —                                                                                          |
-| Noveli      | 03 search schema, exact title identity and one continuation        | ✅ Pass |    1.51s | —                                                                                          |
-| Noveli      | 04 native details identity, schema and complete cover bytes        | ✅ Pass |    0.27s | —                                                                                          |
-| Noveli      | 05 complete native chapter inventory, references and order         | ✅ Pass |    1.43s | —                                                                                          |
+| Noveli      | 01 initialise and advertised native methods                        | ✅ Pass |    0.02s | —                                                                                          |
+| Noveli      | 02 discover schema and one content section                         | ✅ Pass |    4.67s | —                                                                                          |
+| Noveli      | 03 search schema, exact title identity and one continuation        | ✅ Pass |    1.69s | —                                                                                          |
+| Noveli      | 04 native details identity, schema and complete cover bytes        | ✅ Pass |    0.50s | —                                                                                          |
+| Noveli      | 05 complete native chapter inventory, references and order         | ✅ Pass |    1.22s | —                                                                                          |
 | Noveli      | 06 native reader identity and real first/last images or novel text | ✅ Pass |    0.33s | —                                                                                          |
-| Noveli      | 07 advertised forms, sorts and one representative filter roundtrip | ✅ Pass |    1.32s | —                                                                                          |
-| Noveli      | 08 fail-closed ownership/policy guard and request budget           | ✅ Pass |    0.04s | —                                                                                          |
-| VortexScans | 01 initialise and advertised native methods                        | ✅ Pass |    0.01s | —                                                                                          |
-| VortexScans | 02 discover schema and one content section                         | ✅ Pass |    8.26s | —                                                                                          |
-| VortexScans | 03 search schema, exact title identity and one continuation        | ✅ Pass |    4.93s | —                                                                                          |
-| VortexScans | 04 native details identity, schema and complete cover bytes        | ✅ Pass |    0.51s | —                                                                                          |
-| VortexScans | 05 complete native chapter inventory, references and order         | ✅ Pass |    0.14s | —                                                                                          |
-| VortexScans | 06 native reader identity and real first/last images or novel text | ✅ Pass |    0.51s | —                                                                                          |
-| VortexScans | 07 advertised forms, sorts and one representative filter roundtrip | ✅ Pass |    0.51s | —                                                                                          |
+| Noveli      | 07 advertised forms, sorts and one representative filter roundtrip | ✅ Pass |    1.82s | —                                                                                          |
+| Noveli      | 08 fail-closed ownership/policy guard and request budget           | ✅ Pass |    0.02s | —                                                                                          |
+| VortexScans | 01 initialise and advertised native methods                        | ✅ Pass |    0.00s | —                                                                                          |
+| VortexScans | 02 discover schema and one content section                         | ✅ Pass |   15.30s | —                                                                                          |
+| VortexScans | 03 search schema, exact title identity and one continuation        | ✅ Pass |    6.57s | —                                                                                          |
+| VortexScans | 04 native details identity, schema and complete cover bytes        | ✅ Pass |    1.74s | —                                                                                          |
+| VortexScans | 05 complete native chapter inventory, references and order         | ✅ Pass |    0.43s | —                                                                                          |
+| VortexScans | 06 native reader identity and real first/last images or novel text | ✅ Pass |    2.13s | —                                                                                          |
+| VortexScans | 07 advertised forms, sorts and one representative filter roundtrip | ✅ Pass |    0.84s | —                                                                                          |
 | VortexScans | 08 fail-closed ownership/policy guard and request budget           | ✅ Pass |    0.02s | —                                                                                          |
 
 </details>
@@ -113,6 +113,7 @@ Tested commit: `4ada1b7`
 
 | Checked (UTC)           | Hijala  | Kagane  | MangaStash | MangaSushi | ManhwaNex | Marumaru | Noveli  | VortexScans | Run                                                                                       |
 | ----------------------- | ------- | ------- | ---------- | ---------- | --------- | -------- | ------- | ----------- | ----------------------------------------------------------------------------------------- |
+| 2026-11-04 18:54:05 UTC | ✅ Pass | ❌ Fail | ❌ Fail    | ✅ Pass    | ✅ Pass   | ❌ Fail  | ✅ Pass | ✅ Pass     | [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/41891456379) |
 | 2026-11-04 11:36:56 UTC | ✅ Pass | ❌ Fail | ❌ Fail    | ✅ Pass    | ✅ Pass   | ❌ Fail  | ✅ Pass | ✅ Pass     | [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/41822213793) |
 | 2026-11-04 03:20:04 UTC | ✅ Pass | ❌ Fail | ❌ Fail    | ✅ Pass    | ✅ Pass   | ❌ Fail  | ✅ Pass | ✅ Pass     | [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/41766355518) |
 | 2026-11-03 23:24:35 UTC | ✅ Pass | ❌ Fail | ❌ Fail    | ✅ Pass    | ✅ Pass   | ❌ Fail  | ✅ Pass | ✅ Pass     | [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/41738764610) |
@@ -136,7 +137,6 @@ Tested commit: `4ada1b7`
 | 2026-10-30 18:38:19 UTC | ✅ Pass | ❌ Fail | ❌ Fail    | ✅ Pass    | ✅ Pass   | ❌ Fail  | ✅ Pass | ✅ Pass     | [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/41108468491) |
 | 2026-10-30 12:56:29 UTC | ✅ Pass | ❌ Fail | ❌ Fail    | ✅ Pass    | ✅ Pass   | ❌ Fail  | ✅ Pass | ✅ Pass     | [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/41059040296) |
 | 2026-10-30 05:49:39 UTC | ✅ Pass | ❌ Fail | ❌ Fail    | ✅ Pass    | ✅ Pass   | ❌ Fail  | ✅ Pass | ✅ Pass     | [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/41010483126) |
-| 2026-10-29 23:57:44 UTC | ✅ Pass | ❌ Fail | ❌ Fail    | ✅ Pass    | ✅ Pass   | ❌ Fail  | ✅ Pass | ✅ Pass     | [Run](https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/40976464400) |
 
 </details>
 
