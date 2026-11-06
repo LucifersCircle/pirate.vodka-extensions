@@ -35,10 +35,18 @@ export const parseCard = (raw: unknown): Card => {
   assertPublic(row);
   const labels = [...words(row.genres, true), ...words(row.tags, true)];
   const rating = classify(labels);
+  let imageUrl: string;
+  try {
+    imageUrl = coverURL(row.cover_image);
+  } catch (error) {
+    if (typeof row.cover_image !== "string") throw error;
+    // Match the site's placeholder for unsupported artwork without granting its URL access.
+    imageUrl = `${BASE_URL}/uploads/covers/default.jpg`;
+  }
   return {
     mangaId: numericId(row.id),
     title: text(row.title),
-    imageUrl: coverURL(row.cover_image),
+    imageUrl,
     contentRating: nativeRating(rating),
     sourceRating: rating,
     ...(typeof row.author === "string" && row.author.trim() ? { subtitle: row.author } : {}),
