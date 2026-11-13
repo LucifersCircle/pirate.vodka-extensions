@@ -1,5 +1,36 @@
 [
   {
+    "checkedAt": "2026-11-13T09:33:05.227Z",
+    "runUrl": "https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/43402013791",
+    "sha": "18bfaf8fc85f9c82bec643c777b40bb8d0e5de92",
+    "sources": {
+      "Hijala": {
+        "status": "pass"
+      },
+      "Kagane": {
+        "status": "fail"
+      },
+      "MangaStash": {
+        "status": "fail"
+      },
+      "MangaSushi": {
+        "status": "pass"
+      },
+      "ManhwaNex": {
+        "status": "pass"
+      },
+      "Marumaru": {
+        "status": "fail"
+      },
+      "Noveli": {
+        "status": "pass"
+      },
+      "VortexScans": {
+        "status": "pass"
+      }
+    }
+  },
+  {
     "checkedAt": "2026-11-13T01:50:14.155Z",
     "runUrl": "https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/43347669422",
     "sha": "bb5b053d4093a0806dc410bee0982428d13180d8",
@@ -700,37 +731,6 @@
       },
       "ManhwaNex": {
         "status": "fail"
-      },
-      "Marumaru": {
-        "status": "fail"
-      },
-      "Noveli": {
-        "status": "pass"
-      },
-      "VortexScans": {
-        "status": "pass"
-      }
-    }
-  },
-  {
-    "checkedAt": "2026-11-07T02:24:14.999Z",
-    "runUrl": "https://github.com/LucifersCircle/pirate.vodka-extensions/actions/runs/42328981594",
-    "sha": "e2997284d5004eaf41e001a6b4c7fb2b6b744f12",
-    "sources": {
-      "Hijala": {
-        "status": "pass"
-      },
-      "Kagane": {
-        "status": "fail"
-      },
-      "MangaStash": {
-        "status": "fail"
-      },
-      "MangaSushi": {
-        "status": "pass"
-      },
-      "ManhwaNex": {
-        "status": "pass"
       },
       "Marumaru": {
         "status": "fail"
