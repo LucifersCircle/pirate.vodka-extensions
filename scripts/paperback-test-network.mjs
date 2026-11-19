@@ -7,8 +7,16 @@ import {
   isNoveliWarmSolution,
 } from "./noveli-test-browser-contract.mjs";
 
+import { writeFileSync } from "node:fs";
+import { createCloudflareAssistance } from "./cloudflare-assistance.mjs";
+
 const nativeFetch = globalThis.fetch;
 const solverURL = process.env.FLARESOLVERR_URL ?? "http://127.0.0.1:8191";
+const assistance = createCloudflareAssistance({
+  solverURL,
+  fetchImpl: nativeFetch,
+  excludedSources: ["VortexScans"],
+});
 const browserStates = new Map();
 const sourceHosts = new Set(["kagane.org", "vortexscans.org", "api.vortexscans.org", "noveli.to"]);
 const sessions = new Set();
@@ -50,6 +58,15 @@ process.once("beforeExit", async () => {
   await Promise.allSettled(
     [...sessions].map((session) => solverCommand({ cmd: "sessions.destroy", session })),
   );
+  try {
+    await assistance.close();
+  } catch {
+    process.exitCode = 1;
+  }
+  const stats = assistance.stats();
+  console.log(`CLOUDFLARE_ASSISTANCE ${JSON.stringify(stats)}`);
+  if (process.env.CF_ASSISTANCE_REPORT)
+    writeFileSync(process.env.CF_ASSISTANCE_REPORT, `${JSON.stringify(stats, null, 2)}\n`);
 });
 
 function cookiesForURL(cookies, url) {
@@ -74,7 +91,7 @@ globalThis.fetch = async function paperbackTestFetch(input, init = {}) {
   const url = new URL(inputURL);
   // A trailing-dot alias must fail closed, not fall through to the native path.
   const noveli = url.hostname.replace(/\.+$/, "") === "noveli.to";
-  if (!noveli && !sourceHosts.has(url.hostname)) return nativeFetch(input, init);
+  if (!noveli && !sourceHosts.has(url.hostname)) return assistance.fetch(input, init);
   const headers = new Headers(
     init.headers ?? (input instanceof Request ? input.headers : undefined),
   );

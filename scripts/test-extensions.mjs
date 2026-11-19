@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { readSelection } from "./changed-sources.mjs";
+import { readAssistanceReport } from "./cloudflare-assistance-report.mjs";
 import { collectSelectedReports, failedSources, selectSources } from "./test-sources.mjs";
 
 const reportPath = fileURLToPath(new URL("../bundles/live-test-results.json", import.meta.url));
@@ -29,6 +30,8 @@ console.log(`FlareSolverr: ${process.env.FLARESOLVERR_URL ?? "http://127.0.0.1:8
 mkdirSync(fileURLToPath(new URL("../bundles/live-status", import.meta.url)), { recursive: true });
 function runCLI(sources, output) {
   rmSync(output, { force: true });
+  const assistanceReport = `${output}.assistance.json`;
+  rmSync(assistanceReport, { force: true });
   const result = spawnSync(
     process.execPath,
     [
@@ -46,19 +49,29 @@ function runCLI(sources, output) {
       output,
       ...sources,
     ],
-    { stdio: "inherit" },
+    { stdio: "inherit", env: { ...process.env, CF_ASSISTANCE_REPORT: assistanceReport } },
   );
-  let report;
+  let report, assistanceError;
   try {
     report = JSON.parse(readFileSync(output, "utf8"));
   } catch {
-    /* Missing or malformed output is validated below. */
+    /* Missing or malformed native output is validated below. */
+  }
+  try {
+    readAssistanceReport(assistanceReport, report);
+  } catch (error) {
+    assistanceError = error.message;
   }
   return {
     report,
     error:
-      result.error ??
-      (result.status !== 0 ? `Paperback CLI exited with ${result.status}` : undefined),
+      [
+        result.error,
+        result.status !== 0 ? `Paperback CLI exited with ${result.status}` : undefined,
+        assistanceError,
+      ]
+        .filter(Boolean)
+        .join("; ") || undefined,
   };
 }
 let report;
