@@ -264,7 +264,7 @@ void test("Noveli transport keeps raw guards, isolated sessions, native covers, 
         headers: challenge
           ? { "cf-mitigated": "challenge", "content-type": "text/html" }
           : { "content-type": "application/json" },
-        ...(payload.url.startsWith("https://kagane.org/")
+        ...(payload.url.startsWith("https://kagane.moe/")
           ? { body: Buffer.from("{}").toString("base64"), encoding: "base64", byteLength: 2 }
           : { body: "{}" }),
       });
@@ -413,12 +413,15 @@ void test("Noveli transport keeps raw guards, isolated sessions, native covers, 
     }
     calls.length = 0;
     const legacyBridge = await loadBridge();
-    await legacyBridge("https://kagane.org/api/example", {
+    await legacyBridge("https://kagane.moe/api/example", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: '{"x":1}',
     });
     const kagane = calls.find((call) => call.url.endsWith("/browser/request"));
+    assert.equal(kagane.payload.url, "https://kagane.moe/api/example");
+    assert.ok(calls.some((call) => call.payload?.cmd === "sessions.create"));
+    assert.ok(calls.some((call) => call.payload?.url === "https://kagane.moe/"));
     assert.equal(kagane.payload.method, "POST");
     assert.equal(kagane.payload.body, '{"x":1}');
     assert.deepEqual(kagane.payload.headers, { "content-type": "application/json" });
@@ -501,7 +504,7 @@ void test("native browser bridge decodes only explicit exact binary envelopes an
     const bytes=Buffer.from(Array.from({length:100003},(_,i)=>i%256));
     const headers={'content-type':'image/webp','content-length':String(bytes.length),'x-contract':'unchanged'};
     let mode='valid';const sent=[];
-    const valid={status:200,url:'https://kagane.org/api/v2/image/contract',headers,encoding:'base64',byteLength:bytes.length,body:bytes.toString('base64')};
+    const valid={status:200,url:'https://kagane.moe/api/v2/image/contract',headers,encoding:'base64',byteLength:bytes.length,body:bytes.toString('base64')};
     // Only the existing gateway protocol is simulated; no source methods or native SDK are replaced.
     globalThis.fetch=async function gateway(url,init){
       const target=String(url),payload=JSON.parse(init.body);sent.push(payload);
@@ -520,13 +523,13 @@ void test("native browser bridge decodes only explicit exact binary envelopes an
       return Response.json(value);
     };
     await import(${JSON.stringify(bridge)});
-    const response=await fetch(valid.url,{method:'GET',headers:{referer:'https://kagane.org/'}});
+    const response=await fetch(valid.url,{method:'GET',headers:{referer:'https://kagane.moe/'}});
     assert.equal(response.url,valid.url);assert.equal(response.status,200);
     assert.equal(response.headers.get('content-length'),String(bytes.length));
     assert.equal(response.headers.get('content-type'),'image/webp');assert.equal(response.headers.get('x-contract'),'unchanged');
     assert.deepEqual(Buffer.from(await response.arrayBuffer()),bytes);
     mode='json';const body='{"title":"日本語 café"}';
-    const json=await fetch('https://kagane.org/api/v2/search/series',{method:'POST',headers:{'content-type':'application/json'},body});
+    const json=await fetch('https://kagane.moe/api/v2/search/series',{method:'POST',headers:{'content-type':'application/json'},body});
     assert.deepEqual(await json.json(),{title:'日本語 café'});assert.equal(sent.at(-1).body,body);assert.equal(sent.at(-1).method,'POST');
     for(mode of ['missing','text','length','noncanonical','invalid','oversized','array'])await assert.rejects(fetch(valid.url),/Invalid browser API binary envelope/);
     const novel=await fetch('https://noveli.to/api/novels/tags',{method:'GET'});assert.deepEqual(await novel.json(),{title:'日本語 café'});
@@ -537,4 +540,55 @@ void test("native browser bridge decodes only explicit exact binary envelopes an
   );
   assert.equal(child.status, 0, child.stderr);
   assert.match(child.stdout, /exact bytes, headers, JSON POST and Noveli text retained/);
+});
+
+void test("Kagane Python browser endpoint uses the current test host for requests and sessions", () => {
+  const python = spawnSync(
+    "python3",
+    [
+      "-c",
+      `import importlib.util, sys, types
+sys.dont_write_bytecode = True
+request = types.SimpleNamespace(json=None)
+response = types.SimpleNamespace(status=200)
+sys.modules['bottle'] = types.SimpleNamespace(request=request, response=response)
+class Driver:
+    current_url = 'https://kagane.moe/'
+    calls = 0
+    def set_script_timeout(self, timeout): pass
+    def execute_async_script(self, script, payload):
+        self.calls += 1
+        return {'status': 200, 'url': payload['url']}
+driver = Driver()
+storage = types.SimpleNamespace(session_ids=lambda: ['test'], get=lambda _: (types.SimpleNamespace(driver=driver), None))
+sys.modules['flaresolverr_service'] = types.SimpleNamespace(SESSIONS_STORAGE=storage)
+spec = importlib.util.spec_from_file_location('browser_request', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+class App:
+    def post(self, path):
+        def register(handler): self.handler = handler; return handler
+        return register
+app = App()
+module.register(app)
+def call(url):
+    request.json = {'url': url, 'session': 'test', 'method': 'POST', 'headers': {}, 'body': '{}'}
+    response.status = 200
+    return app.handler()
+assert call('https://kagane.moe/api/v2/search/series')['status'] == 200
+assert driver.calls == 1
+for url in ['https://kagane.org/api/example', 'https://kagane.moe.evil.test/api/example', 'http://kagane.moe/api/example', 'https://kagane.moe:444/api/example', 'https://kagane.moe/not-api']:
+    assert 'error' in call(url)
+    assert response.status == 400
+assert driver.calls == 1
+driver.current_url = 'https://kagane.org/'
+assert 'error' in call('https://kagane.moe/api/example')
+assert response.status == 502
+assert driver.calls == 1
+`,
+      fileURLToPath(new URL("./flaresolverr/browser_request.py", import.meta.url)),
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(python.status, 0, python.stderr);
 });

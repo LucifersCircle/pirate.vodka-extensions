@@ -10,7 +10,7 @@ import {
 const nativeFetch = globalThis.fetch;
 const solverURL = process.env.FLARESOLVERR_URL ?? "http://127.0.0.1:8191";
 const browserStates = new Map();
-const sourceHosts = new Set(["kagane.org", "vortexscans.org", "api.vortexscans.org", "noveli.to"]);
+const sourceHosts = new Set(["kagane.moe", "vortexscans.org", "api.vortexscans.org", "noveli.to"]);
 const sessions = new Set();
 
 async function solverCommand(payload) {
@@ -108,7 +108,7 @@ globalThis.fetch = async function paperbackTestFetch(input, init = {}) {
   if (!browserState) {
     browserState = (async () => {
       let session;
-      if (url.hostname === "kagane.org" || noveli) {
+      if (url.hostname === "kagane.moe" || noveli) {
         session = crypto.randomUUID();
         await solverCommand({ cmd: "sessions.create", session });
         sessions.add(session);
@@ -122,7 +122,7 @@ globalThis.fetch = async function paperbackTestFetch(input, init = {}) {
 
   async function send() {
     if (noveli) init.signal?.throwIfAborted();
-    if (noveli || (url.hostname === "kagane.org" && url.pathname.startsWith("/api/"))) {
+    if (noveli || (url.hostname === "kagane.moe" && url.pathname.startsWith("/api/"))) {
       const result = await nativeFetch(`${solverURL.replace(/\/$/, "")}/browser/request`, {
         method: "POST",
         headers: { "content-type": "application/json" },

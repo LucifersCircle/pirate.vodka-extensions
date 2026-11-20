@@ -135,7 +135,7 @@ def register(app):
             return {'error': 'Unsupported browser API request'}
         try:
             url = urlparse(payload['url'])
-            kagane = (url.scheme == 'https' and url.hostname == 'kagane.org'
+            kagane = (url.scheme == 'https' and url.hostname == 'kagane.moe'
                       and url.port in (None, 443) and url.path.startswith('/api/'))
         except ValueError:
             kagane = False
@@ -157,7 +157,7 @@ def register(app):
                 driver = session.driver
                 if noveli and not is_noveli_session_url(driver.current_url):
                     raise ValueError('Browser session must be on the exact Noveli HTTPS origin')
-                if not noveli and urlparse(driver.current_url).hostname != 'kagane.org':
+                if not noveli and urlparse(driver.current_url).hostname != 'kagane.moe':
                     raise ValueError('Browser session must be on the Kagane origin')
                 driver.set_script_timeout(65)
                 # Chromium supplies cookies, Origin, Referer, and its real User-Agent.
