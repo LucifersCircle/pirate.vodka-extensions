@@ -12,6 +12,7 @@ import {
   type AdvancedSearchForm,
   type Chapter,
   type ChapterDetails,
+  type DiscoverSection,
   type DiscoverSectionProviding,
   type Extension,
   type ExtensionInfo,
@@ -214,7 +215,7 @@ export type NativeContext = {
   reader?: ChapterDetails;
 };
 export type NativeContractOptions = {
-  discoverySectionId: string;
+  discoverySectionId: string | ((sections: DiscoverSection[], probe: NativeProbe) => string);
   query?: SearchQuery<Metadata>;
   mangaId?: string;
   // Optional fixed detail/inventory canary, independent of the catalog search round-trip.
@@ -455,7 +456,11 @@ export function registerNativeContracts(
         expect(typeof section.type, "native section enum").to.equal("number");
         expect(Object.values(DiscoverSectionType), "native section type").to.include(section.type);
       }
-      const section = sections.find((entry) => entry.id === options.discoverySectionId);
+      const sectionId =
+        typeof options.discoverySectionId === "function"
+          ? options.discoverySectionId(sections, probe)
+          : options.discoverySectionId;
+      const section = sections.find((entry) => entry.id === sectionId);
       expect(section, "explicit content section").not.to.equal(undefined);
       const result = await extension.getDiscoverSectionItems(section!);
       for (const item of result.items)

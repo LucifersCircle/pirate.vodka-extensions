@@ -40,6 +40,12 @@ const DISCOVER_SECTIONS: DiscoverSection[] = [
   { id: "genres", title: "Genres", type: DiscoverSectionType.genres },
 ];
 
+const PINNED_SECTION: DiscoverSection = {
+  id: "pinned-series",
+  title: "Pinned Series",
+  type: DiscoverSectionType.simpleCarousel,
+};
+
 const ACTUAL_GENRES = new Map<string, string>([
   ["action", "Action"],
   ["adventure", "Adventure"],
@@ -75,7 +81,9 @@ const ACTUAL_GENRES = new Map<string, string>([
 
 export class DiscoverProvider {
   async getDiscoverSections(): Promise<DiscoverSection[]> {
-    return DISCOVER_SECTIONS;
+    const { pinned } = parseHome(await homeHTML());
+    if (pinned.length === 0) return DISCOVER_SECTIONS;
+    return [...DISCOVER_SECTIONS.slice(0, 2), PINNED_SECTION, ...DISCOVER_SECTIONS.slice(2)];
   }
 
   async getDiscoverSectionItems(
@@ -97,6 +105,10 @@ export class DiscoverProvider {
         };
       case "popular-today":
         return this.getPopularTodayItems();
+      case "pinned-series":
+        return {
+          items: firstPage(metadata) ? parseHomepageItems(parseHome(await homeHTML()).pinned) : [],
+        };
       case "latest-releases":
         return this.getLatestItems(metadata);
       case "release-filters":

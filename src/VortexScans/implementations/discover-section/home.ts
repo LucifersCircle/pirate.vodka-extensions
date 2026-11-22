@@ -12,6 +12,7 @@ export interface HomePost extends VortexPost {
 interface HomeSnapshot {
   featured: HomePost[];
   latest: HomePost[];
+  pinned: HomePost[];
   popular: HomePost[];
   today: HomePost[];
 }
@@ -89,13 +90,30 @@ export function parseHome(html: string): HomeSnapshot {
     field<{ slug: string; title: string; coverImage: string; tags?: { name?: string }[] }[]>(
       "transformedTopSeries",
     );
+  const hasPinned = field<unknown>("hasPinnedSeriesSection");
   if (
     field<number>("perPage") !== HOME_PAGE_SIZE ||
-    field<boolean>("hasPinnedSeriesSection") !== false ||
+    typeof hasPinned !== "boolean" ||
     field<string[]>("latestReleaseFilters").join(",") !== "latest,new" ||
     !Array.isArray(ranking)
   )
     throw new Error("VortexScans homepage release configuration changed.");
+  const pinned = hasPinned ? validPosts(field("pinnedPosts")) : [];
+  if (
+    hasPinned &&
+    (!pinned.length ||
+      new Set(pinned.map((post) => post.id)).size !== pinned.length ||
+      new Set(pinned.map((post) => post.slug)).size !== pinned.length ||
+      pinned.some(
+        (post) =>
+          typeof post.slug !== "string" ||
+          post.isPinned !== true ||
+          typeof post.isNovel !== "boolean" ||
+          typeof post.seriesType !== "string" ||
+          !post.seriesType,
+      ))
+  )
+    throw new Error("VortexScans pinned homepage identity changed.");
   const monthlyBySlug = new Map(monthly.map((post) => [post.slug, post]));
   // Rank IDs are positions, not canonical post IDs. The site renders first9 monthly.
   const popular = ranking.slice(0, 9).map((rank): HomePost => {
@@ -117,7 +135,7 @@ export function parseHome(html: string): HomeSnapshot {
   // Positive names are display evidence only, never fabricated taxonomy IDs or
   // a classification/visibility policy. Keep warnings across same-response copies.
   const names = new Map<string, string[]>();
-  for (const post of [...featured, ...latest, ...monthly, ...popular, ...today]) {
+  for (const post of [...featured, ...latest, ...monthly, ...popular, ...today, ...pinned]) {
     const key = `${post.id}:${post.slug}`;
     names.set(key, [
       ...(names.get(key) ?? []),
@@ -132,6 +150,7 @@ export function parseHome(html: string): HomeSnapshot {
   const value = {
     featured: withNames(featured),
     latest: withNames(latest),
+    pinned: withNames(pinned),
     popular: withNames(popular),
     today: withNames(today),
   };

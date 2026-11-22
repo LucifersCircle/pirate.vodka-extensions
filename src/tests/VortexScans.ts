@@ -21,7 +21,18 @@ export async function runTests(logger: TestLogger) {
   const source = VortexScans as typeof VortexScans & VortexScansImplementation;
   const suite = new TestSuite("VortexScans native contracts", logger);
   const probe = registerNativeContracts(suite, source as unknown as NativeExtension, sourceInfo, {
-    discoverySectionId: "featured",
+    discoverySectionId(sections, probe) {
+      const home = cheerio.load(
+        probe.text(({ request }) => request.url === DOMAIN || request.url === `${DOMAIN}/`),
+      );
+      const hasPinned = home('section[aria-label="Pinned Series"]').length > 0;
+      const pinned = sections.findIndex((section) => section.id === "pinned-series");
+      expect(pinned >= 0, "Pinned Series matches the consumed homepage").to.equal(hasPinned);
+      if (!hasPinned) return "featured";
+      expect(sections[pinned - 1]?.id).to.equal("popular-today");
+      expect(sections[pinned].title).to.equal("Pinned Series");
+      return "pinned-series";
+    },
     query: { title: "The Lord Who Levels Up by Absorbing Powers" },
     chooseResult(items) {
       const item = items.find(
