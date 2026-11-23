@@ -14,6 +14,8 @@ import {
   assertMangaAllowed,
   assertReaderAllowed,
   contentSettings,
+  serializeSearchCover,
+  withContentSettings,
 } from "../VortexScans/implementations/shared/content";
 import * as cheerio from "cheerio";
 import { TestSuite, registerNativeContracts, rejects, type NativeExtension } from "./suite";
@@ -110,6 +112,38 @@ export async function runTests(logger: TestLogger) {
     guardPrerequisites: ["source"],
     async guard({ source: manga, reader }) {
       expect(contentSettings().excludeNSFW).to.equal(true);
+      const cover = "https://storage.vortexscans.org/upload/2024/04/07/example title.webp";
+      const serialized = serializeSearchCover(cover);
+      expect(serialized).to.equal(cover.replace(" ", "%20"));
+      expect(decodeURI(serialized)).to.equal(cover);
+      expect(serializeSearchCover(serialized)).to.equal(serialized);
+      for (const unsupported of [
+        cover.replace("storage.vortexscans.org", "other.invalid"),
+        cover.replace("/2024/", "/../"),
+        cover + "?query=has space",
+        cover.replace("example title", "example%2F title"),
+      ])
+        expect(serializeSearchCover(unsupported)).to.equal(unsupported);
+      const cacheKey = "VortexScans.readerTitles";
+      const previous = Application.getState(cacheKey);
+      const owner = "2147483646:cover-test-owner";
+      const otherOwner = "2147483647:cover-test-other";
+      const bind = (mangaId: string, imageUrl: string) =>
+        withContentSettings(() => Promise.resolve({ mangaId, imageUrl }));
+      try {
+        for (const [first, second] of [[cover, serialized], [serialized, cover]]) {
+          Application.setState({ version: 3, chapters: [], covers: [[first, owner]] }, cacheKey);
+          expect(() => assertReaderAllowed(first)).not.to.throw();
+          expect(() => assertReaderAllowed(second)).to.throw(/authorization expired/);
+          await rejects(() => bind(otherOwner, second), /conflicting reader image identity/);
+          expect(() => assertReaderAllowed(second)).to.throw(/authorization expired/);
+          await bind(owner, second);
+          expect(() => assertReaderAllowed(first)).not.to.throw();
+          expect(() => assertReaderAllowed(second)).not.to.throw();
+        }
+      } finally {
+        Application.setState(previous ?? { version: 3, chapters: [], covers: [] }, cacheKey);
+      }
       expect(manga).not.to.equal(undefined);
       expect(() =>
         assertMangaAllowed({
