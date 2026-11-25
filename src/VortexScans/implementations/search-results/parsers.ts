@@ -1,5 +1,11 @@
 import type { SearchResultItem } from "@paperback/types";
-import { contentAllowed, contentRating, observeContent, sourceNames } from "../shared/content";
+import {
+  contentAllowed,
+  serializeSearchCover,
+  contentRating,
+  observeContent,
+  sourceNames,
+} from "../shared/content";
 import type { SearchFilter, SearchFilterValue } from "@paperback/types/lib/compat/0.8";
 import {
   HOME_SECTION_METADATA_ID,
@@ -134,7 +140,7 @@ export function parseSearchResults(data: VortexQueryResponse): SearchResultItem[
       return {
         mangaId,
         title: Application.decodeHTMLEntities(post.postTitle),
-        imageUrl: post.featuredImage || "",
+        imageUrl: serializeSearchCover(post.featuredImage || ""),
         subtitle,
         contentRating: contentRating(mangaId),
       };

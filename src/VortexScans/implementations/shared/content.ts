@@ -206,16 +206,33 @@ function imageCache(): ImageCache {
     throw new Error("Invalid saved VortexScans image cache.");
   return saved;
 }
-function imageOwner(url: string, cache: ImageCache): string | undefined {
+// A legacy storage filename can contain literal spaces. Serialize only those
+// bytes in a known public cover path; never reinterpret a host, query, fragment
+// or existing percent escapes, and leave unrelated provider values unchanged.
+export function serializeSearchCover(value: string): string {
+  if (!value.includes(" ")) return value;
+  const match =
+    /^(https:\/\/storage\.vortexscans\.org\/upload\/(?:[A-Za-z0-9_-]+\/)*)([A-Za-z0-9][A-Za-z0-9._~ -]*\.(?:webp|png|jpe?g|gif))$/.exec(
+      value,
+    );
+  if (!match) return value;
+  const [, directory, filename] = match;
+  return directory + filename.replaceAll(" ", "%20");
+}
+
+function imageOwner(url: string, cache: ImageCache, compareAliases = false): string | undefined {
+  const identity = compareAliases ? serializeSearchCover(url) : url;
+  const matches = (candidate: string): boolean =>
+    (compareAliases ? serializeSearchCover(candidate) : candidate) === identity;
   const owners = new Set([
-    ...cache.chapters.filter((group) => group.pages.includes(url)).map((group) => group.owner),
-    ...cache.covers.filter(([image]) => image === url).map(([, owner]) => owner),
+    ...cache.chapters.filter((group) => group.pages.some(matches)).map((group) => group.owner),
+    ...cache.covers.filter(([image]) => matches(image)).map(([, owner]) => owner),
   ]);
   if (owners.size > 1) throw new Error("VortexScans returned a conflicting reader image identity.");
   return owners.values().next().value;
 }
 function assertImageOwner(url: string, owner: string, cache: ImageCache): void {
-  const previous = imageOwner(url, cache);
+  const previous = imageOwner(url, cache, true);
   if (previous !== undefined && previous !== owner)
     throw new Error("VortexScans returned a conflicting reader image identity.");
 }
@@ -245,11 +262,14 @@ function bindCovers(covers: [string, string][]): void {
   if (!covers.length) return;
   const cache = imageCache();
   const incoming = new Map<string, string>();
+  const aliases = new Map<string, string>();
   for (const [url, owner] of covers) {
     assertImageOwner(url, owner, cache);
-    const previous = incoming.get(url);
+    const identity = serializeSearchCover(url);
+    const previous = aliases.get(identity);
     if (previous !== undefined && previous !== owner)
       throw new Error("VortexScans returned a conflicting reader image identity.");
+    aliases.set(identity, owner);
     incoming.set(url, owner);
   }
   if (incoming.size > MAX_COVERS)
@@ -268,12 +288,15 @@ function bindCovers(covers: [string, string][]): void {
   Application.setState(next, READER_KEY);
 }
 export function assertReaderAllowed(url: string): void {
-  const binding = imageOwner(url, imageCache());
+  const cache = imageCache();
+  const binding = imageOwner(url, cache);
   if (binding === undefined) {
     if (/^https?:\/\/[^?#]+\.(?:webp|jpe?g|png|gif|avif)(?:[?#]|$)/i.test(url))
       throw new Error("VortexScans image authorization expired. Reload the title or chapter.");
     return;
   }
+  // Aliases may reveal conflicting owners, but cannot authorize an unissued URL.
+  assertImageOwner(url, binding, cache);
   if (!contentAllowed(binding))
     throw new Error("This reader is hidden by VortexScans' Exclude NSFW content setting.");
 }
